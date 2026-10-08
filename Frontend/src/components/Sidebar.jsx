@@ -21,7 +21,7 @@ const NAV_ALL = [
   },
   { label: 'Issuance Log', path: '/issuance', icon: 'arrow', minRole: 'observer' },
   { label: 'Import Hub',   path: '/import',   icon: 'upload', minRole: 'admin'      },
-  { label: 'Admin Tools',   path: '/admin',    icon: 'shield', minRole: 'super_admin' },
+  { label: 'Admin Tools',   path: '/admin',    icon: 'shield', minRole: 'admin' },
   { label: 'API Health',    path: '/admin/health', icon: 'pulse',  minRole: 'super_admin' },
 
   { section: 'Masters' },
