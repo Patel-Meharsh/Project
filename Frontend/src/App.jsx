@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/AuthContext'
+import { canDo } from './lib/auth'
 import { ToastProvider } from './components/Toast'
 import ErrorBoundary from './components/ErrorBoundary'
 import Sidebar from './components/Sidebar'
@@ -96,8 +97,8 @@ function ProtectedLayout() {
               <Route path="/budget/norms"        element={<BudgetNorms />} />
               <Route path="/budget/forecast"     element={<BudgetForecast />} />
               <Route path="/profile"             element={<Profile />} />
-              <Route path="/admin"               element={<Admin />} />
-              <Route path="/admin/health"        element={<ApiHealth />} />
+              <Route path="/admin"               element={canDo(user?.role, "admin") ? <Admin /> : <Navigate to="/" replace />} />
+              <Route path="/admin/health"        element={canDo(user?.role, "super_admin") ? <ApiHealth /> : <Navigate to="/" replace />} />
               <Route path="*"                    element={<Navigate to="/" replace />} />
             </Routes>
           </Suspense>
