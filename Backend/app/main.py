@@ -1,5 +1,5 @@
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from .api.routes import router
 from .database import engine
@@ -185,8 +185,9 @@ app = FastAPI(
     title="Gateway Group Inventory API",
     description="Inventory, Procurement & Budget Management System",
     version="1.0.0",
-    docs_url="/docs",   # enabled in all environments for debugging
+    docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
     redoc_url=None,
+    openapi_url="/openapi.json" if settings.ENVIRONMENT != "production" else None,
 )
 
 # Build allowed origins from env
@@ -214,11 +215,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if settings.ENVIRONMENT == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
 app.include_router(router, prefix="/api")
 
 @app.get("/")
 def root():
-    return {"message": "Gateway Inventory API", "version": "1.0.0", "docs": "/docs"}
+    return {"message": "Gateway Inventory API", "version": "1.0.0"}
 
 @app.get("/health")
 def health():
