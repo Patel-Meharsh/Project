@@ -58,8 +58,8 @@ export default function Signup() {
   const onBlur  = e => { e.target.style.borderColor='rgba(255,255,255,0.1)'; e.target.style.boxShadow='none' }
 
   return (
-    <div style={{ minHeight:'100vh', display:'flex', background:'linear-gradient(135deg,#0d0f1a,#1a1f35,#0d1520)', fontFamily:"'DM Sans',sans-serif" }}>
-      <div style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'center', padding:'60px 80px', position:'relative', overflow:'hidden' }}>
+    <div className="auth-screen" style={{ minHeight:'100vh', display:'flex', background:'linear-gradient(135deg,#0d0f1a,#1a1f35,#0d1520)', fontFamily:"'DM Sans',sans-serif" }}>
+      <div className="auth-brand-panel" style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'center', padding:'60px 80px', position:'relative', overflow:'hidden' }}>
         <div style={{ position:'absolute', top:-120, left:-120, width:400, height:400, borderRadius:'50%', background:'radial-gradient(circle,rgba(240,165,0,0.08),transparent 70%)', pointerEvents:'none' }} />
         <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:64 }}>
           <div style={{ width:44, height:44, borderRadius:12, background:'linear-gradient(135deg,#f0a500,#e85d04)', display:'flex', alignItems:'center', justifyContent:'center', color:'white', fontFamily:"'Fraunces',serif", fontWeight:800, fontSize:20, boxShadow:'0 8px 24px rgba(240,165,0,0.35)' }}>G</div>
@@ -83,8 +83,8 @@ export default function Signup() {
         </div>
       </div>
 
-      <div style={{ width:480, display:'flex', alignItems:'center', justifyContent:'center', padding:'40px 48px', background:'rgba(255,255,255,0.03)', borderLeft:'1px solid rgba(255,255,255,0.06)', backdropFilter:'blur(20px)' }}>
-        <div style={{ width:'100%', maxWidth:360 }}>
+      <div className="auth-form-panel" style={{ width:480, display:'flex', alignItems:'center', justifyContent:'center', padding:'40px 48px', background:'rgba(255,255,255,0.03)', borderLeft:'1px solid rgba(255,255,255,0.06)', backdropFilter:'blur(20px)' }}>
+        <div className="auth-form-inner" style={{ width:'100%', maxWidth:360 }}>
           <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:32 }}>
             {[1,2].map(s=>(
               <div key={s} style={{ display:'flex', alignItems:'center', gap:8 }}>
