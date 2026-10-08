@@ -8,31 +8,28 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const token = localStorage.getItem('gg_token')
-    if (!token) { setLoading(false); return }
+    // Remove legacy client-side auth tokens left by older builds.
+    localStorage.removeItem('gg_token')
     authApi.me()
       .then(u => setUser(u))
-      .catch(() => localStorage.removeItem('gg_token'))
+      .catch(() => setUser(null))
       .finally(() => setLoading(false))
   }, [])
 
   const login = async (email, password) => {
     const res = await authApi.login(email, password)
-    localStorage.setItem('gg_token', res.token)
     setUser(res.user)
     return res.user
   }
 
   const signup = async (data) => {
     const res = await authApi.signup(data)
-    localStorage.setItem('gg_token', res.token)
     setUser(res.user)
     return res.user
   }
 
   const logout = () => {
-    localStorage.removeItem('gg_token')
-    setUser(null)
+    authApi.logout().catch(() => {}).finally(() => setUser(null))
   }
 
   const refreshUser = async () => {
