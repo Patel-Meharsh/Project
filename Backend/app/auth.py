@@ -6,20 +6,35 @@ import hashlib, hmac, base64, json, time, secrets, os
 from .config import settings
 
 SECRET = settings.SECRET_KEY.encode()
+PBKDF2_ITERATIONS = 600_000
+LEGACY_PBKDF2_ITERATIONS = 260_000
 
 # ── Password hashing (PBKDF2-SHA256 via hashlib) ─────────────────────────────
 def hash_password(plain: str) -> str:
     salt = secrets.token_hex(16)
-    dk = hashlib.pbkdf2_hmac("sha256", plain.encode(), salt.encode(), 260_000)
-    return f"{salt}${base64.b64encode(dk).decode()}"
+    dk = hashlib.pbkdf2_hmac("sha256", plain.encode(), salt.encode(), PBKDF2_ITERATIONS)
+    return "pbkdf2_sha256${}${}${}".format(PBKDF2_ITERATIONS, salt, base64.b64encode(dk).decode())
 
 def verify_password(plain: str, hashed: str) -> bool:
     try:
-        salt, stored = hashed.split("$", 1)
-        dk = hashlib.pbkdf2_hmac("sha256", plain.encode(), salt.encode(), 260_000)
+        parts = hashed.split("$")
+        if len(parts) == 4 and parts[0] == "pbkdf2_sha256":
+            _, iterations, salt, stored = parts
+            iterations = int(iterations)
+        else:
+            salt, stored = hashed.split("$", 1)
+            iterations = LEGACY_PBKDF2_ITERATIONS
+        dk = hashlib.pbkdf2_hmac("sha256", plain.encode(), salt.encode(), iterations)
         return hmac.compare_digest(base64.b64encode(dk).decode(), stored)
     except Exception:
         return False
+
+def needs_rehash(hashed: str) -> bool:
+    try:
+        parts = hashed.split("$")
+        return not (len(parts) == 4 and parts[0] == "pbkdf2_sha256" and int(parts[1]) >= PBKDF2_ITERATIONS)
+    except Exception:
+        return True
 
 # ── Token (HS256 JWT-lite) ────────────────────────────────────────────────────
 def _b64url(data: bytes) -> str:
