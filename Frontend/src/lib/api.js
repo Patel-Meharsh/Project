@@ -11,22 +11,13 @@ const BASE =
     ? "http://localhost:8000"
     : (import.meta.env.VITE_API_URL || "https://api.opex.vaanilabs.ai");
 
-const api = axios.create({ baseURL: BASE + '/api' });
-
-// Attach Bearer token on every request
-api.interceptors.request.use(cfg => {
-  const token = localStorage.getItem('gg_token')
-  if (token) cfg.headers.Authorization = `Bearer ${token}`
-  return cfg
-})
-
+const api = axios.create({ baseURL: BASE + '/api', withCredentials: true });
 
 // Auto-logout on 401
 api.interceptors.response.use(
   r => r,
   err => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('gg_token')
+    if (err.response?.status === 401 && window.location.pathname !== '/login') {
       window.location.href = '/login'
     }
     return Promise.reject(err)
@@ -215,4 +206,3 @@ export const adminApi = {
   dataSummary: ()           => api.get('/admin/data-summary').then(r => r.data),
   resetData:   (keepMasters) => api.post('/admin/reset-data', { confirm: 'RESET', keep_masters: keepMasters }).then(r => r.data),
 }
-
