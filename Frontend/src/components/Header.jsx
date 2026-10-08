@@ -129,7 +129,7 @@ export default function Header({ title, subtitle, actions }) {
       <div className="topbar-right">
 
         {/* ── Global Search ── */}
-        <div ref={wrapRef} style={{ position: 'relative' }}>
+        <div ref={wrapRef} className="header-search-wrap" style={{ position: 'relative' }}>
           <div className="topbar-search" style={{ cursor: 'text', minWidth: 220 }}
             onClick={() => { setOpen(true); inputRef.current?.focus() }}>
             <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
