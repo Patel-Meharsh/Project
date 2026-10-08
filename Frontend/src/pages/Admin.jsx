@@ -23,6 +23,7 @@ const MASTERS       = ['locations','vendors','hk_master','items']
 
 export default function Admin() {
   const { user } = useAuth()
+  const isSuperAdmin = user?.role === 'super_admin'
   const toast = useToast()
   const { data: summary, loading, refetch: load } = useDataFetch(() =>
     adminApi.dataSummary().catch(err => { toast.error('Failed to load data summary'); return null })
@@ -55,7 +56,7 @@ export default function Admin() {
 
   return (
     <>
-      <Header title="Admin Tools" subtitle="Super admin controls — users, data reset, system management" />
+      <Header title="Admin Tools" subtitle={isSuperAdmin ? "Super admin controls — users, data reset, system management" : "Administrative tools and system overview"} />
       <div className="page-content" style={{ maxWidth: 900 }}>
 
         {/* ── DATA SUMMARY ── */}
@@ -105,7 +106,7 @@ export default function Admin() {
           </div>
         </div>
 
-        {/* ── DATA RESET ── */}
+        {isSuperAdmin && (
         <div style={{ background:'#fff1f2', border:'1.5px solid #fecdd3', borderRadius:16, padding:28 }}>
           <div style={{ display:'flex', alignItems:'flex-start', gap:14, marginBottom:20 }}>
             <div style={{ fontSize:28, flexShrink:0 }}>⚠️</div>
@@ -232,6 +233,8 @@ export default function Admin() {
             </div>
           )}
         </div>
+
+        )}
 
         {/* Import Hub reminder */}
         <div style={{ background:'var(--blue-soft)', border:'1px solid #bfdbfe', borderRadius:12,
