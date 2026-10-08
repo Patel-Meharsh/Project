@@ -44,8 +44,8 @@ export default function Login() {
   }
 
   return (
-    <div style={{ minHeight:'100vh', display:'flex', background:'linear-gradient(135deg,#0d0f1a 0%,#1a1f35 50%,#0d1520 100%)', fontFamily:"'DM Sans',sans-serif" }}>
-      <div style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'center', padding:'60px 80px', position:'relative', overflow:'hidden' }}>
+    <div className="auth-screen" style={{ minHeight:'100vh', display:'flex', background:'linear-gradient(135deg,#0d0f1a 0%,#1a1f35 50%,#0d1520 100%)', fontFamily:"'DM Sans',sans-serif" }}>
+      <div className="auth-brand-panel" style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'center', padding:'60px 80px', position:'relative', overflow:'hidden' }}>
         <div style={{ position:'absolute', top:-120, left:-120, width:400, height:400, borderRadius:'50%', background:'radial-gradient(circle,rgba(240,165,0,0.08),transparent 70%)', pointerEvents:'none' }} />
         <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:64 }}>
           <div style={{ width:44, height:44, borderRadius:12, background:'linear-gradient(135deg,#f0a500,#e85d04)', display:'flex', alignItems:'center', justifyContent:'center', color:'white', fontFamily:"'Fraunces',serif", fontWeight:800, fontSize:20, boxShadow:'0 8px 24px rgba(240,165,0,0.35)' }}>G</div>
@@ -65,8 +65,8 @@ export default function Login() {
           ))}
         </div>
       </div>
-      <div style={{ width:480, display:'flex', alignItems:'center', justifyContent:'center', padding:'40px 48px', background:'rgba(255,255,255,0.03)', borderLeft:'1px solid rgba(255,255,255,0.06)', backdropFilter:'blur(20px)' }}>
-        <div style={{ width:'100%', maxWidth:360 }}>
+      <div className="auth-form-panel" style={{ width:480, display:'flex', alignItems:'center', justifyContent:'center', padding:'40px 48px', background:'rgba(255,255,255,0.03)', borderLeft:'1px solid rgba(255,255,255,0.06)', backdropFilter:'blur(20px)' }}>
+        <div className="auth-form-inner" style={{ width:'100%', maxWidth:360 }}>
           <div style={{ marginBottom:36 }}>
             <div style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:700, color:'white', marginBottom:8 }}>Welcome back</div>
             <div style={{ color:'rgba(255,255,255,0.4)', fontSize:14 }}>Sign in to continue</div>
