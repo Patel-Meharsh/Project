@@ -1,15 +1,15 @@
 from contextlib import closing
 from operator import inv
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header as FHeader, Body
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header as FHeader, Body, Request, Cookie
+from fastapi.responses import StreamingResponse, FileResponse, Response
 import os
 import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import get_db
 from app import models
-from app.auth import hash_password, verify_password, create_token, decode_token
+from app.auth import hash_password, verify_password, create_token, decode_token, needs_rehash
 import io
 import pandas as pd
 import openpyxl
@@ -77,8 +77,8 @@ def _log(db: Session, event_type: str, entity: str, entity_id: str,
         pass          # logging must never break the main operation
 
 
-def _get_current_user(authorization: str = FHeader(default=""), db: Session = Depends(get_db)):
-    token = authorization.replace("Bearer ", "").strip()
+def _get_current_user(authorization: str = FHeader(default=""), session_cookie: str = Cookie(default=""), db: Session = Depends(get_db)):
+    token = authorization.replace("Bearer ", "").strip() or session_cookie.strip()
     payload = decode_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
@@ -350,6 +350,7 @@ def get_location(code: str, db: Session = Depends(get_db), current_user: models.
 
 @router.put("/locations/{code}")
 def update_location(code: str, data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     loc = db.query(models.LocationModel).filter(models.LocationModel.code == code).first()
     if not loc: raise HTTPException(404)
     for k, v in data.items():
@@ -358,17 +359,20 @@ def update_location(code: str, data: dict, db: Session = Depends(get_db), curren
 
 @router.post("/locations")
 def create_location(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     loc = models.LocationModel(**{k:v for k,v in data.items() if hasattr(models.LocationModel, k)})
     db.add(loc); db.commit(); db.refresh(loc); return loc
 
 @router.post("/locations/{code}/services")
 def add_service(code: str, data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     _parse_dates(data, ["contract_start", "contract_end"])
     svc = models.ThirdPartyServiceModel(location_code=code, **{k:v for k,v in data.items() if hasattr(models.ThirdPartyServiceModel,k) and k!='id'})
     db.add(svc); db.commit(); db.refresh(svc); return svc
 
 @router.put("/locations/{code}/services/{svc_id}")
 def update_service(code: str, svc_id: int, data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     svc = db.query(models.ThirdPartyServiceModel).filter(models.ThirdPartyServiceModel.id == svc_id).first()
     if not svc: raise HTTPException(404)
     for k, v in data.items():
@@ -382,10 +386,12 @@ def get_vendors(db: Session = Depends(get_db), current_user: models.UserModel = 
 
 @router.post("/vendors")
 def create_vendor(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     v = models.VendorModel(**data); db.add(v); db.commit(); db.refresh(v); return v
 
 @router.put("/vendors/{code}")
 def update_vendor(code: str, data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     v = db.query(models.VendorModel).filter(models.VendorModel.code == code).first()
     if not v: raise HTTPException(404)
     for k, val in data.items():
@@ -401,6 +407,7 @@ def get_hk_master(category: Optional[str] = None, db: Session = Depends(get_db),
 
 @router.post("/hk-master")
 def create_hk_item(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     item = models.HKMasterModel(**{k: v for k, v in data.items() if hasattr(models.HKMasterModel, k)})
     db.add(item); db.commit(); db.refresh(item); return item
 
@@ -410,6 +417,7 @@ def get_hk_categories(db: Session = Depends(get_db), current_user: models.UserMo
 
 @router.put("/hk-master/{code}")
 def update_hk_item(code: str, data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     item = db.query(models.HKMasterModel).filter(models.HKMasterModel.code == code).first()
     if not item: raise HTTPException(404)
     for k, v in data.items():
@@ -445,12 +453,14 @@ def get_items(category: Optional[str] = None, db: Session = Depends(get_db), cur
 
 @router.post("/items")
 def create_item(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     _resolve_master_group(data, db)
     item = models.ItemModel(**_clean(data, models.ItemModel))
     db.add(item); db.commit(); db.refresh(item); return item
 
 @router.put("/items/{code}")
 def update_item(code: str, data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     item = db.query(models.ItemModel).filter(models.ItemModel.code == code).first()
     if not item: raise HTTPException(404)
     _resolve_master_group(data, db)
@@ -530,6 +540,7 @@ def get_consumption(db: Session = Depends(get_db), current_user: models.UserMode
 
 @router.post("/inventory")
 def create_inventory_row(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     existing = db.query(models.InventoryModel).filter_by(
         item_code=data.get("item_code"),
         location_code=data.get("location_code", "STORE-CH")
@@ -542,16 +553,22 @@ def create_inventory_row(data: dict, db: Session = Depends(get_db), current_user
 
 @router.put("/inventory/{inv_id}")
 def update_inventory_row(inv_id: int, data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     row = db.query(models.InventoryModel).filter(models.InventoryModel.id == inv_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Inventory row not found")
-    for k, v in _clean(data, models.InventoryModel).items():
+    cleaned = _clean(data, models.InventoryModel)
+    for field in ("opening_stock", "stock_in", "stock_out", "rate"):
+        if field in cleaned and float(cleaned[field] or 0) < 0:
+            raise HTTPException(400, f"{field} cannot be negative.")
+    for k, v in cleaned.items():
         setattr(row, k, v)
     db.commit(); db.refresh(row)
     return {"id": row.id}
 
 @router.patch("/inventory/{inv_id}/reset")
 def reset_inventory_row(inv_id: int, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     """Reset stock_in and stock_out to zero. Row, item, location, opening_stock are untouched."""
     row = db.query(models.InventoryModel).filter(models.InventoryModel.id == inv_id).first()
     if not row:
@@ -580,7 +597,12 @@ def get_prs(status: Optional[str] = None, db: Session = Depends(get_db), current
 
 @router.post("/purchase-requisitions")
 def create_pr(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "analyst")
     line_items = data.pop("line_items", None) or []
+    if any(float(li.get("qty") or 0) <= 0 for li in line_items):
+        raise HTTPException(400, "All PR quantities must be greater than zero.")
+    if data.get("req_qty") is not None and float(data.get("req_qty") or 0) < 0:
+        raise HTTPException(400, "Request quantity cannot be negative.")
     # Backward compat: populate top-level item_code/req_qty from first line item
     if line_items:
         first = line_items[0]
@@ -593,6 +615,7 @@ def create_pr(data: dict, db: Session = Depends(get_db), current_user: models.Us
 
 @router.put("/purchase-requisitions/{pr_no}")
 def update_pr(pr_no: str, data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "analyst")
     pr = db.query(models.PurchaseRequisitionModel).filter(models.PurchaseRequisitionModel.pr_no == pr_no).first()
     if not pr: raise HTTPException(404)
     # Only admin+ can approve or reject (case-insensitive check)
@@ -653,7 +676,12 @@ def get_pos(status: Optional[str] = None, db: Session = Depends(get_db), current
 
 @router.post("/purchase-orders")
 def create_po(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "analyst")
     line_items = data.pop("line_items", None) or []
+    if any(float(li.get("qty") or 0) <= 0 for li in line_items):
+        raise HTTPException(400, "All PO quantities must be greater than zero.")
+    if data.get("qty_ordered") is not None and float(data.get("qty_ordered") or 0) < 0:
+        raise HTTPException(400, "Ordered quantity cannot be negative.")
     if line_items:
         first = line_items[0]
         if not data.get("item_code"): data["item_code"] = first.get("item_code", "")
@@ -666,10 +694,14 @@ def create_po(data: dict, db: Session = Depends(get_db), current_user: models.Us
 
 @router.put("/purchase-orders/{po_no}")
 def update_po(po_no: str, data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "analyst")
     po = db.query(models.PurchaseOrderModel).filter(models.PurchaseOrderModel.po_no == po_no).first()
     if not po: raise HTTPException(404)
+    if "status" in data:
+        _require_role(current_user, "admin")
     for k, v in data.items():
-        if hasattr(po, k) and k != "_sa_instance_state": setattr(po, k, v)
+        if hasattr(po, k) and k not in ("_sa_instance_state", "po_no"):
+            setattr(po, k, v)
     db.commit(); db.refresh(po); return po
 
 @router.post("/purchase-orders/from-pr/{pr_no}")
@@ -1165,8 +1197,21 @@ def get_grns(db: Session = Depends(get_db), current_user: models.UserModel = Dep
 
 @router.post("/grns")
 def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "analyst")
     # Extract line items before cleaning
     line_items = data.pop("line_items", []) or []
+    for li in line_items:
+        recd = float(li.get("recd_qty") or 0)
+        accepted = float(li.get("accepted_qty") or 0)
+        if recd <= 0 or accepted < 0 or accepted > recd:
+            raise HTTPException(400, "GRN quantities must be positive and accepted quantity cannot exceed received quantity.")
+        if float(li.get("rejected_qty") or 0) < 0:
+            raise HTTPException(400, "Rejected quantity cannot be negative.")
+    if not line_items:
+        recd = float(data.get("recd_qty") or 0)
+        accepted = float(data.get("accepted_qty") or 0)
+        if recd <= 0 or accepted < 0 or accepted > recd:
+            raise HTTPException(400, "GRN quantities must be positive and accepted quantity cannot exceed received quantity.")
 
     # Auto-generate GRN number server-side if not provided
     if not data.get("grn_no"):
@@ -1257,12 +1302,24 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
 @router.put("/grns/{grn_no}")
 def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
                current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "analyst")
     grn = db.query(models.GRNModel).filter_by(grn_no=grn_no).first()
     if not grn:
         raise HTTPException(status_code=404, detail="GRN not found")
 
     # ── Pull new line_items out before mutating data ───────────────────────────
     new_line_items = data.pop("line_items", None)  # list or None
+    if new_line_items is not None:
+        for li in new_line_items:
+            recd = float(li.get("recd_qty") or 0)
+            accepted = float(li.get("accepted_qty") or 0)
+            if recd <= 0 or accepted < 0 or accepted > recd:
+                raise HTTPException(400, "GRN quantities must be positive and accepted quantity cannot exceed received quantity.")
+    elif "accepted_qty" in data or "recd_qty" in data:
+        recd = float(data.get("recd_qty") or 0)
+        accepted = float(data.get("accepted_qty") or 0)
+        if recd <= 0 or accepted < 0 or accepted > recd:
+            raise HTTPException(400, "GRN quantities must be positive and accepted quantity cannot exceed received quantity.")
 
     old_store_location = grn.store_location or ""
     new_store_location = (data.get("store_location") or old_store_location).strip()
@@ -1383,12 +1440,15 @@ def get_issuances(db: Session = Depends(get_db), current_user: models.UserModel 
 
 @router.post("/issuances")
 def create_issuance(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "analyst")
     _parse_dates(data, ["date"])
+    qty = float(data.get("qty") or 0)
+    if qty <= 0:
+        raise HTTPException(400, "Issuance quantity must be greater than zero.")
     iss = models.IssuanceLogModel(**_clean(data, models.IssuanceLogModel))
     db.add(iss); db.flush()
 
     # ── Auto-decrement inventory stock_out ────────────────────────────────────
-    qty           = float(data.get("qty") or 0)
     item_code     = data.get("item_code", "")
     location_code = data.get("location_code", "")
     rate          = float(data.get("rate") or 0)
@@ -1436,12 +1496,15 @@ def get_returns(db: Session = Depends(get_db), current_user: models.UserModel = 
 
 @router.post("/returns")
 def create_return(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "analyst")
     _parse_dates(data, ["return_date"])
     ret = models.ReturnLogModel(**_clean(data, models.ReturnLogModel))
     db.add(ret); db.flush()
 
     # ── If vendor return: reverse stock_in that the GRN added ────────────────
     qty_returned  = float(data.get("qty_returned") or 0)
+    if qty_returned <= 0:
+        raise HTTPException(400, "Return quantity must be greater than zero.")
     item_code     = data.get("item_code", "")
     grn_ref       = data.get("grn_ref", "")
 
@@ -1475,6 +1538,7 @@ def get_norms(db: Session = Depends(get_db), current_user: models.UserModel = De
 
 @router.put("/consumption-norms/{id}")
 def update_norm(id: int, data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     norm = db.query(models.ConsumptionNormModel).filter(models.ConsumptionNormModel.id == id).first()
     if not norm: raise HTTPException(404)
     for k, v in data.items():
@@ -1539,6 +1603,7 @@ def get_budget_calculated(db: Session = Depends(get_db), current_user: models.Us
 
 @router.post("/budget/calculate")
 def recalculate_budget(db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "analyst")
     rows, total = _compute_budget(db)
     return {"message": "Budget recalculated", "total_monthly": total, "items_count": len(rows)}
 
@@ -1918,7 +1983,8 @@ def _safe(v):
 
 # ── TEMPLATE DOWNLOAD ─────────────────────────────────────────────────────────
 @router.get("/import/template/{entity}")
-def download_template(entity: str):
+def download_template(entity: str, current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     templates = {
         "hk_master": ["code","name","category","sub_category","uom","eco_brand","eco_price","std_brand","std_price","prem_brand","prem_price","recommended","rate","gst_pct","rol","max_stock","lead_days","status"],
         "items":     ["code","name","category","sub_category","uom","brand_tier","vendor_code","rate","gst_pct","rol","max_stock","lead_days","status"],
@@ -1959,6 +2025,7 @@ def download_template(entity: str):
 # ── PREVIEW ───────────────────────────────────────────────────────────────────
 @router.post("/import/preview")
 async def preview_import(file: UploadFile = File(...), entity: str = Form(...), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     raw = await file.read()
     try:
         df = _read_excel(raw)
@@ -2011,30 +2078,37 @@ async def _do_import(file, mapping_json, overwrite_str, db, model_class, pk_fiel
 # ── IMPORT ENDPOINTS ──────────────────────────────────────────────────────────
 @router.post("/import/hk_master")
 async def import_hk_master(file: UploadFile = File(...), mapping: str = Form(""), overwrite: str = Form("0"), db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     return await _do_import(file, mapping, overwrite, db, models.HKMasterModel, "code", ["code","name"])
 
 @router.post("/import/items")
 async def import_items(file: UploadFile = File(...), mapping: str = Form(""), overwrite: str = Form("0"), db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     return await _do_import(file, mapping, overwrite, db, models.ItemModel, "code", ["code","name"])
 
 @router.post("/import/vendors")
 async def import_vendors(file: UploadFile = File(...), mapping: str = Form(""), overwrite: str = Form("0"), db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     return await _do_import(file, mapping, overwrite, db, models.VendorModel, "code", ["code","name"])
 
 @router.post("/import/locations")
 async def import_locations(file: UploadFile = File(...), mapping: str = Form(""), overwrite: str = Form("0"), db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     return await _do_import(file, mapping, overwrite, db, models.LocationModel, "code", ["code","name"])
 
 @router.post("/import/norms")
 async def import_norms(file: UploadFile = File(...), mapping: str = Form(""), overwrite: str = Form("0"), db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     return await _do_import(file, mapping, overwrite, db, models.ConsumptionNormModel, "item_code", ["item_code"])
 
 @router.post("/import/issuances")
 async def import_issuances(file: UploadFile = File(...), mapping: str = Form(""), overwrite: str = Form("0"), db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     return await _do_import(file, mapping, overwrite, db, models.IssuanceLogModel, "issue_id", ["issue_id","item_code"], date_fields=["date"])
 
 @router.post("/import/returns")
 async def import_returns(file: UploadFile = File(...), mapping: str = Form(""), overwrite: str = Form("0"), db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    _require_role(current_user, "admin")
     return await _do_import(file, mapping, overwrite, db, models.ReturnLogModel, "return_id", ["return_id"], date_fields=["return_date"])
 
 
@@ -2571,11 +2645,73 @@ def item_velocity(db: Session = Depends(get_db), current_user: models.UserModel 
 
 AVATAR_COLORS = ["#f0a500","#3b82f6","#10b981","#8b5cf6","#ef4444","#06b6d4","#f97316","#ec4899"]
 
+# Login throttling: temporary in-process protection for local/single-worker deployments.
+# Production deployments with multiple replicas should move these counters to a shared
+# store (for example Redis) or enforce equivalent limits at the API gateway.
+_LOGIN_WINDOW_SECONDS = 15 * 60
+_LOGIN_EMAIL_MAX_FAILURES = 5
+_LOGIN_IP_MAX_FAILURES = 20
+_login_failures = {}
+
+def _login_key_state(key):
+    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    state = _login_failures.get(key)
+    if not state or state["window_start"] + _LOGIN_WINDOW_SECONDS <= now:
+        state = {"count": 0, "window_start": now, "blocked_until": 0}
+        _login_failures[key] = state
+    return state, now
+
+def _check_login_rate_limit(email: str, client_ip: str):
+    keys = [f"email:{email}" if email else None, f"ip:{client_ip}" if client_ip else None]
+    retry_after = 0
+    for key in keys:
+        if not key:
+            continue
+        state, now = _login_key_state(key)
+        if state["blocked_until"] > now:
+            retry_after = max(retry_after, int(state["blocked_until"] - now) + 1)
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed login attempts. Please try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+def _record_login_failure(email: str, client_ip: str):
+    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    for key, limit in [
+        (f"email:{email}" if email else None, _LOGIN_EMAIL_MAX_FAILURES),
+        (f"ip:{client_ip}" if client_ip else None, _LOGIN_IP_MAX_FAILURES),
+    ]:
+        if not key:
+            continue
+        state, _ = _login_key_state(key)
+        state["count"] += 1
+        if state["count"] >= limit:
+            state["blocked_until"] = now + _LOGIN_WINDOW_SECONDS
+
+def _clear_login_rate_limit(email: str, client_ip: str):
+    for key in (f"email:{email}" if email else None, f"ip:{client_ip}" if client_ip else None):
+        if key:
+            _login_failures.pop(key, None)
+
+def _validate_password(password: str):
+    if not isinstance(password, str) or len(password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters.")
+    if len(password) > 128:
+        raise HTTPException(400, "Password must be 128 characters or fewer.")
+    if not any("A" <= ch <= "Z" for ch in password):
+        raise HTTPException(400, "Password must contain at least one uppercase letter.")
+    if not any(ch in "!@#$%^&*(),.?\":{}|<>" for ch in password):
+        raise HTTPException(400, "Password must contain at least one special character.")
+
+
 @router.post("/auth/signup")
-def signup(data: dict, db: Session = Depends(get_db)):
+def signup(data: dict, response: Response, db: Session = Depends(get_db)):
     email = (data.get("email") or "").strip().lower()
     if not email or not data.get("password") or not data.get("full_name"):
         raise HTTPException(400, "email, password and full_name are required")
+    _validate_password(data.get("password"))
     if db.query(models.UserModel).filter(models.UserModel.email == email).first():
         raise HTTPException(400, "Email already registered")
     # First user becomes super_admin automatically
@@ -2595,20 +2731,38 @@ def signup(data: dict, db: Session = Depends(get_db)):
     )
     db.add(user); db.commit(); db.refresh(user)
     token = create_token({"sub": user.id, "role": user.role, "email": user.email})
-    return {"token": token, "user": _user_dict(user)}
+    cookie_name = "__Host-gg_session" if settings.ENVIRONMENT == "production" else "gg_session"
+    response.set_cookie(cookie_name, token, httponly=True, secure=settings.ENVIRONMENT == "production", samesite="lax", max_age=60 * 60 * 24 * 7, path="/")
+    return {"user": _user_dict(user)}
 
 @router.post("/auth/login")
-def login(data: dict, db: Session = Depends(get_db)):
+def login(request: Request, data: dict, response: Response, db: Session = Depends(get_db)):
     email = (data.get("email") or "").strip().lower()
-    user  = db.query(models.UserModel).filter(models.UserModel.email == email).first()
-    if not user or not verify_password(data.get("password",""), user.password_hash):
+    password = data.get("password") or ""
+    client_ip = request.client.host if request.client else "unknown"
+    _check_login_rate_limit(email, client_ip)
+
+    user = db.query(models.UserModel).filter(models.UserModel.email == email).first()
+    valid = bool(user) and verify_password(password, user.password_hash)
+    if not valid or user.is_active != "true":
+        _record_login_failure(email, client_ip)
         raise HTTPException(401, "Invalid email or password")
-    if user.is_active != "true":
-        raise HTTPException(403, "Account deactivated. Contact admin.")
-    user.last_login = _dt.datetime.utcnow().isoformat()
+
+    _clear_login_rate_limit(email, client_ip)
+    if needs_rehash(user.password_hash):
+        user.password_hash = hash_password(password)
+    user.last_login = _dt.datetime.now(_dt.timezone.utc).isoformat()
     db.commit()
     token = create_token({"sub": user.id, "role": user.role, "email": user.email})
-    return {"token": token, "user": _user_dict(user)}
+    cookie_name = "__Host-gg_session" if settings.ENVIRONMENT == "production" else "gg_session"
+    response.set_cookie(cookie_name, token, httponly=True, secure=settings.ENVIRONMENT == "production", samesite="lax", max_age=60 * 60 * 24 * 7, path="/")
+    return {"user": _user_dict(user)}
+
+@router.post("/auth/logout")
+def logout(response: Response):
+    cookie_name = "__Host-gg_session" if settings.ENVIRONMENT == "production" else "gg_session"
+    response.delete_cookie(cookie_name, path="/")
+    return {"status": "ok"}
 
 @router.get("/auth/me")
 def get_me(current_user: models.UserModel = Depends(_get_current_user)):
@@ -2621,6 +2775,7 @@ def update_profile(data: dict, current_user: models.UserModel = Depends(_get_cur
         if k in data:
             setattr(current_user, k, data[k])
     if data.get("new_password"):
+        _validate_password(data.get("new_password"))
         if not verify_password(data.get("current_password",""), current_user.password_hash):
             raise HTTPException(400, "Current password is incorrect")
         current_user.password_hash = hash_password(data["new_password"])
@@ -2637,10 +2792,18 @@ def update_user(user_id: int, data: dict, current_user: models.UserModel = Depen
     _require_role(current_user, "admin")
     user = db.query(models.UserModel).filter(models.UserModel.id == user_id).first()
     if not user: raise HTTPException(404)
+    if user.id == current_user.id:
+        raise HTTPException(400, "You cannot deactivate or change your own role.")
+    if user.role == "super_admin" and current_user.role != "super_admin":
+        raise HTTPException(403, "Only super admins can manage super admin accounts.")
     # Super admin can change roles; admin can only deactivate/reactivate
     if "role" in data and current_user.role == "super_admin":
+        if data["role"] not in ROLE_HIERARCHY:
+            raise HTTPException(400, "Invalid role")
         user.role = data["role"]
     if "is_active" in data:
+        if data["is_active"] not in ("true", "false"):
+            raise HTTPException(400, "is_active must be true or false")
         user.is_active = data["is_active"]
     db.commit(); db.refresh(user)
     return _user_dict(user)
@@ -2654,15 +2817,19 @@ def create_user(data: dict, current_user: models.UserModel = Depends(_get_curren
     email = (data.get("email") or "").strip().lower()
     if not email or not data.get("password") or not data.get("full_name"):
         raise HTTPException(400, "email, password and full_name are required")
+    _validate_password(data.get("password"))
     if db.query(models.UserModel).filter(models.UserModel.email == email).first():
         raise HTTPException(400, "Email already registered")
+    role = data.get("role", "observer")
+    if role not in ROLE_HIERARCHY:
+        raise HTTPException(400, "Invalid role")
     count = db.query(models.UserModel).count()
     color = AVATAR_COLORS[count % len(AVATAR_COLORS)]
     user  = models.UserModel(
         email         = email,
         full_name     = data["full_name"],
         password_hash = hash_password(data["password"]),
-        role          = data.get("role", "observer"),
+        role          = role,
         department    = data.get("department", ""),
         phone         = data.get("phone", ""),
         avatar_color  = color,
@@ -2688,8 +2855,7 @@ def reset_user_password(user_id: int, data: dict, current_user: models.UserModel
     if current_user.role != "super_admin":
         raise HTTPException(403, "Super admins only")
     new_password = (data.get("new_password") or "").strip()
-    if len(new_password) < 6:
-        raise HTTPException(400, "Password must be at least 6 characters")
+    _validate_password(new_password)
     user = db.query(models.UserModel).filter(models.UserModel.id == user_id).first()
     if not user: raise HTTPException(404, "User not found")
     if user.id == current_user.id:
@@ -2764,4 +2930,3 @@ def data_summary(db: Session = Depends(get_db), current_user: models.UserModel =
         "event_log":             db.query(models.EventLogModel).count(),
         "users":                 db.query(models.UserModel).count(),
     }
-
