@@ -351,13 +351,6 @@ try:
     print(f"  OK: 16 inventory | 7 PRs | 5 POs | 4 GRNs | 44 issuances (all 12 months)")
 
 
-    print("Seeding returns log...")
-    returns = [
-        models.ReturnLogModel(return_id="RET-001", return_date=date(2024,1,15), grn_ref="GRN-2024-002", item_code="EL-019", item_name="LED Bulb 9W B22", qty_returned=2, uom="Piece", vendor_code="VND-008", reason="Damaged in transit", status="Credit Received", credit_note="CN-V8-001", remarks="2 bulbs had cracked glass. Credit note received within 7 days."),
-    ]
-    seed_missing(models.ReturnLogModel, returns, ("return_id",), "return records")
-    print(f"  OK: {len(returns)} returns")
-
     print("Seeding consumption norms (full Excel data)...")
     norms_full = [
         models.ConsumptionNormModel(item_code="HK-001", item_name="Floor Cleaner Regular 5L",   category="Cleaning Chemicals", basis="Per 1000 SqFt", norm_value=0.5,  norm_unit="Liter", rate=310, cost_per_unit=155.0,  frequency="Monthly", remarks="500ml diluted cleans 1000 sqft weekly; 4 weeks = 2L per 1000 sqft; concentrated = 0.5L"),
