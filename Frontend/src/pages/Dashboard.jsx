@@ -42,14 +42,18 @@ export default function Dashboard() {
 
   const spendData = (data.monthly_spend||[]).map(m => ({ name: MONTHS[m.month], value: m.value }))
   const categoryOrder = ['Washroom Supplies', 'Cleaning Chemicals', 'Cleaning Tools', 'Waste Management', 'Stationery', 'Other', 'Welcome Kit']
-  const categoryLookup = new Map(cats.map(c => [c.category, Number(c.value || 0)]))
-  const categoryTreeData = categoryOrder.map(name => ({
-    name,
-    value: categoryLookup.get(name) || 0,
-    // Keep zero-spend categories visible without letting them distort real category proportions.
-    size: Math.max(categoryLookup.get(name) || 0, 0.01),
-    color: CATEGORY_COLORS[name] || (name === 'Stationery' ? '#94a3b8' : name === 'Welcome Kit' ? '#cbd5e1' : '#64748b'),
-  }))
+  const categoryLookup = new Map(cats.map(c => [String(c.category || '').trim(), Number(c.value || 0)]))
+  const maxCategorySpend = Math.max(0, ...categoryOrder.map(name => categoryLookup.get(name) || 0))
+  const categoryTreeData = categoryOrder.map(name => {
+    const value = categoryLookup.get(name) || 0
+    return {
+      name,
+      value,
+      // A minimum visual weight keeps all seven categories readable, including categories with no spend yet.
+      size: value > 0 ? Math.max(value, maxCategorySpend * 0.12) : Math.max(maxCategorySpend * 0.12, 1),
+      color: CATEGORY_COLORS[name] || (name === 'Stationery' ? '#94a3b8' : name === 'Welcome Kit' ? '#cbd5e1' : '#64748b'),
+    }
+  })
 
   const reorders = data.reorder_alerts || []
 
@@ -190,23 +194,26 @@ export default function Dashboard() {
                     nameKey="name"
                     aspectRatio={4 / 3}
                     stroke="#ffffff"
-                    content={({ x, y, width, height, name, size, color, payload }) => {
+                    content={({ x = 0, y = 0, width = 0, height = 0, name, size, color, payload }) => {
                       const label = String(name || payload?.name || '')
-                      const amount = Number(payload?.value ?? categoryLookup.get(label) ?? size ?? 0)
+                      const amount = Number(payload?.value ?? categoryLookup.get(label) ?? 0)
                       if (width <= 0 || height <= 0) return null
-                      const showName = label.length > 0 && width > 82 && height > 42
-                      const showValue = width > 108 && height > 62
-                      const maxChars = Math.max(10, Math.floor((width - 24) / 7.2))
-                      const labelLines = label.length > maxChars && width > 150
-                        ? [label.slice(0, maxChars), label.slice(maxChars, maxChars * 2)]
-                        : [label]
+                      const compact = width < 145 || height < 72
+                      const fontSize = compact ? 10 : Math.min(15, Math.max(12, width / 17))
+                      const maxChars = Math.max(7, Math.floor((width - 20) / (fontSize * 0.62)))
+                      const firstLine = label.length > maxChars ? label.slice(0, maxChars) : label
+                      const secondLine = label.length > maxChars ? label.slice(maxChars, maxChars * 2) : ''
+                      const labelY = height < 54 ? y + height / 2 + 3 : y + 20
                       return (
                         <g>
-                          <rect x={x} y={y} width={width} height={height} rx={5} ry={5} fill={color || '#94a3b8'} stroke="#ffffff" strokeWidth={2} />
-                          {showName && (
-                            <text x={x + 12} y={y + (showValue ? 24 : height / 2)} fill="#ffffff" fontFamily="'DM Sans', sans-serif" fontSize={Math.min(16, Math.max(12, width / 15))} fontWeight={700}>
-                              <tspan x={x + 12} dy="0">{labelLines[0]}{labelLines[1] ? '…' : ''}</tspan>
-                              {showValue && <tspan x={x + 12} dy="20" fontSize={13} fontWeight={600}>{fmtCurrency(amount)}</tspan>}
+                          <rect x={x + 1} y={y + 1} width={Math.max(0, width - 2)} height={Math.max(0, height - 2)} rx={6} ry={6} fill={color || payload?.color || '#94a3b8'} stroke="#ffffff" strokeWidth={2} />
+                          {width > 48 && height > 25 && (
+                            <text x={x + 10} y={labelY} fill="#ffffff" fontFamily="'DM Sans', sans-serif" fontSize={fontSize} fontWeight={700}>
+                              <tspan x={x + 10} dy="0">{firstLine}{secondLine && firstLine.length >= maxChars ? '…' : ''}</tspan>
+                              {secondLine && height > 55 && <tspan x={x + 10} dy={fontSize + 2}>{secondLine.slice(0, maxChars)}{secondLine.length > maxChars ? '…' : ''}</tspan>}
+                              {height > (secondLine ? 62 : 48) && width > 72 && (
+                                <tspan x={x + 10} dy={fontSize + 5} fontSize={compact ? 9 : 12} fontWeight={600}>{fmtCurrency(amount)}</tspan>
+                              )}
                             </text>
                           )}
                         </g>
