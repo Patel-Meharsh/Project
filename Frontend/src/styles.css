@@ -850,3 +850,18 @@ thead th { transition: background 0.12s, color 0.12s; }
   .dashboard-quick-actions { align-self: stretch; }
   .dashboard-quick-actions .dash-nav-card { padding: 12px; }
 }
+
+/* Keep the alert card sized to its four visible rows instead of stretching to treemap height. */
+.dashboard-category-grid > .panel:not(.dashboard-category-panel) {
+  align-self: start;
+  height: fit-content;
+}
+.dashboard-category-panel .dashboard-treemap-body { min-height: 600px; }
+.dashboard-category-panel .dashboard-treemap-body text {
+  stroke: none;
+  paint-order: normal;
+}
+@media (max-width: 768px) {
+  .dashboard-category-grid > .panel:not(.dashboard-category-panel) { align-self: stretch; }
+  .dashboard-category-panel .dashboard-treemap-body { min-height: 320px; }
+}
