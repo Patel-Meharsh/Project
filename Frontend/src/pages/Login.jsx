@@ -39,7 +39,7 @@ export default function Login() {
   const submit = async (e) => {
     e.preventDefault(); setError(''); setLoading(true)
     try { await login(email, password); navigate('/') }
-    catch(err) { setError(err?.response?.data?.detail || 'Invalid email or password') }
+    catch(err) { setError(err?.response?.data?.detail || err?.message || 'Unable to sign in. Please try again.') }
     finally { setLoading(false) }
   }
 
