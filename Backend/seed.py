@@ -116,7 +116,6 @@ def main():
         # Deliberate reset of sample/business data; user accounts are preserved.
         for model in CLEAR_MODELS:
             db.query(model).delete(synchronize_session=False)
-        db.commit()
 
         db.add(models.LocationModel(
             code="STORE-CH", name="Central Store - CH", city="Ahmedabad",
