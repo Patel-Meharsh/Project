@@ -2426,44 +2426,50 @@ def delete_vendor_rate_card(code: str, rate_card_id: str, db: Session = Depends(
 # ─── MONTHLY BUDGET FORECAST ──────────────────────────────────────────────────
 @router.get("/budget/monthly-forecast")
 def monthly_budget_forecast(inflation: float = 6, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
-    """Return month-by-month actual spend + forecasted budget for next 12 months."""
+    """Return current-year actual spend and approved-budget-based monthly projections."""
+    inflation = max(0, min(float(inflation), 50))
+    today = date.today()
+    current_year = today.year
     issuances = db.query(models.IssuanceLogModel).all()
-    # Group actual spend by month
     monthly_actual = {m: 0.0 for m in range(1, 13)}
     for iss in issuances:
-        m = iss.month or (iss.date.month if iss.date else None)
-        if m and 1 <= m <= 12:
-            monthly_actual[m] += (iss.qty or 0) * (iss.rate or 0)
-    # Average actual monthly spend as base
-    avg = sum(monthly_actual.values()) / 12
-    inf_factor = 1 + inflation / 100
-    # Build 12-month plan: actual where available, forecast where not
-    today = date.today()
-    current_month = today.month
+        if iss.date:
+            if iss.date.year != current_year:
+                continue
+            month_num = iss.date.month
+        else:
+            month_num = iss.month
+        if month_num and 1 <= month_num <= 12:
+            monthly_actual[month_num] += (iss.qty or 0) * (iss.rate or 0)
+
+    monthly_budget = APPROVED_BUDGET["monthly"]
+    inflation_factor = 1 + inflation / 100
     months_out = []
-    for i, m in enumerate(range(1, 13)):
-        label = calendar.month_abbr[m]
-        actual = round(monthly_actual[m], 2)
-        # Forecasted = avg * seasonal weight (crude), scaled up by inflation vs avg
-        seasonal = actual / avg if avg > 0 else 1.0
-        forecast = round(avg * inf_factor * (seasonal if seasonal > 0.1 else 1.0), 2)
+    for month_num in range(1, 13):
+        actual = round(monthly_actual[month_num], 2)
+        forecast = round(monthly_budget * inflation_factor, 2)
         months_out.append({
-            "month": m,
-            "label": label,
+            "month": month_num,
+            "label": calendar.month_abbr[month_num],
             "actual": actual,
+            "budget": monthly_budget,
             "forecast": forecast,
-            "is_past": m < current_month,
-            "is_current": m == current_month,
+            "is_past": month_num < today.month,
+            "is_current": month_num == today.month,
         })
-    yearly_actual  = round(sum(monthly_actual.values()), 2)
-    yearly_forecast = round(sum(r["forecast"] for r in months_out), 2)
+    yearly_actual = round(sum(monthly_actual.values()), 2)
+    yearly_forecast = round(sum(row["forecast"] for row in months_out), 2)
     return {
+        "year": current_year,
         "months": months_out,
         "yearly_actual": yearly_actual,
+        "yearly_budget": APPROVED_BUDGET["yearly"],
         "yearly_forecast": yearly_forecast,
-        "avg_monthly": round(avg, 2),
+        "avg_monthly": round(yearly_actual / 12, 2),
+        "monthly_budget": monthly_budget,
         "inflation_pct": inflation,
     }
+
 
 # ─── DELETE ROUTES (admin+ only) ─────────────────────────────────────────────
 @router.delete("/hk-master/bulk")
