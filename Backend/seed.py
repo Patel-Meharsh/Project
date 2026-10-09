@@ -3,9 +3,25 @@ from app.database import SessionLocal, engine
 from app import models
 from datetime import date
 
-models.Base.metadata.drop_all(bind=engine)
+# Safe, additive sample seeding: never drop tables or delete existing rows.
 models.Base.metadata.create_all(bind=engine)
 db = SessionLocal()
+
+def seed_missing(model, objects, key_fields, label):
+    """Insert only sample rows whose natural/primary key is not already present."""
+    existing = {
+        tuple(getattr(row, field) for field in key_fields)
+        for row in db.query(model).all()
+    }
+    added = 0
+    for obj in objects:
+        key = tuple(getattr(obj, field) for field in key_fields)
+        if key not in existing:
+            db.add(obj)
+            existing.add(key)
+            added += 1
+    db.commit()
+    print(f"  OK: {added} new {label}; existing rows preserved")
 
 try:
     print("Seeding locations...")
@@ -21,7 +37,7 @@ try:
         models.LocationModel(code="PUN",      name="Pune Office",        city="Pune",        type="Branch", contact_person="Site Manager", phone="020-26000001", status="Active", area_sqft=1200, headcount=18, num_washrooms=2, num_urinals=2, num_wcs=3, num_wash_basins=3, num_pantries=1, num_meeting_rooms=1, num_ac_units=3,  num_fans=4),
         models.LocationModel(code="STORE-CH", name="Central Store - CH", city="Ahmedabad",   type="Store",  contact_person="Store Manager", phone="079-26300010", status="Active", area_sqft=500,  headcount=3,  num_washrooms=1, num_urinals=1, num_wcs=1, num_wash_basins=1, num_pantries=0, num_meeting_rooms=0, num_ac_units=1,  num_fans=2),
     ]
-    db.add_all(locations); db.commit()
+    seed_missing(models.LocationModel, locations, ("code",), "locations")
     print(f"  OK: {len(locations)} locations")
 
     print("Seeding vendors...")
@@ -37,7 +53,7 @@ try:
         models.VendorModel(code="VND-009", name="Crompton Authorized",      category="Electrical",         contact_person="Jayesh Modi",    phone="9876543218", email="jayesh@crompton.com", city="Ahmedabad",   gst_no="24AABCU9611R1ZU", pan="AABCU9611R", payment_terms="Net 30", rating=4.5, status="Active"),
         models.VendorModel(code="VND-010", name="Anchor Dealer",            category="Electrical",         contact_person="Paresh Jain",    phone="9876543219", email="paresh@anchor.com",   city="Ahmedabad",   gst_no="24AABCU9612R1ZV", pan="AABCU9612R", payment_terms="Net 30", rating=4.4, status="Active"),
     ]
-    db.add_all(vendors); db.commit()
+    seed_missing(models.VendorModel, vendors, ("code",), "vendors")
     print(f"  OK: {len(vendors)} vendors")
 
     print("Seeding HK master (128 items from Excel)...")
@@ -170,7 +186,7 @@ try:
         models.HKMasterModel(code="HK-049", name="Mosquito Liquid Refill", category="Pest Control", sub_category="Insecticide", uom="Refill", eco_brand="Local", eco_price=65.0, std_brand="Good Knight/All Out", std_price=115.0, prem_brand="Mortein", prem_price=150.0, recommended="Standard", rate=115.0, gst_pct=18, vendor_code="VND-003", rol=20, max_stock=100, lead_days=5, status="Active"),
         models.HKMasterModel(code="HK-050", name="Fly Catcher Electric UV", category="Pest Control", sub_category="Trap", uom="Piece", eco_brand="Local", eco_price=1150.0, std_brand="Ecofly/Genus", std_price=2750.0, prem_brand="Rentokil", prem_price=6500.0, recommended="Standard", rate=2750.0, gst_pct=18, vendor_code="VND-003", rol=20, max_stock=100, lead_days=5, status="Active"),
         models.HKMasterModel(code="HK-051", name="Rat Trap Mechanical", category="Pest Control", sub_category="Trap", uom="Piece", eco_brand="Local", eco_price=75.0, std_brand="Victor", std_price=200.0, prem_brand="Tomcat", prem_price=375.0, recommended="Standard", rate=200.0, gst_pct=18, vendor_code="VND-003", rol=20, max_stock=100, lead_days=5, status="Active"),    ]
-    db.add_all(hk_items); db.commit()
+    seed_missing(models.HKMasterModel, hk_items, ("code",), "HK master items")
     print(f"  OK: {len(hk_items)} HK master items")
 
     print("Seeding active item master (16 items)...")
@@ -192,7 +208,7 @@ try:
         models.ItemModel(code="EL-049", name="MCB Single Pole 32A",       category="Electrical",         sub_category="Protection",      uom="Piece", brand_tier="Standard", vendor_code="VND-008", rate=180,  gst_pct=18, rol=20,  max_stock=60,  lead_days=5, status="Active"),
         models.ItemModel(code="HK-041", name="Gloves Rubber Household",   category="PPE & Safety",       sub_category="Hand Protection", uom="Pair",  brand_tier="Standard", vendor_code="VND-007", rate=85,   gst_pct=18, rol=30,  max_stock=100, lead_days=5, status="Active"),
     ]
-    db.add_all(items); db.commit()
+    seed_missing(models.ItemModel, items, ("code",), "active items")
     print(f"  OK: {len(items)} active items")
 
     print("Seeding inventory, PRs, POs, GRNs, issuances...")
@@ -214,7 +230,7 @@ try:
         models.InventoryModel(item_code="EL-049", location_code="STORE-CH", vendor_code="VND-008", rate=180,  opening_stock=30,  stock_in=0,  stock_out=5),
         models.InventoryModel(item_code="HK-041", location_code="STORE-CH", vendor_code="VND-007", rate=85,   opening_stock=60,  stock_in=0,  stock_out=0),
     ]
-    db.add_all(inventory); db.commit()
+    seed_missing(models.InventoryModel, inventory, ("item_code", "location_code"), "inventory rows")
 
     prs = [
         models.PurchaseRequisitionModel(pr_no="PR-2024-001", pr_date=date(2024,1,2),  item_code="HK-001", req_qty=20,  location_code="CH-1B",  department="Admin",       requested_by="Store Keeper",    priority="Urgent", required_date=date(2024,1,5),  justification="Monthly stock replenishment",   status="Approved",  approved_by="Admin Head", approval_date=date(2024,1,3),  po_ref="PO-2024-001"),
@@ -225,7 +241,7 @@ try:
         models.PurchaseRequisitionModel(pr_no="PR-2024-006", pr_date=date(2024,1,12), item_code="EL-001", req_qty=50,  location_code="MS",     department="Maintenance",  requested_by="Site Electrician",priority="Normal", required_date=date(2024,1,18), justification="Switch replacement",            status="Submitted"),
         models.PurchaseRequisitionModel(pr_no="PR-2024-007", pr_date=date(2024,1,15), item_code="HK-041", req_qty=30,  location_code="CH-1B",  department="Housekeeping", requested_by="HK Supervisor",   priority="Low",    required_date=date(2024,1,22), justification="Gloves for HK staff",           status="Draft"),
     ]
-    db.add_all(prs); db.commit()
+    seed_missing(models.PurchaseRequisitionModel, prs, ("pr_no",), "purchase requisitions")
 
     pos = [
         models.PurchaseOrderModel(po_no="PO-2024-001", po_date=date(2024,1,3),  pr_ref="PR-2024-001", vendor_code="VND-003", item_code="HK-001", uom="Liter", qty_ordered=20,  rate=310,  gst_pct=18, delivery_date=date(2024,1,8),  delivery_location="STORE-CH", terms="Net 30", status="Fully Received",   received_qty=20,  balance_qty=0),
@@ -234,7 +250,7 @@ try:
         models.PurchaseOrderModel(po_no="PO-2024-004", po_date=date(2024,1,9),  pr_ref="PR-2024-004", vendor_code="VND-008", item_code="EL-023", uom="Piece", qty_ordered=30,  rate=265,  gst_pct=18, delivery_date=date(2024,1,15), delivery_location="STORE-CH", terms="Net 30", status="Partial Received", received_qty=20,  balance_qty=10),
         models.PurchaseOrderModel(po_no="PO-2024-005", po_date=date(2024,1,11), pr_ref="PR-2024-005", vendor_code="VND-006", item_code="HK-010", uom="Roll",  qty_ordered=200, rate=14,   gst_pct=12, delivery_date=date(2024,1,18), delivery_location="STORE-CH", terms="Net 15", status="Sent to Vendor",   received_qty=0,   balance_qty=200),
     ]
-    db.add_all(pos); db.commit()
+    seed_missing(models.PurchaseOrderModel, pos, ("po_no",), "purchase orders")
 
     grns = [
         models.GRNModel(grn_no="GRN-2024-001", grn_date=date(2024,1,8),  invoice_no="INV-V3-1001", po_no="PO-2024-001", vendor_code="VND-003", item_code="HK-001", recd_qty=20, accepted_qty=20, rejected_qty=0, uom="Liter", rate=310, received_by="Store Keeper", inspected_by="QC Officer",  store_location="STORE-CH", batch_lot="B001", status="Stored",  remarks="Quality OK"),
@@ -242,7 +258,7 @@ try:
         models.GRNModel(grn_no="GRN-2024-003", grn_date=date(2024,1,12), invoice_no="INV-V2-1501", po_no="PO-2024-003", vendor_code="VND-002", item_code="HK-033", recd_qty=10, accepted_qty=10, rejected_qty=0, uom="Kg",    rate=560, received_by="Pantry Staff", inspected_by="Admin",      store_location="CH-1B",    batch_lot="B003", status="Stored",  remarks="Fresh stock"),
         models.GRNModel(grn_no="GRN-2024-004", grn_date=date(2024,1,15), invoice_no="INV-V8-2002", po_no="PO-2024-004", vendor_code="VND-008", item_code="EL-023", recd_qty=20, accepted_qty=20, rejected_qty=0, uom="Piece", rate=265, received_by="Store Keeper", inspected_by="Electrician", store_location="STORE-CH", batch_lot="B004", status="Stored",  remarks="Partial delivery"),
     ]
-    db.add_all(grns); db.commit()
+    seed_missing(models.GRNModel, grns, ("grn_no",), "GRNs")
 
     issuances = [
         models.IssuanceLogModel(issue_id="ISS-001", date=date(2024,1,10), month=1, quarter=1, item_code="HK-001", qty=10, uom="Liter", rate=310, location_code="STORE-CH", department="Housekeeping", issued_to="HK Staff",      issued_by="Store Keeper", remarks="Floor cleaning supply"),
@@ -291,7 +307,7 @@ try:
         models.IssuanceLogModel(issue_id="ISS-043", date=date(2024,12,20),month=12, quarter=4, item_code="HK-027", qty=16, uom="Kg",    rate=100, location_code="STORE-CH", department="Housekeeping", issued_to="HK Staff", issued_by="Store Keeper", remarks="Garbage bags Dec"),
         models.IssuanceLogModel(issue_id="ISS-044", date=date(2024,12,28),month=12, quarter=4, item_code="HK-036", qty=15, uom="Kg",    rate=46,  location_code="CH-1B",    department="Admin",        issued_to="Pantry Staff", issued_by="Admin", remarks="Sugar year-end stock"),
     ]
-    db.add_all(issuances); db.commit()
+    seed_missing(models.IssuanceLogModel, issuances, ("issue_id",), "issuances")
     print(f"  OK: 16 inventory | 7 PRs | 5 POs | 4 GRNs | 44 issuances (all 12 months)")
 
 
@@ -299,7 +315,7 @@ try:
     returns = [
         models.ReturnLogModel(return_id="RET-001", return_date=date(2024,1,15), grn_ref="GRN-2024-002", item_code="EL-019", item_name="LED Bulb 9W B22", qty_returned=2, uom="Piece", vendor_code="VND-008", reason="Damaged in transit", status="Credit Received", credit_note="CN-V8-001", remarks="2 bulbs had cracked glass. Credit note received within 7 days."),
     ]
-    db.add_all(returns); db.commit()
+    seed_missing(models.ReturnLogModel, returns, ("return_id",), "return records")
     print(f"  OK: {len(returns)} returns")
 
     print("Seeding consumption norms (full Excel data)...")
@@ -331,40 +347,28 @@ try:
         models.ConsumptionNormModel(item_code="HK-044", item_name="Face Mask Surgical 3-ply",    category="PPE & Safety",       basis="Per Washroom",  norm_value=15.0, norm_unit="Piece", rate=0,   cost_per_unit=0,      frequency="Monthly", remarks="1 mask/day for HK staff per washroom area; 15 working days avg"),
         models.ConsumptionNormModel(item_code="HK-047", item_name="Cockroach Killer Spray",      category="Pest Control",       basis="Per 1000 SqFt", norm_value=0.3,  norm_unit="Can",   rate=0,   cost_per_unit=0,      frequency="Monthly", remarks="Spot treatment as needed"),
     ]
-    # Only seed if table is empty
-    existing = db.query(models.ConsumptionNormModel).count()
-    if existing < 5:
-        db.add_all(norms_full); db.commit()
-        print(f"  OK: {len(norms_full)} consumption norms")
-    else:
-        print(f"  OK: {existing} norms already exist")
+    seed_missing(models.ConsumptionNormModel, norms_full, ("item_code", "basis", "frequency"), "consumption norms")
 
     # ── THIRD-PARTY SERVICES ──────────────────────────────────────────────────
     print("Seeding third-party services...")
     if 'third_party_services' not in models.Base.metadata.tables:
         models.Base.metadata.create_all(engine)
-    # drop & recreate to avoid duplicates on re-run
-    from sqlalchemy import text
-    db.execute(text("DELETE FROM third_party_services"))
-    db.commit()
     services = [
         models.ThirdPartyServiceModel(location_code="MS",    service_type="Deep Cleaning",  vendor_name="CleanPro Services",   vendor_contact="9876500001", monthly_cost=8500, scope="Weekly deep cleaning of all washrooms, pantry, meeting rooms. Monthly carpet shampooing.", status="Active"),
         models.ThirdPartyServiceModel(location_code="CH-1B", service_type="Pest Control",   vendor_name="PestAway India",       vendor_contact="9876500002", monthly_cost=2200, scope="Monthly pest control. Quarterly rodent treatment.", status="Active"),
         models.ThirdPartyServiceModel(location_code="BRD",   service_type="Daily Cleaning", vendor_name="Shree Cleaning Co.",   vendor_contact="9876500003", monthly_cost=6000, scope="Daily housekeeping - mopping, dusting, washroom maintenance.", status="Active"),
     ]
-    db.add_all(services); db.commit()
+    seed_missing(models.ThirdPartyServiceModel, services, ("location_code", "service_type", "vendor_name"), "third-party services")
     print(f"  OK: {len(services)} third-party services")
 
     # ── RETURNS LOG ───────────────────────────────────────────────────────────
     print("Seeding returns log...")
     if 'returns_log' not in models.Base.metadata.tables:
         models.Base.metadata.create_all(engine)
-    db.execute(text("DELETE FROM returns_log"))
-    db.commit()
     returns = [
         models.ReturnLogModel(return_id="RET-001", return_date=date(2024,1,15), grn_ref="GRN-2024-002", item_code="EL-019", item_name="LED Bulb 9W B22", qty_returned=2, uom="Piece", vendor_code="VND-008", reason="Damaged in transit", status="Credit Received", credit_note="CN-V8-001", remarks="2 bulbs had cracked glass. Credit note received within 7 days."),
     ]
-    db.add_all(returns); db.commit()
+    seed_missing(models.ReturnLogModel, returns, ("return_id",), "return records")
     print(f"  OK: {len(returns)} return records")
 
     print("\n" + "="*55)
