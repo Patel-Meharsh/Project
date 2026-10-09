@@ -63,6 +63,7 @@ export default function Dashboard() {
     }))
     .filter(category => category.value > 0)
     .sort((a, b) => b.value - a.value)
+  const totalCategorySpend = categoryTreeData.reduce((total, category) => total + category.value, 0)
 
   const reorders = data.reorder_alerts || []
 
@@ -245,7 +246,10 @@ export default function Dashboard() {
                       )
                     }}
                   >
-                    <Tooltip formatter={(value, name) => [fmt.currencyFull(value), name]} contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }} />
+                    <Tooltip formatter={(value, name) => {
+                      const share = totalCategorySpend > 0 ? (Number(value) / totalCategorySpend * 100).toFixed(1) : '0.0'
+                      return [`${fmt.currencyFull(value)} · ${share}% of spend`, name]
+                    }} contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }} />
                   </Treemap>
                 </ResponsiveContainer>
               ) : (
