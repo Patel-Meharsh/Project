@@ -192,7 +192,7 @@ export default function Dashboard() {
                           <rect x={x} y={y} width={width} height={height} rx={5} ry={5} fill={color || '#94a3b8'} stroke="#ffffff" strokeWidth={3} />
                           {showName && (
                             <text x={x + 12} y={y + (showValue ? 25 : height / 2)} fill="#ffffff" fontSize={Math.min(14, Math.max(10, width / 13))} fontWeight={600}>
-                              {name.length > Math.max(10, Math.floor(width / 8)) ? name.slice(0, Math.max(8, Math.floor(width / 8) - 1)) + '…' : name}
+                              {String(name || '').length > Math.max(10, Math.floor(width / 8)) ? String(name || '').slice(0, Math.max(8, Math.floor(width / 8) - 1)) + '…' : String(name || '')}
                             </text>
                           )}
                           {showValue && (
