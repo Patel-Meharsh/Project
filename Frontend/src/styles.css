@@ -827,14 +827,16 @@ thead th { transition: background 0.12s, color 0.12s; }
 .dashboard-category-panel { display: flex; flex-direction: column; min-width: 0; }
 .dashboard-category-panel .dashboard-treemap-body {
   flex: 1;
-  min-height: 470px;
+  min-height: 600px;
   height: auto;
   display: flex;
   flex-direction: column;
 }
 .dashboard-category-panel .dashboard-treemap-body > div { flex: 1; min-height: 0; }
+.dashboard-category-panel .dashboard-treemap-body svg { shape-rendering: geometricPrecision; }
+.dashboard-category-panel .dashboard-treemap-body text { paint-order: stroke; stroke: rgba(0,0,0,0.10); stroke-width: 0.35px; stroke-linejoin: round; }
 .dashboard-quick-actions {
-  align-self: end;
+  align-self: stretch;
   height: fit-content;
 }
 .dashboard-quick-actions .panel-body { padding-top: 14px; padding-bottom: 18px; }
