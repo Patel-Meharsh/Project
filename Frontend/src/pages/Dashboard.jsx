@@ -46,6 +46,8 @@ export default function Dashboard() {
   const reorders = data.reorder_alerts || []
 
   const totalAnnual = approvedBudget?.yearly ?? 720000
+  const categoryAnnualTotal = annualBudget.reduce((sum, c) => sum + (c.yearly || 0), 0)
+  const unallocatedAnnual = totalAnnual - categoryAnnualTotal
 
   const annualData = annualBudget
     .sort((a,b) => (b.yearly || 0) - (a.yearly || 0))
@@ -263,7 +265,7 @@ export default function Dashboard() {
             <div className="panel-header">
               <div>
                 <div className="panel-title">Annual Budget</div>
-                <div className="panel-sub">Budget allocation across categories</div>
+                <div className="panel-sub">{fmtCurrency(categoryAnnualTotal)} allocated · {fmtCurrency(unallocatedAnnual)} unallocated</div>
               </div>
               <button className="btn btn-outline btn-sm" onClick={()=>navigate('/budget')}>Details →</button>
             </div>
