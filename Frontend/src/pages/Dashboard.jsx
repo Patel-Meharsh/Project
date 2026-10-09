@@ -270,20 +270,7 @@ export default function Dashboard() {
               <button className="btn btn-outline btn-sm" onClick={()=>navigate('/budget')}>Details →</button>
             </div>
             <div className="panel-body">
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(2,minmax(0,1fr))', gap:8, marginBottom:16 }}>
-                {[
-                  { label:'Monthly', value:60100 },
-                  { label:'Quarterly', value:60100 * 3 },
-                  { label:'Half-Yearly', value:60100 * 6 },
-                  { label:'Yearly', value:60100 * 12 },
-                  { label:'Next Year (+6% inflation)', value:60100 * 12 * 1.06 },
-                ].map(period => (
-                  <div key={period.label} style={{ background:'#f8f9fc', borderRadius:9, padding:'10px 12px' }}>
-                    <div style={{ fontSize:10, color:'#94a3b8', marginBottom:4 }}>{period.label}</div>
-                    <div style={{ fontFamily:"'Fraunces',serif", fontWeight:700, fontSize:15, color:'#0d0f1a' }}>{fmtCurrency(period.value)}</div>
-                  </div>
-                ))}
-              </div>
+
               {
                 annualData.length > 0 ? (
                 annualData.map(({cat,val,color,pct})=>(
