@@ -19,7 +19,7 @@ export default function Dashboard() {
     const [s, c, ab] = await Promise.all([
       dashboardApi.kpis().catch(err => { toast.error('Failed to load KPIs'); return {} }),
       dashboardApi.spendByCategory().catch(() => []),
-      budgetCalcApi.getCategorySummary().catch(() => []),
+      budgetCalcApi.getApproved().catch(() => null),
     ])
     // Use the most recent month that has actual spend; fall back to current month
     const spend = (s?.monthly_spend || []).filter(m => m.value > 0)
@@ -28,12 +28,13 @@ export default function Dashboard() {
       : new Date().getMonth() + 1
     const bv = await budgetCalcApi.getVsActual(bestMonth).catch(() => null)
     setBvA(bv)
-    return { kpis: s || {}, cats: Array.isArray(c) ? c : [], annualBudget: Array.isArray(ab) ? ab : [] }
+    return { kpis: s || {}, cats: Array.isArray(c) ? c : [], annualBudget: Array.isArray(ab?.categories) ? ab.categories : [], approvedBudget: ab }
   })
 
   const data = fetchResult?.kpis || {}
   const cats = fetchResult?.cats || []
   const annualBudget = fetchResult?.annualBudget || []
+  const approvedBudget = fetchResult?.approvedBudget || null
 
   if (loading) return (
     <>
@@ -47,7 +48,7 @@ export default function Dashboard() {
 
   const reorders = data.reorder_alerts || []
 
-  const totalAnnual = annualBudget.reduce((sum, c) => sum + (c.yearly || 0), 0)
+  const totalAnnual = approvedBudget?.yearly ?? 720000
 
   const annualData = annualBudget
     .sort((a,b) => (b.yearly || 0) - (a.yearly || 0))
@@ -133,7 +134,7 @@ export default function Dashboard() {
             <div className="panel fade-in" style={{ cursor:'pointer' }} onClick={()=>navigate('/budget/variance')}>
               <div className="panel-header">
                 <div>
-                  <div className="panel-title">Budget vs Actual — {new Date().toLocaleString('en-IN',{month:'short'})}</div>
+                  <div className="panel-title">Budget vs Actual — {MONTHS[bvA.month] || MONTHS[new Date().getMonth()+1]}</div>
                   <div className="panel-sub">Click to see full analysis</div>
                 </div>
                 <span style={{ fontSize:12, color:'#3b82f6', fontWeight:500 }}>View all →</span>
