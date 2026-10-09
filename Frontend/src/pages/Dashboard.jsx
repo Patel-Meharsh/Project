@@ -261,7 +261,7 @@ export default function Dashboard() {
         {/* Row 4: Quick nav cards + Annual budget */}
         <div className="chart-grid-3">
           <div className="panel fade-in dashboard-quick-actions" style={{ gridColumn:'1/3' }}>
-            <div className="panel-header"><div className="panel-title">Quick Actions</div><div className="panel-sub">Jump to any module</div></div>
+            <div className="panel-header"><div><div className="panel-title">Quick Actions</div><div className="panel-sub">Jump to any module</div></div></div>
             <div className="panel-body">
               <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:10 }}>
                 {[
