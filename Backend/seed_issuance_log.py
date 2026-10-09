@@ -1006,11 +1006,11 @@ RECORDS = [
     180,
     "Pack",
     31,
-    "CH-A82",
+    "HQ-A82",
     "",
-    "",
-    "",
-    ""
+    "Housekeeping",
+    "Rohit",
+    "For CH Office"
   ],
   [
     "ISS-025",
@@ -1019,11 +1019,11 @@ RECORDS = [
     100,
     "Pack",
     17,
-    "CH-A82",
+    "HQ-A82",
     "",
-    "",
-    "",
-    ""
+    "Housekeeping",
+    "Rohit",
+    "All CH Office"
   ],
   [
     "ISS-023",
@@ -1032,11 +1032,11 @@ RECORDS = [
     8,
     "Piece",
     11,
-    "CH-A82",
+    "HQ-A82",
     "",
-    "",
-    "",
-    ""
+    "Housekeeping",
+    "Rohit",
+    "For All CH Office"
   ],
   [
     "ISS-027",
@@ -1045,11 +1045,11 @@ RECORDS = [
     10,
     "Roll",
     29,
-    "CH-A82",
+    "HQ-A82",
     "",
-    "",
-    "",
-    ""
+    "Housekeeping",
+    "Rohit",
+    "All CH Office"
   ],
   [
     "ISS-028",
@@ -1058,11 +1058,11 @@ RECORDS = [
     9,
     "Set",
     50,
-    "CH-A82",
+    "HQ-A82",
     "",
-    "",
-    "",
-    ""
+    "Housekeeping",
+    "Rohit",
+    "All CH Office"
   ],
   [
     "ISS-029",
@@ -1071,11 +1071,11 @@ RECORDS = [
     9,
     "Set",
     390,
-    "CH-A82",
+    "HQ-A82",
     "",
-    "",
-    "",
-    ""
+    "Housekeeping",
+    "Rohit",
+    "ALL CH Office"
   ],
   [
     "ISS-022",
@@ -1084,11 +1084,11 @@ RECORDS = [
     10,
     "Liter",
     140,
-    "CH-A82",
+    "HQ-A82",
     "",
-    "",
-    "",
-    ""
+    "Housekeeping",
+    "Rohit",
+    "For All CH Office"
   ],
   [
     "ISS-030",
@@ -1097,11 +1097,11 @@ RECORDS = [
     15,
     "Liter",
     19,
-    "CH-A82",
+    "HQ-A82",
     "",
-    "",
-    "",
-    ""
+    "Housekeeping",
+    "Rohit",
+    "All CH Office"
   ],
   [
     "ISS-032",
@@ -1110,11 +1110,11 @@ RECORDS = [
     15,
     "Kg",
     79,
-    "CH-A82",
+    "HQ-A82",
     "",
-    "",
-    "",
-    ""
+    "Housekeeping",
+    "Rohit",
+    "All CH Office"
   ],
   [
     "ISS-031",
@@ -1123,11 +1123,11 @@ RECORDS = [
     20,
     "Piece",
     49,
-    "CH-A82",
+    "HQ-A82",
     "",
-    "",
-    "",
-    ""
+    "Housekeeping",
+    "Rohit",
+    "All CH Office"
   ],
   [
     "ISS-026",
@@ -1136,11 +1136,11 @@ RECORDS = [
     15,
     "Piece",
     14.5,
-    "CH-A82",
+    "HQ-A82",
     "",
-    "",
-    "",
-    ""
+    "Housekeeping",
+    "Rohit",
+    "All CH Office"
   ],
   [
     "ISS-021",
@@ -1149,11 +1149,11 @@ RECORDS = [
     10,
     "Liter",
     167,
-    "CH-A82",
+    "HQ-A82",
     "",
-    "",
-    "",
-    ""
+    "Housekeeping",
+    "Rohit",
+    "For CH Office"
   ],
   [
     "ISS-020",
@@ -1162,11 +1162,11 @@ RECORDS = [
     2,
     "Liter",
     580,
-    "—\t\tHK Staff\tFloor cleaning supply",
     "",
     "",
+    "HK Staff",
     "",
-    ""
+    "Floor cleaning supply"
   ]
 ]
 
