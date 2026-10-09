@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Treemap } from 'recharts'
 import { dashboardApi, budgetCalcApi } from '../lib/api'
-import { fmtCurrency, fmtNum, CATEGORY_COLORS } from '../lib/utils'
+import { fmtCurrency, fmtNum, CATEGORY_COLORS, fmt } from '../lib/utils'
 import { Spinner } from '../components/UI'
 import Header from '../components/Header'
 import useDataFetch from '../lib/useDataFetch'
@@ -237,7 +237,7 @@ export default function Dashboard() {
                                 </tspan>
                               ))}
                               {height > (visibleLines.length > 1 ? 62 : 48) && width > 72 && (
-                                <tspan x={x + 10} dy={fontSize + 5} fontSize={compact ? 9 : 12} fontWeight={600}>{fmtCurrency(amount)}</tspan>
+                                <tspan x={x + 10} dy={fontSize + 5} fontSize={compact ? 9 : 12} fontWeight={600}>{fmt.currencyFull(amount)}</tspan>
                               )}
                             </text>
                           )}
@@ -245,7 +245,7 @@ export default function Dashboard() {
                       )
                     }}
                   >
-                    <Tooltip formatter={(value, name) => [fmtCurrency(value), name]} contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }} />
+                    <Tooltip formatter={(value, name) => [fmt.currencyFull(value), name]} contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }} />
                   </Treemap>
                 </ResponsiveContainer>
               ) : (
