@@ -1716,7 +1716,9 @@ def budget_vs_actual(month: int = 1, year: Optional[int] = None, db: Session = D
             "utilization_pct": round((actual_value / budget_value * 100) if budget_value else 0, 1),
             "status": "Over Budget" if variance < 0 else "Under Budget" if variance > 0 else "On Budget"
         })
-    actual_total = round(sum(r["actual_value"] for r in result), 2)
+    # Total actual spend must include every issuance in the selected month,
+    # including items that do not currently have a consumption norm.
+    actual_total = round(sum((iss.qty or 0) * (iss.rate or 0) for iss in selected_issuances), 2)
     approved_monthly = APPROVED_BUDGET["monthly"]
     variance_total = round(approved_monthly - actual_total, 2)
     return {
