@@ -1,7 +1,7 @@
 from contextlib import closing
 from operator import inv
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header as FHeader, Body, Request, Cookie
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header as FHeader, Body, Request
 from fastapi.responses import StreamingResponse, FileResponse, Response
 import os
 import uuid
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import get_db
 from app import models
+from app.config import settings
 from app.auth import hash_password, verify_password, create_token, decode_token, needs_rehash
 import io
 import pandas as pd
@@ -77,8 +78,11 @@ def _log(db: Session, event_type: str, entity: str, entity_id: str,
         pass          # logging must never break the main operation
 
 
-def _get_current_user(authorization: str = FHeader(default=""), session_cookie: str = Cookie(default=""), db: Session = Depends(get_db)):
-    token = authorization.replace("Bearer ", "").strip() or session_cookie.strip()
+def _get_current_user(request: Request, authorization: str = FHeader(default=""), db: Session = Depends(get_db)):
+    # Cookie names differ between development and production. Read both explicitly;
+    # FastAPI Cookie parameters otherwise look for a cookie named after the parameter.
+    session_cookie = request.cookies.get("__Host-gg_session") or request.cookies.get("gg_session") or ""
+    token = authorization.removeprefix("Bearer ").strip() or session_cookie.strip()
     payload = decode_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
