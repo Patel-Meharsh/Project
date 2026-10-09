@@ -191,8 +191,8 @@ export default function Dashboard() {
                     aspectRatio={4 / 3}
                     stroke="#ffffff"
                     content={({ x, y, width, height, name, size, color, payload }) => {
-                      const amount = Number(payload?.value ?? categoryLookup.get(label) ?? size ?? 0)
                       const label = String(name || payload?.name || '')
+                      const amount = Number(payload?.value ?? categoryLookup.get(label) ?? size ?? 0)
                       if (width <= 0 || height <= 0) return null
                       const showName = label.length > 0 && width > 82 && height > 42
                       const showValue = width > 108 && height > 62
