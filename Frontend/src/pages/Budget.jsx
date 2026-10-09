@@ -358,8 +358,8 @@ export default function Budget({ defaultTab = 'overview' }) {
                       </tr>
                     ))}
                     <tr style={{ borderTop:'2px solid #0d0f1a' }}>
-                      <td colSpan={7+Math.min(6,locations.length)} style={{ textAlign:'right', fontWeight:700, fontSize:14, paddingRight:16 }}>Total Monthly Budget</td>
-                      <td style={{ textAlign:'right', fontFamily:"'Fraunces',serif", fontWeight:800, fontSize:18, color:'#0d0f1a' }}>{fmtCurrency(calculated?.total_monthly)}</td>
+                      <td colSpan={7+Math.min(6,locations.length)} style={{ textAlign:'right', fontWeight:700, fontSize:14, paddingRight:16 }}>Norm-calculated monthly total</td>
+                      <td style={{ textAlign:'right', fontFamily:"'Fraunces',serif", fontWeight:800, fontSize:18, color:'#0d0f1a' }}>{fmtCurrency(calculated?.norm_calculated_monthly ?? calculated?.total_monthly)}</td>
                     </tr>
                   </tbody>
                 </table>
