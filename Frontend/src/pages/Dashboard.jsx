@@ -46,7 +46,7 @@ export default function Dashboard() {
   const categoryTreeData = categoryOrder.map(name => ({
     name,
     value: categoryLookup.get(name) || 0,
-    // Give zero-spend categories a tiny visible tile so every requested category remains represented.
+    // Keep zero-spend categories visible without letting them distort real category proportions.
     size: Math.max(categoryLookup.get(name) || 0, 0.01),
     color: CATEGORY_COLORS[name] || (name === 'Stationery' ? '#94a3b8' : name === 'Welcome Kit' ? '#cbd5e1' : '#64748b'),
   }))
@@ -191,22 +191,22 @@ export default function Dashboard() {
                     aspectRatio={4 / 3}
                     stroke="#ffffff"
                     content={({ x, y, width, height, name, size, color, payload }) => {
-                      const amount = Number(payload?.value ?? 0)
+                      const amount = Number(payload?.value ?? categoryLookup.get(label) ?? size ?? 0)
                       const label = String(name || payload?.name || '')
                       if (width <= 0 || height <= 0) return null
-                      const showName = label.length > 0 && width > 82 && height > 36
+                      const showName = label.length > 0 && width > 82 && height > 42
                       const showValue = width > 108 && height > 62
+                      const maxChars = Math.max(10, Math.floor((width - 24) / 7.2))
+                      const labelLines = label.length > maxChars && width > 150
+                        ? [label.slice(0, maxChars), label.slice(maxChars, maxChars * 2)]
+                        : [label]
                       return (
                         <g>
                           <rect x={x} y={y} width={width} height={height} rx={5} ry={5} fill={color || '#94a3b8'} stroke="#ffffff" strokeWidth={2} />
                           {showName && (
-                            <text x={x + 12} y={y + (showValue ? 25 : height / 2)} fill="#ffffff" fontFamily="'DM Sans', sans-serif" fontSize={Math.min(16, Math.max(12, width / 15))} fontWeight={700}>
-                              {label.length > Math.max(10, Math.floor(width / 8)) ? label.slice(0, Math.max(8, Math.floor(width / 8) - 1)) + '…' : label}
-                            </text>
-                          )}
-                          {showValue && (
-                            <text x={x + 12} y={y + 45} fill="#ffffff" fontFamily="'DM Sans', sans-serif" fontSize={13} fontWeight={600} opacity={0.98}>
-                              {fmtCurrency(amount)}
+                            <text x={x + 12} y={y + (showValue ? 24 : height / 2)} fill="#ffffff" fontFamily="'DM Sans', sans-serif" fontSize={Math.min(16, Math.max(12, width / 15))} fontWeight={700}>
+                              <tspan x={x + 12} dy="0">{labelLines[0]}{labelLines[1] ? '…' : ''}</tspan>
+                              {showValue && <tspan x={x + 12} dy="20" fontSize={13} fontWeight={600}>{fmtCurrency(amount)}</tspan>}
                             </text>
                           )}
                         </g>
@@ -237,7 +237,7 @@ export default function Dashboard() {
               </div>
             ) : (
               <>
-                {reorders.slice(0, 6).map(r=>(
+                {reorders.slice(0, 4).map(r=>(
                   <div key={r.code} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 20px', borderBottom:'1px solid #f8f9fc' }}>
                     <div style={{ width:36, height:36, borderRadius:8, background:'#fef2f2', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, flexShrink:0 }}>⚠️</div>
                     <div style={{ flex:1 }}>
@@ -251,7 +251,7 @@ export default function Dashboard() {
                   </div>
                 ))}
 
-                {reorders.length > 6 && (
+                {reorders.length > 4 && (
                   <div style={{ textAlign:'center', padding:12 }}>
                     <button 
                       className="btn btn-outline btn-sm"
