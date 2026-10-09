@@ -551,7 +551,7 @@ export default function Budget({ defaultTab = 'overview' }) {
             {!forecast ? <Spinner /> : (
               <>
                 {/* Period forecast cards */}
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:14, marginBottom:24 }}>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:14, marginBottom:24 }}>
                   {forecast.periods.map(p => (
                     <div key={p.period} className="forecast-card"
                       style={{ background:p.type==='forecast'?'linear-gradient(135deg,#0d0f1a,#1e3a5f)':'white', border:p.type==='current'?'1px solid #edf0f7':'none', color:p.type==='forecast'?'white':'#0d0f1a', borderRadius:16, padding:'20px 18px', overflow:'hidden' }}>
