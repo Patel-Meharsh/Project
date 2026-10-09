@@ -182,7 +182,8 @@ export default function Dashboard() {
                     nameKey="name"
                     aspectRatio={4 / 3}
                     stroke="#ffffff"
-                    content={({ x, y, width, height, name, size, color }) => {
+                    content={({ x, y, width, height, name, size, color, payload }) => {
+                      const amount = Number(payload?.size ?? size ?? 0)
                       if (width <= 0 || height <= 0) return null
                       const showName = width > 78 && height > 34
                       const showValue = width > 92 && height > 54
@@ -196,7 +197,7 @@ export default function Dashboard() {
                           )}
                           {showValue && (
                             <text x={x + 12} y={y + 45} fill="#ffffff" fontSize={12} opacity={0.95}>
-                              {fmtCurrency(size)}
+                              {fmtCurrency(amount)}
                             </text>
                           )}
                         </g>
