@@ -1,8 +1,8 @@
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/gateway_inventory"
-    SECRET_KEY: str   = "CHANGE-ME-use-a-real-secret-in-production"
+    DATABASE_URL: str = "postgresql+psycopg://postgres:root@localhost:5432/Inventory_Management"
+    SECRET_KEY: str   = "J42fvvoUDpMyR61CXTQ1Pa2b92CsqxnXAKy6YjlJfzJa1RX8XlZ60uf9B5RZ0FCS"
     ENVIRONMENT: str  = "development"   # development | production
     ALLOWED_ORIGINS: str = ""           # comma-separated, e.g. "https://app.yourdomain.com"
 
