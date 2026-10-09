@@ -379,11 +379,11 @@ export default function Budget({ defaultTab = 'overview' }) {
             {/* Period budget summary */}
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(145px,1fr))', gap:12, marginBottom:18 }}>
               {[
-                { label:'Monthly Budget', value:(calculated?.total_monthly || vsActual.budget_total || 60100), color:'#3b82f6' },
-                { label:'Quarterly Budget', value:(calculated?.total_monthly || vsActual.budget_total || 60100) * 3, color:'#0891b2' },
-                { label:'Half-Yearly Budget', value:(calculated?.total_monthly || vsActual.budget_total || 60100) * 6, color:'#8b5cf6' },
-                { label:'Annual Budget', value:(calculated?.total_yearly || (calculated?.total_monthly || vsActual.budget_total || 60100) * 12), color:'#16a34a' },
-                { label:`Next Year (+${inflation}% inflation)`, value:(calculated?.total_yearly || (calculated?.total_monthly || vsActual.budget_total || 60100) * 12) * (1 + inflation / 100), color:'#d97706' },
+                { label:'Monthly Budget', value:60100, color:'#3b82f6' },
+                { label:'Quarterly Budget', value:60100 * 3, color:'#0891b2' },
+                { label:'Half-Yearly Budget', value:60100 * 6, color:'#8b5cf6' },
+                { label:'Annual Budget', value:60100 * 12, color:'#16a34a' },
+                { label:`Next Year (+${inflation}% inflation)`, value:60100 * 12 * (1 + inflation / 100), color:'#d97706' },
               ].map(period => (
                 <div key={period.label} style={{ background:'white', borderRadius:12, padding:'14px 16px', border:'1px solid #edf0f7' }}>
                   <div style={{ fontSize:10, fontWeight:600, color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:6 }}>{period.label}</div>
