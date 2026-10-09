@@ -16,12 +16,13 @@ export default function BudgetOverview() {
 
   const { data: fetchResult, loading } = useDataFetch(() =>
     Promise.all([
-      budgetCalcApi.getCategorySummary().catch(() => []),
+      budgetCalcApi.getApproved().catch(() => null),
       budgetCalcApi.getLocationSummary().catch(() => []),
       budgetCalcApi.getVsActual(currentMonth).catch(() => null),
-    ]).catch(err => { toast.error('Failed to load budget data'); return [[], [], null] })
+    ]).catch(err => { toast.error('Failed to load budget data'); return [null, [], null] })
   )
-  const [cats, locs, vsActual] = fetchResult || [[], [], null]
+  const [approved, locs, vsActual] = fetchResult || [null, [], null]
+  const cats = approved?.categories || []
 
   if (loading) return (
     <>
@@ -31,12 +32,14 @@ export default function BudgetOverview() {
   )
 
   // ── Derived numbers ───────────────────────────────────────────────────────
-  const totalMonthly  = cats.reduce((s, c) => s + (c.monthly  || 0), 0)
-  const totalYearly   = cats.reduce((s, c) => s + (c.yearly   || 0), 0)
+  const totalMonthly  = approved?.monthly ?? 60100
+  const totalQuarterly = approved?.quarterly ?? 180000
+  const totalHalfYearly = approved?.half_yearly ?? 360000
+  const totalYearly   = approved?.yearly ?? 720000
   const actualSpend   = vsActual?.actual_total  || 0
   const budgetMonth   = vsActual?.budget_total  || totalMonthly
   const variance      = vsActual?.variance_total ?? (budgetMonth - actualSpend)
-  const utilPct       = budgetMonth > 0 ? Math.min(100, (actualSpend / budgetMonth) * 100) : 0
+  const utilPct       = budgetMonth > 0 ? (actualSpend / budgetMonth) * 100 : 0
 
   const overBudget    = (vsActual?.items || []).filter(i => i.variance_value < 0)
   const underBudget   = (vsActual?.items || []).filter(i => i.variance_value > 0)
@@ -65,8 +68,8 @@ export default function BudgetOverview() {
         {/* ── KPI STRIP ──────────────────────────────────────────────── */}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:16, marginBottom:24 }}>
           {[
-            { label:'Monthly Budget',    value: fmtCurrency(totalMonthly),  sub:'Auto-calculated',                  c:'blue',   ic:'📅', path:'/budget/calculator' },
-            { label:'Annual Budget',     value: fmtCurrency(totalYearly),   sub:'12 × monthly',                     c:'teal',   ic:'📊', path:'/budget' },
+            { label:'Monthly Budget',    value: fmtCurrency(totalMonthly),  sub:'Approved monthly budget',                  c:'blue',   ic:'📅', path:'/budget/calculator' },
+            { label:'Annual Budget',     value: fmtCurrency(totalYearly),   sub:'Approved annual budget',                     c:'teal',   ic:'📊', path:'/budget' },
             { label:`${MONTH_NAMES[currentMonth]} Actual Spend`, value: fmtCurrency(actualSpend), sub:`of ${fmtCurrency(budgetMonth)} budget`, c: actualSpend > budgetMonth ? 'red' : 'green', ic:'💸', path:'/budget/variance' },
             { label:'Budget Utilization', value:`${utilPct.toFixed(1)}%`,   sub: variance >= 0 ? `₹${fmtCurrency(variance)} remaining` : `₹${fmtCurrency(Math.abs(variance))} over`, c: utilPct > 100 ? 'red' : utilPct > 80 ? 'amber' : 'green', ic:'📈', path:'/budget/variance' },
           ].map(k => (
@@ -121,8 +124,8 @@ export default function BudgetOverview() {
                 <div style={{ fontSize:12, color:'#64748b', marginBottom:10 }}>12-Month Projection</div>
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>
                   {[
-                    ['Q1', fmtCurrency(totalMonthly*3)],
-                    ['Q2', fmtCurrency(totalMonthly*3)],
+                    ['Quarter', fmtCurrency(totalQuarterly)],
+                    ['Half-Year', fmtCurrency(totalHalfYearly)],
                     ['Full Year', fmtCurrency(totalYearly)],
                   ].map(([l,v]) => (
                     <div key={l} style={{ textAlign:'center', background:'#f8f9fc', borderRadius:8, padding:'8px 6px' }}>
