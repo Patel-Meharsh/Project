@@ -323,18 +323,10 @@ def spend_by_category(db: Session = Depends(get_db), current_user: models.UserMo
     cat_map = {}
     for i in iss:
         item = items.get(i.item_code)
-        raw_category = item.category if item and item.category else "Other"
-        cat = str(raw_category).strip() or "Other"
-
-        # Issuance rows may have a zero rate when no rate was supplied.
-        # Use the item's current master rate only as a fallback in that case.
-        rate = float(i.rate or 0)
-        if rate <= 0 and item and item.rate and item.rate > 0:
-            rate = float(item.rate)
-
-        value = float(i.qty or 0) * rate
+        cat = (item.category if item and item.category else "Other")
+        value = (i.qty or 0) * (i.rate or 0)
         cat_map[cat] = cat_map.get(cat, 0) + value
-    return [{"category": k, "value": round(v, 2)} for k, v in sorted(cat_map.items(), key=lambda x: -x[1])]
+    return [{"category": k, "value": round(v,2)} for k,v in sorted(cat_map.items(), key=lambda x: -x[1])]
 
 @router.get("/dashboard/spend-by-location")
 def spend_by_location(
