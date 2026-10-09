@@ -223,7 +223,7 @@ export default function BudgetOverview() {
           </div>
 
           <div className="panel">
-            <div className="panel-header"><div className="panel-title">Annual Split</div><div className="panel-sub">₹{fmtCurrency(totalYearly)} total</div></div>
+            <div className="panel-header"><div className="panel-title">Annual Split</div><div className="panel-sub">₹{fmtCurrency(totalYearly)} approved total · ₹{fmtCurrency(Math.max(0, totalYearly - cats.reduce((sum, c) => sum + (c.yearly || 0), 0)))} unallocated</div></div>
             <div className="panel-body">
               {cats.filter(c => c.yearly > 0).map(c => (
                 <div key={c.category} style={{ marginBottom:12 }}>
