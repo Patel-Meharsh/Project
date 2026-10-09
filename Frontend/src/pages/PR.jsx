@@ -16,7 +16,12 @@ const PRIORITIES = ['Urgent','High','Normal','Low']
 const EMPTY = { pr_no:'', item_code:'', req_qty:1, location_code:'', department:'Admin', requested_by:'', priority:'Normal', required_date:'', justification:'', status:'Draft' }
 const emptyLine = () => ({ id: Date.now() + Math.random(), item_code: '', qty: 1, uom: '', rate: 0 })
 
-const num = v => Number(v) || 0
+const num = v => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0
+  const parsed = Number(String(v ?? '').replace(/[,₹\\s]/g, ''))
+  return Number.isFinite(parsed) ? parsed : 0
+}
+const calculateLineTotal = lines => Math.round((lines || []).reduce((sum, li) => sum + num(li.qty) * num(li.rate), 0) * 100) / 100
 
 export default function PR() {
   const toast = useToast()
@@ -64,7 +69,7 @@ export default function PR() {
   }
   const addLine = () => setLineItems(prev => [...prev, emptyLine()])
   const removeLine = (id) => setLineItems(prev => prev.length <= 1 ? prev : prev.filter(li => li.id !== id))
-  const lineTotal = lineItems.reduce((s, li) => s + num(li.qty) * num(li.rate), 0)
+  const lineTotal = calculateLineTotal(lineItems)
 
   const save = async () => {
     const validLines = lineItems.filter(li => li.item_code)
@@ -132,7 +137,7 @@ export default function PR() {
   }
   const addEditLine = () => setEditLines(prev => [...prev, emptyLine()])
   const removeEditLine = (id) => setEditLines(prev => prev.length <= 1 ? prev : prev.filter(li => li.id !== id))
-  const editLineTotal = editLines.reduce((s, li) => s + num(li.qty) * num(li.rate), 0)
+  const editLineTotal = calculateLineTotal(editLines)
 
   const saveEdit = async () => {
     const validLines = editLines.filter(li => li.item_code)
@@ -193,7 +198,9 @@ export default function PR() {
   const PRIORITY_COLORS = { Urgent:'#dc2626', High:'#f59e0b', Normal:'#3b82f6', Low:'#94a3b8' }
 
   // ── Shared line items form renderer ─────────────────────────────────────────
-  const renderLineItems = (lines, updateFn, addFn, removeFn, total, readOnly = false) => (
+  const renderLineItems = (lines, updateFn, addFn, removeFn, _total, readOnly = false) => {
+    const total = calculateLineTotal(lines.filter(li => li.item_code))
+    return (
     <div style={{ marginTop: 20 }}>
       <div className="label" style={{ marginBottom: 8 }}>Items</div>
       <div style={{ borderRadius: 12, border: '1px solid #edf0f7', overflow: 'hidden' }}>
@@ -255,6 +262,7 @@ export default function PR() {
       </div>
     </div>
   )
+  }
 
   if (loading) return <><Header title="Purchase Requisitions" /><div className="page-content"><Spinner /></div></>
 
