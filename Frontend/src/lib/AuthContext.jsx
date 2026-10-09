@@ -17,9 +17,11 @@ export function AuthProvider({ children }) {
   }, [])
 
   const login = async (email, password) => {
-    const res = await authApi.login(email, password)
-    setUser(res.user)
-    return res.user
+    // A successful POST is not enough: confirm the browser retained the HttpOnly cookie.
+    await authApi.login(email, password)
+    const verifiedUser = await authApi.me()
+    setUser(verifiedUser)
+    return verifiedUser
   }
 
   const signup = async (data) => {
