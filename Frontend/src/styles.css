@@ -866,7 +866,7 @@ thead th { transition: background 0.12s, color 0.12s; }
   .dashboard-category-panel .dashboard-treemap-body { min-height: 320px; }
 }
 
-/* Dashboard layout: independent columns, with Quick Actions bottom-aligned to Annual Budget. */
+/* Dashboard layout: let Spend by Category fill the available left-column space. */
 @media (min-width: 769px) {
   .dashboard-category-grid { align-items: start; }
   .dashboard-category-panel {
@@ -877,6 +877,10 @@ thead th { transition: background 0.12s, color 0.12s; }
     flex: 1;
     min-height: 0;
     height: auto;
+  }
+  /* Expand only the category card into the unused vertical space above Quick Actions. */
+  .dashboard-category-panel {
+    min-height: 760px;
   }
   .dashboard-category-grid > .panel:not(.dashboard-category-panel) {
     align-self: start;
