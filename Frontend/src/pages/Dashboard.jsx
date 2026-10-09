@@ -130,13 +130,13 @@ export default function Dashboard() {
 
           {/* Budget vs Actual mini widget */}
           {bvA && (
-            <div className="panel fade-in" style={{ cursor:'pointer' }} onClick={()=>navigate('/budget/variance')}>
+            <div className="panel fade-in">
               <div className="panel-header">
                 <div>
                   <div className="panel-title">Budget vs Actual — {MONTHS[bvA.month] || MONTHS[new Date().getMonth()+1]}</div>
-                  <div className="panel-sub">Click to see full analysis</div>
+                  <div className="panel-sub">Monthly budget compared with actual spend</div>
                 </div>
-                <span style={{ fontSize:12, color:'#3b82f6', fontWeight:500 }}>View all →</span>
+                <button type="button" className="btn btn-outline btn-sm" onClick={() => navigate('/budget/variance')} style={{ fontSize:12 }}>View all →</button>
               </div>
               <div className="panel-body">
                 <div style={{ display:'flex', gap:16, marginBottom:16 }}>
