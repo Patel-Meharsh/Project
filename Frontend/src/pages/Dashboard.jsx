@@ -49,20 +49,14 @@ export default function Dashboard() {
 
   const totalAnnual = annualBudget.reduce((sum, c) => sum + (c.yearly || 0), 0)
 
-  const annualCategoryOrder = [
-    'Washroom Supplies', 'Cleaning Chemicals', 'Pantry', 'PPE & Safety',
-    'Waste Management', 'Cleaning Tools', 'Electrical', 'Pest Control'
-  ]
-  const annualData = annualCategoryOrder.map(category => {
-    const source = annualBudget.find(c => c.category === category)
-    const yearlyValue = Number(source?.yearly || 0)
-    return {
-      cat: category,
-      val: yearlyValue,
-      pct: totalAnnual > 0 ? (yearlyValue / totalAnnual) * 100 : 0,
-      color: CATEGORY_COLORS[category] || '#94a3b8'
-    }
-  })
+  const annualData = annualBudget
+    .sort((a,b) => (b.yearly || 0) - (a.yearly || 0))
+    .map(c => ({
+      cat: c.category,
+      val: c.yearly || 0,
+      pct: c.pct || 0,
+      color: CATEGORY_COLORS[c.category] || '#94a3b8'
+    }))
 
   return (
     <>
