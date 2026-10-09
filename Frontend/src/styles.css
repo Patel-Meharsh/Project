@@ -866,15 +866,30 @@ thead th { transition: background 0.12s, color 0.12s; }
   .dashboard-category-panel .dashboard-treemap-body { min-height: 320px; }
 }
 
-/* Align Spend by Category and Reorder Alerts to the same compact row height. */
+/* Dashboard layout: independent columns, with Quick Actions bottom-aligned to Annual Budget. */
 @media (min-width: 769px) {
-  .dashboard-category-grid { align-items: stretch; }
-  .dashboard-category-panel { height: 390px; min-height: 390px; }
-  .dashboard-category-panel .dashboard-treemap-body { min-height: 0; height: 100%; }
-  .dashboard-category-grid > .panel:not(.dashboard-category-panel) {
-    align-self: stretch;
-    height: 390px;
+  .dashboard-category-grid { align-items: start; }
+  .dashboard-category-panel {
+    height: 100%;
     min-height: 390px;
-    overflow: hidden;
   }
+  .dashboard-category-panel .dashboard-treemap-body {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+  }
+  .dashboard-category-grid > .panel:not(.dashboard-category-panel) {
+    align-self: start;
+    height: fit-content;
+    min-height: 0;
+    overflow: visible;
+  }
+  .chart-grid-3 { align-items: stretch; }
+  .dashboard-quick-actions {
+    height: 100%;
+    min-height: 100%;
+    align-self: stretch;
+    box-sizing: border-box;
+  }
+  .dashboard-quick-actions .panel-body { flex: 1; }
 }
