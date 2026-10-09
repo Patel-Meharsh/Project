@@ -289,9 +289,17 @@ def dashboard_kpis(db: Session = Depends(get_db), current_user: models.UserModel
     )
     ytd_po = db.query(func.sum(models.PurchaseOrderModel.qty_ordered * models.PurchaseOrderModel.rate)).scalar() or 0
     iss = db.query(models.IssuanceLogModel).all()
-    monthly = {m: 0 for m in range(1, 13)}
-    for i in iss:
-        k = i.month; monthly[k] = monthly.get(k, 0) + (i.qty * i.rate)
+    current_year = date.today().year
+    monthly = {m: 0.0 for m in range(1, 13)}
+    for issuance in iss:
+        if issuance.date:
+            if issuance.date.year != current_year:
+                continue
+            month_num = issuance.date.month
+        else:
+            month_num = issuance.month
+        if month_num and 1 <= month_num <= 12:
+            monthly[month_num] += (issuance.qty or 0) * (issuance.rate or 0)
     # Reorder alerts — aggregate best closing per item across all locations
     reorder_items = []
     for code, best in item_best_closing.items():
@@ -324,14 +332,17 @@ def spend_by_category(db: Session = Depends(get_db), current_user: models.UserMo
 def spend_by_location(
     db: Session = Depends(get_db),
     current_user: models.UserModel = Depends(_get_current_user)):
-    rows, _ = _compute_budget(db)
+    rows, norm_total = _compute_budget(db)
 
-    # Aggregate per location
+    # Allocate the approved monthly budget across locations in proportion to
+    # the norms-based model, while keeping the project-wide total authoritative.
     loc_totals = {}
     for r in rows:
         for loc_code, data in r["locations"].items():
             loc_totals.setdefault(loc_code, 0)
             loc_totals[loc_code] += data["value"]
+    if norm_total > 0:
+        loc_totals = {code: value * APPROVED_BUDGET["monthly"] / norm_total for code, value in loc_totals.items()}
 
     # Fetch location metadata
     locs = {l.code: l for l in db.query(models.LocationModel).all()}
