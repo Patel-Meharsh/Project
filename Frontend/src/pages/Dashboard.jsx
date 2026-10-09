@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Treemap } from 'recharts'
 import { dashboardApi, budgetCalcApi } from '../lib/api'
-import { fmtCurrency, fmtNum, CATEGORY_COLORS, fmt } from '../lib/utils'
+import { fmtCurrency, fmtNum, CATEGORY_COLORS } from '../lib/utils'
 import { Spinner } from '../components/UI'
 import Header from '../components/Header'
 import useDataFetch from '../lib/useDataFetch'
@@ -43,27 +43,13 @@ export default function Dashboard() {
   const spendData = (data.monthly_spend||[]).map(m => ({ name: MONTHS[m.month], value: m.value }))
   // Keep the seven requested dashboard categories and roll any other item categories into Other.
   const categoryOrder = ['Washroom Supplies', 'Cleaning Chemicals', 'Cleaning Tools', 'Waste Management', 'Stationery', 'Other', 'Welcome Kit']
-  const categoryNameLookup = new Map(categoryOrder.map(name => [name.toLocaleLowerCase(), name]))
-  const categoryTotals = new Map(categoryOrder.map(name => [name, 0]))
-
-  for (const category of cats) {
-    const rawName = String(category.category || '').trim()
-    const categoryName = categoryNameLookup.get(rawName.toLocaleLowerCase()) || 'Other'
-    const amount = Number(category.value)
-    if (!Number.isFinite(amount)) continue
-    categoryTotals.set(categoryName, (categoryTotals.get(categoryName) || 0) + amount)
-  }
-
-  // Treemap area is based only on actual spend; zero-spend categories do not get fake area.
-  const categoryTreeData = categoryOrder
-    .map(name => ({
-      name,
-      value: Math.max(0, categoryTotals.get(name) || 0),
-      color: CATEGORY_COLORS[name] || (name === 'Stationery' ? '#64748b' : name === 'Welcome Kit' ? '#cbd5e1' : '#94a3b8'),
-    }))
-    .filter(category => category.value > 0)
-    .sort((a, b) => b.value - a.value)
-  const totalCategorySpend = categoryTreeData.reduce((total, category) => total + category.value, 0)
+  const categoryLookup = new Map(cats.map(c => [String(c.category || '').trim(), Number(c.value || 0)]))
+  const maxCategorySpend = Math.max(0, ...cats.map(c => Number(c.value || 0)))
+  const categoryTreeData = categoryOrder.map(name => ({
+    name,
+    value: Math.max(categoryLookup.get(name) || 0, maxCategorySpend * 0.12),
+    color: CATEGORY_COLORS[name] || (name === 'Stationery' ? '#64748b' : name === 'Welcome Kit' ? '#cbd5e1' : '#94a3b8'),
+  }))
 
   const reorders = data.reorder_alerts || []
 
@@ -238,7 +224,7 @@ export default function Dashboard() {
                                 </tspan>
                               ))}
                               {height > (visibleLines.length > 1 ? 62 : 48) && width > 72 && (
-                                <tspan x={x + 10} dy={fontSize + 5} fontSize={compact ? 9 : 12} fontWeight={600}>{fmt.currencyFull(amount)}</tspan>
+                                <tspan x={x + 10} dy={fontSize + 5} fontSize={compact ? 9 : 12} fontWeight={600}>{fmtCurrency(amount)}</tspan>
                               )}
                             </text>
                           )}
@@ -246,10 +232,7 @@ export default function Dashboard() {
                       )
                     }}
                   >
-                    <Tooltip formatter={(value, name) => {
-                      const share = totalCategorySpend > 0 ? (Number(value) / totalCategorySpend * 100).toFixed(1) : '0.0'
-                      return [`${fmt.currencyFull(value)} · ${share}% of spend`, name]
-                    }} contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }} />
+                    <Tooltip formatter={(value, name) => [fmtCurrency(value), name]} contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }} />
                   </Treemap>
                 </ResponsiveContainer>
               ) : (
