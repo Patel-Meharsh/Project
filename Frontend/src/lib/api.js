@@ -13,12 +13,17 @@ const BASE =
 
 const api = axios.create({ baseURL: BASE + '/api', withCredentials: true });
 
-// Auto-logout on 401
+// Redirect protected-page requests on 401, but leave auth requests alone.
+// In particular, /auth/me returning 401 is normal when no session exists yet;
+// redirecting during the initial session check can interrupt the login flow.
 api.interceptors.response.use(
   r => r,
   err => {
-    if (err.response?.status === 401 && window.location.pathname !== '/login') {
-      window.location.href = '/login'
+    const status = err.response?.status
+    const url = String(err.config?.url || '')
+    const isAuthRequest = /\/auth\/(me|login|signup|logout)(?:\?|$)/.test(url)
+    if (status === 401 && !isAuthRequest && window.location.pathname !== '/login') {
+      window.location.assign('/login')
     }
     return Promise.reject(err)
   }
