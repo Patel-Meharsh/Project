@@ -49,14 +49,20 @@ export default function Dashboard() {
 
   const totalAnnual = annualBudget.reduce((sum, c) => sum + (c.yearly || 0), 0)
 
-  const annualData = annualBudget
-    .sort((a,b) => (b.yearly || 0) - (a.yearly || 0))
-    .map(c => ({
-      cat: c.category,
-      val: c.yearly || 0,
-      pct: c.pct || 0,
-      color: CATEGORY_COLORS[c.category] || '#94a3b8'
-    }))
+  const annualCategoryOrder = [
+    'Washroom Supplies', 'Cleaning Chemicals', 'Pantry', 'PPE & Safety',
+    'Waste Management', 'Cleaning Tools', 'Electrical', 'Pest Control'
+  ]
+  const annualData = annualCategoryOrder.map(category => {
+    const source = annualBudget.find(c => c.category === category)
+    const yearlyValue = Number(source?.yearly || 0)
+    return {
+      cat: category,
+      val: yearlyValue,
+      pct: totalAnnual > 0 ? (yearlyValue / totalAnnual) * 100 : 0,
+      color: CATEGORY_COLORS[category] || '#94a3b8'
+    }
+  })
 
   return (
     <>
@@ -263,10 +269,27 @@ export default function Dashboard() {
 
           <div className="panel fade-in">
             <div className="panel-header">
-              <div className="panel-title">Annual Budget</div>
+              <div>
+                <div className="panel-title">Annual Budget</div>
+                <div className="panel-sub">Budget allocation across categories</div>
+              </div>
               <button className="btn btn-outline btn-sm" onClick={()=>navigate('/budget')}>Details →</button>
             </div>
             <div className="panel-body">
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(2,minmax(0,1fr))', gap:8, marginBottom:16 }}>
+                {[
+                  { label:'Monthly', value:totalAnnual / 12 },
+                  { label:'Quarterly', value:totalAnnual / 4 },
+                  { label:'Half-Yearly', value:totalAnnual / 2 },
+                  { label:'Yearly', value:totalAnnual },
+                  { label:'Next Year (+6% inflation)', value:totalAnnual * 1.06 },
+                ].map(period => (
+                  <div key={period.label} style={{ background:'#f8f9fc', borderRadius:9, padding:'10px 12px' }}>
+                    <div style={{ fontSize:10, color:'#94a3b8', marginBottom:4 }}>{period.label}</div>
+                    <div style={{ fontFamily:"'Fraunces',serif", fontWeight:700, fontSize:15, color:'#0d0f1a' }}>{fmtCurrency(period.value)}</div>
+                  </div>
+                ))}
+              </div>
               {
                 annualData.length > 0 ? (
                 annualData.map(({cat,val,color,pct})=>(
