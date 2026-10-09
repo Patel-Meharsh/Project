@@ -907,3 +907,86 @@ thead th { transition: background 0.12s, color 0.12s; }
     border-radius: 8px;
   }
 }
+
+
+/* Dashboard four-card layout: preserve each card's content and style while arranging the cards in two columns. */
+@media (min-width: 769px) {
+  .dashboard-four-card-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+    gap: 14px;
+    align-items: stretch;
+    margin-bottom: 20px;
+  }
+
+  .dashboard-card-column {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .dashboard-card-column-left {
+    gap: 0;
+  }
+
+  .dashboard-card-column-right {
+    gap: 16px;
+  }
+
+  .dashboard-card-column-left .dashboard-category-panel {
+    flex: 1 1 auto;
+    min-height: 390px;
+    height: auto;
+  }
+
+  .dashboard-card-column-left .dashboard-category-panel .dashboard-treemap-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+  }
+
+  .dashboard-card-column-left .dashboard-quick-actions {
+    flex: 0 0 auto;
+    align-self: stretch;
+    height: auto;
+    margin: 0;
+  }
+
+  .dashboard-card-column-right .dashboard-reorder-panel {
+    flex: 0 0 auto;
+    align-self: stretch;
+    height: fit-content;
+  }
+
+  .dashboard-card-column-right .dashboard-annual-budget {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+}
+
+/* On smaller screens, retain the existing card order and stack all four cards. */
+@media (max-width: 768px) {
+  .dashboard-four-card-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .dashboard-card-column-left,
+  .dashboard-card-column-right {
+    display: contents;
+  }
+
+  .dashboard-category-panel { order: 1; }
+  .dashboard-reorder-panel { order: 2; }
+  .dashboard-quick-actions {
+    order: 3;
+    align-self: stretch;
+    height: auto;
+    margin: 0;
+  }
+  .dashboard-annual-budget { order: 4; }
+  .dashboard-category-panel .dashboard-treemap-body { min-height: 320px; }
+}
