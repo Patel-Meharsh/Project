@@ -19,9 +19,14 @@ export function AuthProvider({ children }) {
   const login = async (email, password) => {
     // A successful POST is not enough: confirm the browser retained the HttpOnly cookie.
     await authApi.login(email, password)
-    const verifiedUser = await authApi.me()
-    setUser(verifiedUser)
-    return verifiedUser
+    try {
+      const verifiedUser = await authApi.me()
+      setUser(verifiedUser)
+      return verifiedUser
+    } catch {
+      setUser(null)
+      throw new Error('The login request succeeded, but the session could not be verified. Please restart the backend and frontend, then try again.')
+    }
   }
 
   const signup = async (data) => {
