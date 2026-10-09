@@ -176,9 +176,10 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Row 3: Expanded category treemap + Reorder alerts */}
-        <div className="chart-grid dashboard-category-grid" style={{ marginBottom:20 }}>
-          <div className="panel fade-in dashboard-category-panel">
+        {/* Dashboard cards arranged in the approved two-column layout. */}
+        <div className="dashboard-four-card-layout">
+          <div className="dashboard-card-column dashboard-card-column-left">
+            <div className="panel fade-in dashboard-category-panel">
             <div className="panel-header">
               <div>
                 <div className="panel-title">Spend by Category</div>
@@ -230,8 +231,32 @@ export default function Dashboard() {
               )}
             </div>
           </div>
-
-          <div className="panel fade-in">
+            <div className="panel fade-in dashboard-quick-actions">
+            <div className="panel-header"><div><div className="panel-title">Quick Actions</div><div className="panel-sub">Jump to any module</div></div></div>
+            <div className="panel-body">
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:10 }}>
+                {[
+                  { label:'New Purchase Request', sub:'Raise a PR for any item', icon:'🛒', color:'#8b5cf6', bg:'#f5f3ff', path:'/procurement/pr' },
+                  { label:'Create Purchase Order', sub:'Convert approved PRs to POs', icon:'📋', color:'#3b82f6', bg:'#eff6ff', path:'/procurement/po' },
+                  { label:'Record GRN', sub:'Log incoming deliveries', icon:'📦', color:'#10b981', bg:'#f0fdf4', path:'/procurement/grn' },
+                  { label:'Issue Items', sub:'Dispatch to departments', icon:'🔄', color:'#f59e0b', bg:'#fffbeb', path:'/issuance' },
+                  { label:'View Vendors', sub:`${data.active_vendors || 0} active vendors`, icon:'🏭', color:'#06b6d4', bg:'#ecfeff', path:'/masters/vendors' },
+                  { label:'Budget & Analytics', sub:'Forecasts, variance & norms', icon:'📊', color:'#ec4899', bg:'#fdf2f8', path:'/budget' },
+                ].map(card => (
+                  <div key={card.label} className="dash-nav-card" onClick={() => navigate(card.path)}>
+                    <div className="dash-nav-icon" style={{ background: card.bg, color: card.color }}>{card.icon}</div>
+                    <div>
+                      <div style={{ fontWeight:600, fontSize:13.5, color:'#0d0f1a', marginBottom:2 }}>{card.label}</div>
+                      <div style={{ fontSize:11.5, color:'#94a3b8' }}>{card.sub}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          </div>
+          <div className="dashboard-card-column dashboard-card-column-right">
+            <div className="panel fade-in dashboard-reorder-panel">
             <div className="panel-header">
               <div className="panel-title">Reorder Alerts</div>
               <button className="btn btn-outline btn-sm" onClick={()=>navigate('/inventory')}>View Inventory →</button>
@@ -272,35 +297,7 @@ export default function Dashboard() {
             )}
             </div>
           </div>
-        </div>
-
-        {/* Row 4: Quick nav cards + Annual budget */}
-        <div className="chart-grid-3">
-          <div className="panel fade-in dashboard-quick-actions" style={{ gridColumn:'1/3' }}>
-            <div className="panel-header"><div><div className="panel-title">Quick Actions</div><div className="panel-sub">Jump to any module</div></div></div>
-            <div className="panel-body">
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:10 }}>
-                {[
-                  { label:'New Purchase Request', sub:'Raise a PR for any item', icon:'🛒', color:'#8b5cf6', bg:'#f5f3ff', path:'/procurement/pr' },
-                  { label:'Create Purchase Order', sub:'Convert approved PRs to POs', icon:'📋', color:'#3b82f6', bg:'#eff6ff', path:'/procurement/po' },
-                  { label:'Record GRN', sub:'Log incoming deliveries', icon:'📦', color:'#10b981', bg:'#f0fdf4', path:'/procurement/grn' },
-                  { label:'Issue Items', sub:'Dispatch to departments', icon:'🔄', color:'#f59e0b', bg:'#fffbeb', path:'/issuance' },
-                  { label:'View Vendors', sub:`${data.active_vendors || 0} active vendors`, icon:'🏭', color:'#06b6d4', bg:'#ecfeff', path:'/masters/vendors' },
-                  { label:'Budget & Analytics', sub:'Forecasts, variance & norms', icon:'📊', color:'#ec4899', bg:'#fdf2f8', path:'/budget' },
-                ].map(card => (
-                  <div key={card.label} className="dash-nav-card" onClick={() => navigate(card.path)}>
-                    <div className="dash-nav-icon" style={{ background: card.bg, color: card.color }}>{card.icon}</div>
-                    <div>
-                      <div style={{ fontWeight:600, fontSize:13.5, color:'#0d0f1a', marginBottom:2 }}>{card.label}</div>
-                      <div style={{ fontSize:11.5, color:'#94a3b8' }}>{card.sub}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="panel fade-in">
+            <div className="panel fade-in dashboard-annual-budget">
             <div className="panel-header">
               <div>
                 <div className="panel-title">Annual Budget</div>
@@ -336,8 +333,8 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-
-      </div>
+          </div>
+        </div>
     </>
   )
 }
