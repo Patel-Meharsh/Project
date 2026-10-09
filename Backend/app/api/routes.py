@@ -1780,17 +1780,16 @@ def budget_loc_summary(db: Session = Depends(get_db), current_user: models.UserM
         for loc_code, data in row["locations"].items():
             loc_vals.setdefault(loc_code, 0)
             loc_vals[loc_code] += data["value"]
-    scale = APPROVED_BUDGET["monthly"] / norm_total if norm_total > 0 else 0
     return [
         {
             "location": code,
             "name": locs.get(code).name if locs.get(code) else code,
             "area": locs.get(code).area_sqft if locs.get(code) else 0,
             "headcount": locs.get(code).headcount if locs.get(code) else 0,
-            "monthly": round(value * scale, 2),
-            "quarterly": round(value * scale * 3, 2),
-            "half_yearly": round(value * scale * 6, 2),
-            "yearly": round(value * scale * 12, 2),
+            "monthly": round(APPROVED_BUDGET["monthly"] * value / norm_total, 2) if norm_total else 0,
+            "quarterly": round(APPROVED_BUDGET["quarterly"] * value / norm_total, 2) if norm_total else 0,
+            "half_yearly": round(APPROVED_BUDGET["half_yearly"] * value / norm_total, 2) if norm_total else 0,
+            "yearly": round(APPROVED_BUDGET["yearly"] * value / norm_total, 2) if norm_total else 0,
         }
         for code, value in sorted(loc_vals.items(), key=lambda pair: -pair[1])
     ]
