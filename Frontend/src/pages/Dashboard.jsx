@@ -21,12 +21,9 @@ export default function Dashboard() {
       dashboardApi.spendByCategory().catch(() => []),
       budgetCalcApi.getApproved().catch(() => null),
     ])
-    // Use the most recent month that has actual spend; fall back to current month
-    const spend = (s?.monthly_spend || []).filter(m => m.value > 0)
-    const bestMonth = spend.length > 0
-      ? Math.max(...spend.map(m => m.month))
-      : new Date().getMonth() + 1
-    const bv = await budgetCalcApi.getVsActual(bestMonth).catch(() => null)
+    // Compare this calendar month's spend with the approved monthly budget.
+    const currentMonth = new Date().getMonth() + 1
+    const bv = await budgetCalcApi.getVsActual(currentMonth, new Date().getFullYear()).catch(() => null)
     setBvA(bv)
     return { kpis: s || {}, cats: Array.isArray(c) ? c : [], annualBudget: Array.isArray(ab?.categories) ? ab.categories : [], approvedBudget: ab }
   })
