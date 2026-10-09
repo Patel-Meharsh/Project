@@ -376,6 +376,36 @@ export default function Budget({ defaultTab = 'overview' }) {
         )}
         {tab === 'variance' && vsActual !== null && (
           <>
+            {/* Period budget summary */}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(145px,1fr))', gap:12, marginBottom:18 }}>
+              {[
+                { label:'Monthly Budget', value:(calculated?.total_monthly || vsActual.budget_total || 60100), color:'#3b82f6' },
+                { label:'Quarterly Budget', value:(calculated?.total_monthly || vsActual.budget_total || 60100) * 3, color:'#0891b2' },
+                { label:'Half-Yearly Budget', value:(calculated?.total_monthly || vsActual.budget_total || 60100) * 6, color:'#8b5cf6' },
+                { label:'Annual Budget', value:(calculated?.total_yearly || (calculated?.total_monthly || vsActual.budget_total || 60100) * 12), color:'#16a34a' },
+                { label:`Next Year (+${inflation}% inflation)`, value:(calculated?.total_yearly || (calculated?.total_monthly || vsActual.budget_total || 60100) * 12) * (1 + inflation / 100), color:'#d97706' },
+              ].map(period => (
+                <div key={period.label} style={{ background:'white', borderRadius:12, padding:'14px 16px', border:'1px solid #edf0f7' }}>
+                  <div style={{ fontSize:10, fontWeight:600, color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:6 }}>{period.label}</div>
+                  <div style={{ fontFamily:"'Fraunces',serif", fontWeight:800, fontSize:20, color:period.color }}>{fmtCurrency(period.value)}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap', marginBottom:20, background:'white', padding:'12px 16px', borderRadius:12, border:'1px solid #edf0f7' }}>
+              <span style={{ fontSize:13, fontWeight:600, color:'#374151' }}>Next-year inflation:</span>
+              {[3,5,6,7,8,10,12].map(rate => (
+                <button key={rate} onClick={() => setInflation(rate)} className="btn btn-sm"
+                  style={{ background:inflation===rate?'#0d0f1a':'white', color:inflation===rate?'white':'#374151', border:'1px solid #dde1ec', minWidth:42 }}>{rate}%</button>
+              ))}
+              <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, color:'#64748b' }}>
+                Custom
+                <input className="input input-sm" type="number" value={inflation} min={0} max={50} step={0.5}
+                  onChange={e => setInflation(Math.max(0, Math.min(50, Number(e.target.value) || 0)))}
+                  style={{ width:72 }} />
+                %
+              </label>
+            </div>
+
             {/* Month picker */}
             <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:20, background:'white', padding:'14px 20px', borderRadius:12, border:'1px solid #edf0f7' }}>
               <span style={{ fontSize:13, fontWeight:600, color:'#374151', flexShrink:0 }}>Select Month:</span>
