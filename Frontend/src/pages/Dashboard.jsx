@@ -41,19 +41,28 @@ export default function Dashboard() {
   )
 
   const spendData = (data.monthly_spend||[]).map(m => ({ name: MONTHS[m.month], value: m.value }))
+  // Keep the seven requested dashboard categories and roll any other item categories into Other.
   const categoryOrder = ['Washroom Supplies', 'Cleaning Chemicals', 'Cleaning Tools', 'Waste Management', 'Stationery', 'Other', 'Welcome Kit']
-  const categoryLookup = new Map(cats.map(c => [String(c.category || '').trim(), Number(c.value || 0)]))
-  const maxCategorySpend = Math.max(0, ...categoryOrder.map(name => categoryLookup.get(name) || 0))
-  const categoryTreeData = categoryOrder.map(name => {
-    const value = categoryLookup.get(name) || 0
-    return {
+  const categoryNameLookup = new Map(categoryOrder.map(name => [name.toLocaleLowerCase(), name]))
+  const categoryTotals = new Map(categoryOrder.map(name => [name, 0]))
+
+  for (const category of cats) {
+    const rawName = String(category.category || '').trim()
+    const categoryName = categoryNameLookup.get(rawName.toLocaleLowerCase()) || 'Other'
+    const amount = Number(category.value)
+    if (!Number.isFinite(amount)) continue
+    categoryTotals.set(categoryName, (categoryTotals.get(categoryName) || 0) + amount)
+  }
+
+  // Treemap area is based only on actual spend; zero-spend categories do not get fake area.
+  const categoryTreeData = categoryOrder
+    .map(name => ({
       name,
-      value,
-      // A minimum visual weight keeps all seven categories readable, including categories with no spend yet.
-      size: value > 0 ? Math.max(value, maxCategorySpend * 0.12) : Math.max(maxCategorySpend * 0.12, 1),
-      color: CATEGORY_COLORS[name] || (name === 'Stationery' ? '#94a3b8' : name === 'Welcome Kit' ? '#cbd5e1' : '#64748b'),
-    }
-  })
+      value: Math.max(0, categoryTotals.get(name) || 0),
+      color: CATEGORY_COLORS[name] || (name === 'Stationery' ? '#64748b' : name === 'Welcome Kit' ? '#cbd5e1' : '#94a3b8'),
+    }))
+    .filter(category => category.value > 0)
+    .sort((a, b) => b.value - a.value)
 
   const reorders = data.reorder_alerts || []
 
@@ -191,28 +200,43 @@ export default function Dashboard() {
                 <ResponsiveContainer width="100%" height="100%">
                   <Treemap
                     data={categoryTreeData}
-                    dataKey="size"
+                    dataKey="value"
                     nameKey="name"
                     aspectRatio={4 / 3}
                     stroke="#ffffff"
                     content={({ x = 0, y = 0, width = 0, height = 0, name, size, color, payload }) => {
                       const label = String(name || payload?.name || '')
-                      const amount = Number(payload?.value ?? categoryLookup.get(label) ?? 0)
+                      const amount = Number(payload?.value ?? size ?? 0)
                       if (width <= 0 || height <= 0) return null
                       const compact = width < 145 || height < 72
                       const fontSize = compact ? 10 : Math.min(15, Math.max(12, width / 17))
                       const maxChars = Math.max(7, Math.floor((width - 20) / (fontSize * 0.62)))
-                      const firstLine = label.length > maxChars ? label.slice(0, maxChars) : label
-                      const secondLine = label.length > maxChars ? label.slice(maxChars, maxChars * 2) : ''
+                      const lines = []
+                      let currentLine = ''
+                      for (const word of label.split(/\s+/).filter(Boolean)) {
+                        const candidate = currentLine ? currentLine + ' ' + word : word
+                        if (candidate.length > maxChars && currentLine) {
+                          lines.push(currentLine)
+                          currentLine = word
+                        } else {
+                          currentLine = candidate
+                        }
+                      }
+                      if (currentLine) lines.push(currentLine)
+                      const visibleLines = lines.slice(0, height > 65 ? 2 : 1)
                       const labelY = height < 54 ? y + height / 2 + 3 : y + 20
                       return (
                         <g>
                           <rect x={x + 1} y={y + 1} width={Math.max(0, width - 2)} height={Math.max(0, height - 2)} rx={6} ry={6} fill={color || payload?.color || '#94a3b8'} stroke="#ffffff" strokeWidth={2} />
                           {width > 48 && height > 25 && (
                             <text x={x + 10} y={labelY} fill="#ffffff" fontFamily="'DM Sans', sans-serif" fontSize={fontSize} fontWeight={700}>
-                              <tspan x={x + 10} dy="0">{firstLine}{secondLine && firstLine.length >= maxChars ? '…' : ''}</tspan>
-                              {secondLine && height > 55 && <tspan x={x + 10} dy={fontSize + 2}>{secondLine.slice(0, maxChars)}{secondLine.length > maxChars ? '…' : ''}</tspan>}
-                              {height > (secondLine ? 62 : 48) && width > 72 && (
+                              {visibleLines.map((line, index) => (
+                                <tspan key={index} x={x + 10} dy={index === 0 ? 0 : fontSize + 2}>
+                                  {line.length > maxChars ? line.slice(0, maxChars - 1) + '…' : line}
+                                  {index === visibleLines.length - 1 && lines.length > visibleLines.length ? '…' : ''}
+                                </tspan>
+                              ))}
+                              {height > (visibleLines.length > 1 ? 62 : 48) && width > 72 && (
                                 <tspan x={x + 10} dy={fontSize + 5} fontSize={compact ? 9 : 12} fontWeight={600}>{fmtCurrency(amount)}</tspan>
                               )}
                             </text>
