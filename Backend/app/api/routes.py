@@ -78,6 +78,31 @@ def _log(db: Session, event_type: str, entity: str, entity_id: str,
         pass          # logging must never break the main operation
 
 
+def _is_active_user(value) -> bool:
+    """Treat common legacy PostgreSQL string representations of active as active."""
+    return str(value).strip().lower() in {"true", "1", "yes", "active"}
+
+
+def _session_cookie_name() -> str:
+    return "__Host-gg_session" if settings.ENVIRONMENT == "production" else "gg_session"
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        _session_cookie_name(),
+        token,
+        httponly=True,
+        secure=settings.ENVIRONMENT == "production",
+        samesite="lax",
+        max_age=60 * 60 * 24 * 7,
+        path="/",
+    )
+
+
+def _clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(_session_cookie_name(), path="/")
+
+
 def _get_current_user(request: Request, authorization: str = FHeader(default=""), db: Session = Depends(get_db)):
     # Cookie names differ between development and production. Read both explicitly;
     # FastAPI Cookie parameters otherwise look for a cookie named after the parameter.
@@ -87,7 +112,7 @@ def _get_current_user(request: Request, authorization: str = FHeader(default="")
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     user = db.query(models.UserModel).filter(models.UserModel.id == payload.get("sub")).first()
-    if not user or user.is_active != "true":
+    if not user or not _is_active_user(user.is_active):
         raise HTTPException(status_code=401, detail="User not found or inactive")
     return user
 
@@ -2735,8 +2760,7 @@ def signup(data: dict, response: Response, db: Session = Depends(get_db)):
     )
     db.add(user); db.commit(); db.refresh(user)
     token = create_token({"sub": user.id, "role": user.role, "email": user.email})
-    cookie_name = "__Host-gg_session" if settings.ENVIRONMENT == "production" else "gg_session"
-    response.set_cookie(cookie_name, token, httponly=True, secure=settings.ENVIRONMENT == "production", samesite="lax", max_age=60 * 60 * 24 * 7, path="/")
+    _set_session_cookie(response, token)
     return {"user": _user_dict(user)}
 
 @router.post("/auth/login")
@@ -2748,7 +2772,7 @@ def login(request: Request, data: dict, response: Response, db: Session = Depend
 
     user = db.query(models.UserModel).filter(models.UserModel.email == email).first()
     valid = bool(user) and verify_password(password, user.password_hash)
-    if not valid or user.is_active != "true":
+    if not valid or not _is_active_user(user.is_active):
         _record_login_failure(email, client_ip)
         raise HTTPException(401, "Invalid email or password")
 
@@ -2758,14 +2782,12 @@ def login(request: Request, data: dict, response: Response, db: Session = Depend
     user.last_login = _dt.datetime.now(_dt.timezone.utc).isoformat()
     db.commit()
     token = create_token({"sub": user.id, "role": user.role, "email": user.email})
-    cookie_name = "__Host-gg_session" if settings.ENVIRONMENT == "production" else "gg_session"
-    response.set_cookie(cookie_name, token, httponly=True, secure=settings.ENVIRONMENT == "production", samesite="lax", max_age=60 * 60 * 24 * 7, path="/")
+    _set_session_cookie(response, token)
     return {"user": _user_dict(user)}
 
 @router.post("/auth/logout")
 def logout(response: Response):
-    cookie_name = "__Host-gg_session" if settings.ENVIRONMENT == "production" else "gg_session"
-    response.delete_cookie(cookie_name, path="/")
+    _clear_session_cookie(response)
     return {"status": "ok"}
 
 @router.get("/auth/me")
