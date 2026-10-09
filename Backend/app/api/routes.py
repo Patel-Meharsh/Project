@@ -1697,12 +1697,10 @@ def budget_vs_actual(month: int = 1, year: Optional[int] = None, db: Session = D
 
     result = []
     for row in rows:
-        total_a_qty = 0
-        total_a_val = 0
-        for loc_code in row["locations"]:
-            key = (row["item_code"], loc_code)
-            total_a_qty += actual_qty.get(key, 0)
-            total_a_val += actual_val.get(key, 0)
+        # Include this item's issuances from every location, not only locations
+        # that currently have a non-zero norm-based budget row.
+        total_a_qty = sum(qty for (item_code, _), qty in actual_qty.items() if item_code == row["item_code"])
+        total_a_val = sum(value for (item_code, _), value in actual_val.items() if item_code == row["item_code"])
         budget_value = row["total_value"]
         actual_value = round(total_a_val, 2)
         variance = budget_value - actual_value
@@ -1716,6 +1714,30 @@ def budget_vs_actual(month: int = 1, year: Optional[int] = None, db: Session = D
             "utilization_pct": round((actual_value / budget_value * 100) if budget_value else 0, 1),
             "status": "Over Budget" if variance < 0 else "Under Budget" if variance > 0 else "On Budget"
         })
+    # Surface actual spend for issued items that have no consumption norm,
+    # so the item table's actual column does not silently omit those issues.
+    norm_item_codes = {row["item_code"] for row in rows}
+    issued_without_norm = {}
+    item_master = {item.code: item for item in db.query(models.ItemModel).all()}
+    for iss in selected_issuances:
+        if iss.item_code in norm_item_codes:
+            continue
+        bucket = issued_without_norm.setdefault(iss.item_code, {"qty": 0.0, "value": 0.0})
+        bucket["qty"] += iss.qty or 0
+        bucket["value"] += (iss.qty or 0) * (iss.rate or 0)
+    for item_code, actual in issued_without_norm.items():
+        item = item_master.get(item_code)
+        actual_value = round(actual["value"], 2)
+        result.append({
+            "item_code": item_code, "item_name": item.name if item else item_code,
+            "category": item.category if item else "Uncategorized",
+            "uom": item.uom if item else "", "budget_qty": 0, "budget_value": 0,
+            "actual_qty": round(actual["qty"], 2), "actual_value": actual_value,
+            "variance_qty": round(-actual["qty"], 2), "variance_value": round(-actual_value, 2),
+            "variance_pct": 0, "utilization_pct": 0,
+            "status": "Over Budget" if actual_value > 0 else "On Budget",
+        })
+
     # Total actual spend must include every issuance in the selected month,
     # including items that do not currently have a consumption norm.
     actual_total = round(sum((iss.qty or 0) * (iss.rate or 0) for iss in selected_issuances), 2)
