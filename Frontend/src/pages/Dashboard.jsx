@@ -41,7 +41,15 @@ export default function Dashboard() {
   )
 
   const spendData = (data.monthly_spend||[]).map(m => ({ name: MONTHS[m.month], value: m.value }))
-  const categoryTreeData = cats.map(c => ({ name: c.category, size: Number(c.value || 0), color: CATEGORY_COLORS[c.category] || '#94a3b8' })).filter(c => c.size > 0)
+  const categoryOrder = ['Washroom Supplies', 'Cleaning Chemicals', 'Cleaning Tools', 'Waste Management', 'Stationery', 'Other', 'Welcome Kit']
+  const categoryLookup = new Map(cats.map(c => [c.category, Number(c.value || 0)]))
+  const categoryTreeData = categoryOrder.map(name => ({
+    name,
+    value: categoryLookup.get(name) || 0,
+    // Give zero-spend categories a tiny visible tile so every requested category remains represented.
+    size: Math.max(categoryLookup.get(name) || 0, 0.01),
+    color: CATEGORY_COLORS[name] || (name === 'Stationery' ? '#94a3b8' : name === 'Welcome Kit' ? '#cbd5e1' : '#64748b'),
+  }))
 
   const reorders = data.reorder_alerts || []
 
@@ -183,20 +191,21 @@ export default function Dashboard() {
                     aspectRatio={4 / 3}
                     stroke="#ffffff"
                     content={({ x, y, width, height, name, size, color, payload }) => {
-                      const amount = Number(payload?.size ?? size ?? 0)
+                      const amount = Number(payload?.value ?? 0)
+                      const label = String(name || payload?.name || '')
                       if (width <= 0 || height <= 0) return null
-                      const showName = width > 78 && height > 34
-                      const showValue = width > 92 && height > 54
+                      const showName = label.length > 0 && width > 82 && height > 36
+                      const showValue = width > 108 && height > 62
                       return (
                         <g>
-                          <rect x={x} y={y} width={width} height={height} rx={5} ry={5} fill={color || '#94a3b8'} stroke="#ffffff" strokeWidth={3} />
+                          <rect x={x} y={y} width={width} height={height} rx={5} ry={5} fill={color || '#94a3b8'} stroke="#ffffff" strokeWidth={2} />
                           {showName && (
-                            <text x={x + 12} y={y + (showValue ? 25 : height / 2)} fill="#ffffff" fontSize={Math.min(14, Math.max(10, width / 13))} fontWeight={600}>
-                              {String(name || '').length > Math.max(10, Math.floor(width / 8)) ? String(name || '').slice(0, Math.max(8, Math.floor(width / 8) - 1)) + '…' : String(name || '')}
+                            <text x={x + 12} y={y + (showValue ? 25 : height / 2)} fill="#ffffff" fontFamily="'DM Sans', sans-serif" fontSize={Math.min(16, Math.max(12, width / 15))} fontWeight={700}>
+                              {label.length > Math.max(10, Math.floor(width / 8)) ? label.slice(0, Math.max(8, Math.floor(width / 8) - 1)) + '…' : label}
                             </text>
                           )}
                           {showValue && (
-                            <text x={x + 12} y={y + 45} fill="#ffffff" fontSize={12} opacity={0.95}>
+                            <text x={x + 12} y={y + 45} fill="#ffffff" fontFamily="'DM Sans', sans-serif" fontSize={13} fontWeight={600} opacity={0.98}>
                               {fmtCurrency(amount)}
                             </text>
                           )}
