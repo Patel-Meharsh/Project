@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Treemap } from 'recharts'
 import { dashboardApi, budgetCalcApi } from '../lib/api'
 import { fmtCurrency, fmtNum, CATEGORY_COLORS } from '../lib/utils'
 import { Spinner } from '../components/UI'
@@ -41,7 +41,7 @@ export default function Dashboard() {
   )
 
   const spendData = (data.monthly_spend||[]).map(m => ({ name: MONTHS[m.month], value: m.value }))
-  const catPieData = cats.map(c => ({ name: c.category, label: c.category, value: Number(c.value || 0) }))
+  const categoryTreeData = cats.map(c => ({ name: c.category, size: Number(c.value || 0), color: CATEGORY_COLORS[c.category] || '#94a3b8' })).filter(c => c.size > 0)
 
   const reorders = data.reorder_alerts || []
 
@@ -164,25 +164,47 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Row 3: Category spend pie + Reorder table */}
-        <div className="chart-grid" style={{ marginBottom:20 }}>
-          <div className="panel fade-in">
+        {/* Row 3: Expanded category treemap + Reorder alerts */}
+        <div className="chart-grid dashboard-category-grid" style={{ marginBottom:20 }}>
+          <div className="panel fade-in dashboard-category-panel">
             <div className="panel-header">
               <div>
                 <div className="panel-title">Spend by Category</div>
                 <div className="panel-sub">From issuance records</div>
               </div>
             </div>
-            <div className="panel-body" style={{ height:230 }}>
-              {catPieData.some(d => d.value > 0) ? (
+            <div className="panel-body dashboard-treemap-body">
+              {categoryTreeData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={catPieData} dataKey="value" nameKey="label" cx="50%" cy="50%" outerRadius={65} innerRadius={35}>
-                      {catPieData.map((e,i) => <Cell key={i} fill={CATEGORY_COLORS[e.label]||'#94a3b8'} />)}
-                    </Pie>
-                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize:11, paddingTop:8 }} formatter={v=><span style={{ fontSize:11 }}>{v}</span>} />
-                    <Tooltip formatter={v=>[fmtCurrency(v),'Spend']} contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }} />
-                  </PieChart>
+                  <Treemap
+                    data={categoryTreeData}
+                    dataKey="size"
+                    nameKey="name"
+                    aspectRatio={4 / 3}
+                    stroke="#ffffff"
+                    content={({ x, y, width, height, name, size, color }) => {
+                      if (width <= 0 || height <= 0) return null
+                      const showName = width > 78 && height > 34
+                      const showValue = width > 92 && height > 54
+                      return (
+                        <g>
+                          <rect x={x} y={y} width={width} height={height} rx={5} ry={5} fill={color || '#94a3b8'} stroke="#ffffff" strokeWidth={3} />
+                          {showName && (
+                            <text x={x + 12} y={y + (showValue ? 25 : height / 2)} fill="#ffffff" fontSize={Math.min(14, Math.max(10, width / 13))} fontWeight={600}>
+                              {name.length > Math.max(10, Math.floor(width / 8)) ? name.slice(0, Math.max(8, Math.floor(width / 8) - 1)) + '…' : name}
+                            </text>
+                          )}
+                          {showValue && (
+                            <text x={x + 12} y={y + 45} fill="#ffffff" fontSize={12} opacity={0.95}>
+                              {fmtCurrency(size)}
+                            </text>
+                          )}
+                        </g>
+                      )
+                    }}
+                  >
+                    <Tooltip formatter={(value, name) => [fmtCurrency(value), name]} contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }} />
+                  </Treemap>
                 </ResponsiveContainer>
               ) : (
                 <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'#94a3b8', fontSize:13 }}>
@@ -237,7 +259,7 @@ export default function Dashboard() {
 
         {/* Row 4: Quick nav cards + Annual budget */}
         <div className="chart-grid-3">
-          <div className="panel fade-in" style={{ gridColumn:'1/3' }}>
+          <div className="panel fade-in dashboard-quick-actions" style={{ gridColumn:'1/3' }}>
             <div className="panel-header"><div className="panel-title">Quick Actions</div><div className="panel-sub">Jump to any module</div></div>
             <div className="panel-body">
               <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:10 }}>
