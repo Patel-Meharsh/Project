@@ -217,7 +217,7 @@ export default function Dashboard() {
                           <rect x={x} y={y} width={width} height={height} fill={fill || '#94a3b8'} stroke="#ffffff" strokeWidth={3} />
                           {showLabel && (
                             <>
-                              <text x={x + 10} y={y + 20} fill="#ffffff" fontSize={12} fontWeight={600}>
+                              <text x={x + 10} y={y + 20} fill="#ffffff" fontSize={11.5} fontWeight={600}>
                                 {safeName.length > 22 ? `${safeName.slice(0, 19)}…` : safeName}
                               </text>
                               {height > 62 && (
