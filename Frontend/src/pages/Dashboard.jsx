@@ -206,18 +206,19 @@ export default function Dashboard() {
                     stroke="#ffffff"
                     strokeWidth={3}
                     aspectRatio={1.5}
-                    content={({ x, y, width, height, name, value, fill }) => {
+                    content={({ x = 0, y = 0, width = 0, height = 0, name = '', value, size, fill }) => {
+                      const safeName = typeof name === 'string' ? name : ''
+                      const amount = Number(value ?? size) || 0
                       if (width <= 0 || height <= 0) return null
-                      const amount = Number(value) || 0
                       const share = totalCategorySpend > 0 ? (amount / totalCategorySpend) * 100 : 0
-                      const showLabel = width > 75 && height > 42
+                      const showLabel = safeName.length > 0 && width > 75 && height > 42
                       return (
                         <g>
                           <rect x={x} y={y} width={width} height={height} fill={fill || '#94a3b8'} stroke="#ffffff" strokeWidth={3} />
                           {showLabel && (
                             <>
                               <text x={x + 10} y={y + 20} fill="#ffffff" fontSize={12} fontWeight={600}>
-                                {name.length > 22 ? `${name.slice(0, 19)}…` : name}
+                                {safeName.length > 22 ? `${safeName.slice(0, 19)}…` : safeName}
                               </text>
                               {height > 62 && (
                                 <text x={x + 10} y={y + 38} fill="#ffffff" fontSize={11}>
@@ -234,7 +235,7 @@ export default function Dashboard() {
                       formatter={(value, name, props) => {
                         const amount = Number(value) || 0
                         const share = totalCategorySpend > 0 ? (amount / totalCategorySpend) * 100 : 0
-                        return [`${fmtCurrency(amount)} (${share.toFixed(1)}%)`, props?.payload?.name || name]
+                        return [`${fmtCurrency(amount)} (${share.toFixed(1)}%)`, props?.payload?.name || name || 'Category']
                       }}
                       contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }}
                     />
