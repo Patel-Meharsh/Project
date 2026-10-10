@@ -205,8 +205,8 @@ export default function Dashboard() {
                       dataKey="value"
                       nameKey="name"
                       cx="50%"
-                      cy="44%"
-                      outerRadius="68%"
+                      cy="40%"
+                      outerRadius="88%"
                       paddingAngle={1}
                       stroke="#ffffff"
                       strokeWidth={2}
