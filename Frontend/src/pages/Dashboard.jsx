@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Treemap } from 'recharts'
 import { dashboardApi, budgetCalcApi } from '../lib/api'
 import { fmtCurrency, fmtNum, CATEGORY_COLORS } from '../lib/utils'
 import { Spinner } from '../components/UI'
@@ -199,43 +199,46 @@ export default function Dashboard() {
             <div className="panel-body dashboard-treemap-body">
               {totalCategorySpend > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={categoryPieData}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="40%"
-                      outerRadius="88%"
-                      paddingAngle={1}
-                      stroke="#ffffff"
-                      strokeWidth={2}
-                    >
-                      {categoryPieData.map(item => (
-                        <Cell key={item.name} fill={item.color} />
-                      ))}
-                    </Pie>
+                  <Treemap
+                    data={categoryPieData.map(item => ({ name: item.name, size: item.value, value: item.value, fill: item.color }))}
+                    dataKey="size"
+                    nameKey="name"
+                    stroke="#ffffff"
+                    strokeWidth={3}
+                    aspectRatio={1.5}
+                    content={({ x, y, width, height, name, value, fill }) => {
+                      if (width <= 0 || height <= 0) return null
+                      const amount = Number(value) || 0
+                      const share = totalCategorySpend > 0 ? (amount / totalCategorySpend) * 100 : 0
+                      const showLabel = width > 75 && height > 42
+                      return (
+                        <g>
+                          <rect x={x} y={y} width={width} height={height} fill={fill || '#94a3b8'} stroke="#ffffff" strokeWidth={3} />
+                          {showLabel && (
+                            <>
+                              <text x={x + 10} y={y + 20} fill="#ffffff" fontSize={12} fontWeight={600}>
+                                {name.length > 22 ? `${name.slice(0, 19)}…` : name}
+                              </text>
+                              {height > 62 && (
+                                <text x={x + 10} y={y + 38} fill="#ffffff" fontSize={11}>
+                                  {fmtCurrency(amount)} · {share.toFixed(1)}%
+                                </text>
+                              )}
+                            </>
+                          )}
+                        </g>
+                      )
+                    }}
+                  >
                     <Tooltip
-                      formatter={(value, name) => {
+                      formatter={(value, name, props) => {
                         const amount = Number(value) || 0
                         const share = totalCategorySpend > 0 ? (amount / totalCategorySpend) * 100 : 0
-                        return [`${fmtCurrency(amount)} (${share.toFixed(1)}%)`, name]
+                        return [`${fmtCurrency(amount)} (${share.toFixed(1)}%)`, props?.payload?.name || name]
                       }}
                       contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }}
                     />
-                    <Legend
-                      verticalAlign="bottom"
-                      height={54}
-                      iconType="circle"
-                      formatter={(value) => {
-                        const item = categoryPieData.find(category => category.name === value)
-                        const amount = item?.value || 0
-                        const share = totalCategorySpend > 0 ? (amount / totalCategorySpend) * 100 : 0
-                        return `${value}: ${fmtCurrency(amount)} (${share.toFixed(1)}%)`
-                      }}
-                      wrapperStyle={{ fontSize:10, lineHeight:'16px' }}
-                    />
-                  </PieChart>
+                  </Treemap>
                 </ResponsiveContainer>
               ) : (
                 <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'#94a3b8', fontSize:13 }}>
