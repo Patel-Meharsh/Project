@@ -41,23 +41,28 @@ export default function Dashboard() {
   )
 
   const spendData = (data.monthly_spend||[]).map(m => ({ name: MONTHS[m.month], value: m.value }))
-  // Use actual API totals only; normalize known category names and roll unknown categories into Other.
-  const categoryOrder = ['Washroom Supplies', 'Cleaning Chemicals', 'Cleaning Tools', 'Waste Management', 'Stationery', 'Other', 'Welcome Kit']
-  const categoryAliases = new Map(categoryOrder.map(name => [name.toLowerCase(), name]))
-  const categoryTotals = new Map(categoryOrder.map(name => [name, 0]))
+  // Build the chart from categories that actually have positive issuance spend.
+  // New categories are included automatically; zero-spend categories are omitted.
+  const categoryTotals = new Map()
   cats.forEach(item => {
     const rawName = String(item.category || '').trim()
-    const category = categoryAliases.get(rawName.toLowerCase()) || 'Other'
     const amount = Number(item.value)
-    if (Number.isFinite(amount) && amount > 0) {
-      categoryTotals.set(category, (categoryTotals.get(category) || 0) + amount)
-    }
+    if (!rawName || !Number.isFinite(amount) || amount <= 0) return
+
+    const key = rawName.toLowerCase()
+    const existing = categoryTotals.get(key)
+    categoryTotals.set(key, {
+      name: existing?.name || rawName,
+      value: (existing?.value || 0) + amount,
+    })
   })
-  const categoryPieData = categoryOrder.map(name => ({
-    name,
-    value: categoryTotals.get(name) || 0,
-    color: CATEGORY_COLORS[name] || '#94a3b8',
-  }))
+  const categoryPieData = Array.from(categoryTotals.values())
+    .filter(item => item.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .map(item => ({
+      ...item,
+      color: CATEGORY_COLORS[item.name] || '#94a3b8',
+    }))
   const totalCategorySpend = categoryPieData.reduce((sum, item) => sum + item.value, 0)
 
   const reorders = data.reorder_alerts || []
