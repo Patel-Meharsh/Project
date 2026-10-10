@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Treemap } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
 import { dashboardApi, budgetCalcApi } from '../lib/api'
 import { fmtCurrency, fmtNum, CATEGORY_COLORS } from '../lib/utils'
 import { Spinner } from '../components/UI'
@@ -41,15 +41,24 @@ export default function Dashboard() {
   )
 
   const spendData = (data.monthly_spend||[]).map(m => ({ name: MONTHS[m.month], value: m.value }))
-  // Keep the seven requested dashboard categories and roll any other item categories into Other.
+  // Use actual API totals only; normalize known category names and roll unknown categories into Other.
   const categoryOrder = ['Washroom Supplies', 'Cleaning Chemicals', 'Cleaning Tools', 'Waste Management', 'Stationery', 'Other', 'Welcome Kit']
-  const categoryLookup = new Map(cats.map(c => [String(c.category || '').trim(), Number(c.value || 0)]))
-  const maxCategorySpend = Math.max(0, ...cats.map(c => Number(c.value || 0)))
-  const categoryTreeData = categoryOrder.map(name => ({
+  const categoryAliases = new Map(categoryOrder.map(name => [name.toLowerCase(), name]))
+  const categoryTotals = new Map(categoryOrder.map(name => [name, 0]))
+  cats.forEach(item => {
+    const rawName = String(item.category || '').trim()
+    const category = categoryAliases.get(rawName.toLowerCase()) || 'Other'
+    const amount = Number(item.value)
+    if (Number.isFinite(amount) && amount > 0) {
+      categoryTotals.set(category, (categoryTotals.get(category) || 0) + amount)
+    }
+  })
+  const categoryPieData = categoryOrder.map(name => ({
     name,
-    value: Math.max(categoryLookup.get(name) || 0, maxCategorySpend * 0.12),
-    color: CATEGORY_COLORS[name] || (name === 'Stationery' ? '#64748b' : name === 'Welcome Kit' ? '#cbd5e1' : '#94a3b8'),
+    value: categoryTotals.get(name) || 0,
+    color: CATEGORY_COLORS[name] || '#94a3b8',
   }))
+  const totalCategorySpend = categoryPieData.reduce((sum, item) => sum + item.value, 0)
 
   const reorders = data.reorder_alerts || []
 
@@ -183,57 +192,45 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="panel-body dashboard-treemap-body">
-              {categoryTreeData.length > 0 ? (
+              {totalCategorySpend > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <Treemap
-                    data={categoryTreeData}
-                    dataKey="value"
-                    nameKey="name"
-                    aspectRatio={4 / 3}
-                    stroke="#ffffff"
-                    content={({ x = 0, y = 0, width = 0, height = 0, name, size, color, payload }) => {
-                      const label = String(name || payload?.name || '')
-                      const amount = Number(payload?.value ?? size ?? 0)
-                      if (width <= 0 || height <= 0) return null
-                      const compact = width < 145 || height < 72
-                      const fontSize = compact ? 10 : Math.min(15, Math.max(12, width / 17))
-                      const maxChars = Math.max(7, Math.floor((width - 20) / (fontSize * 0.62)))
-                      const lines = []
-                      let currentLine = ''
-                      for (const word of label.split(/\s+/).filter(Boolean)) {
-                        const candidate = currentLine ? currentLine + ' ' + word : word
-                        if (candidate.length > maxChars && currentLine) {
-                          lines.push(currentLine)
-                          currentLine = word
-                        } else {
-                          currentLine = candidate
-                        }
-                      }
-                      if (currentLine) lines.push(currentLine)
-                      const visibleLines = lines.slice(0, height > 65 ? 2 : 1)
-                      const labelY = height < 54 ? y + height / 2 + 3 : y + 20
-                      return (
-                        <g>
-                          <rect x={x + 1} y={y + 1} width={Math.max(0, width - 2)} height={Math.max(0, height - 2)} rx={6} ry={6} fill={color || payload?.color || '#94a3b8'} stroke="#ffffff" strokeWidth={2} />
-                          {width > 48 && height > 25 && (
-                            <text x={x + 10} y={labelY} fill="#ffffff" fontFamily="'DM Sans', sans-serif" fontSize={fontSize} fontWeight={700}>
-                              {visibleLines.map((line, index) => (
-                                <tspan key={index} x={x + 10} dy={index === 0 ? 0 : fontSize + 2}>
-                                  {line.length > maxChars ? line.slice(0, maxChars - 1) + '…' : line}
-                                  {index === visibleLines.length - 1 && lines.length > visibleLines.length ? '…' : ''}
-                                </tspan>
-                              ))}
-                              {height > (visibleLines.length > 1 ? 62 : 48) && width > 72 && (
-                                <tspan x={x + 10} dy={fontSize + 5} fontSize={compact ? 9 : 12} fontWeight={600}>{fmtCurrency(amount)}</tspan>
-                              )}
-                            </text>
-                          )}
-                        </g>
-                      )
-                    }}
-                  >
-                    <Tooltip formatter={(value, name) => [fmtCurrency(value), name]} contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }} />
-                  </Treemap>
+                  <PieChart>
+                    <Pie
+                      data={categoryPieData.filter(item => item.value > 0)}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="44%"
+                      outerRadius="68%"
+                      paddingAngle={1}
+                      stroke="#ffffff"
+                      strokeWidth={2}
+                    >
+                      {categoryPieData.filter(item => item.value > 0).map(item => (
+                        <Cell key={item.name} fill={item.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value, name) => {
+                        const amount = Number(value) || 0
+                        const share = totalCategorySpend > 0 ? (amount / totalCategorySpend) * 100 : 0
+                        return [`${fmtCurrency(amount)} (${share.toFixed(1)}%)`, name]
+                      }}
+                      contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }}
+                    />
+                    <Legend
+                      verticalAlign="bottom"
+                      height={54}
+                      iconType="circle"
+                      formatter={(value) => {
+                        const item = categoryPieData.find(category => category.name === value)
+                        const amount = item?.value || 0
+                        const share = totalCategorySpend > 0 ? (amount / totalCategorySpend) * 100 : 0
+                        return `${value}: ${fmtCurrency(amount)} (${share.toFixed(1)}%)`
+                      }}
+                      wrapperStyle={{ fontSize:10, lineHeight:'16px' }}
+                    />
+                  </PieChart>
                 </ResponsiveContainer>
               ) : (
                 <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'#94a3b8', fontSize:13 }}>
