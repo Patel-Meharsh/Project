@@ -196,7 +196,7 @@ export default function Dashboard() {
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
-                      data={categoryPieData.filter(item => item.value > 0)}
+                      data={categoryPieData}
                       dataKey="value"
                       nameKey="name"
                       cx="50%"
@@ -206,7 +206,7 @@ export default function Dashboard() {
                       stroke="#ffffff"
                       strokeWidth={2}
                     >
-                      {categoryPieData.filter(item => item.value > 0).map(item => (
+                      {categoryPieData.map(item => (
                         <Cell key={item.name} fill={item.color} />
                       ))}
                     </Pie>
