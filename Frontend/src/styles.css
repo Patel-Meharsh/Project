@@ -927,11 +927,11 @@ thead th { transition: background 0.12s, color 0.12s; }
   }
 
   .dashboard-card-column-left {
-    gap: 0;
+    gap: 20px;
   }
 
   .dashboard-card-column-right {
-    gap: 16px;
+    gap: 20px;
   }
 
   .dashboard-card-column-left .dashboard-category-panel {
