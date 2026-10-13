@@ -171,7 +171,43 @@ async def extract_grn_document(
             reader = PdfReader(io.BytesIO(raw))
             if len(reader.pages) > 30:
                 raise HTTPException(413, "PDFs are limited to 30 pages.")
-            text = "\n".join((page.extract_text() or "") for page in reader.pages)
+
+            # First use embedded text because it is faster and usually more accurate.
+            page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
+
+            # Scanned PDFs often have no embedded text. Render only pages that need OCR.
+            # PyMuPDF renders pages without requiring a separate Poppler installation.
+            if any(not page_text for page_text in page_texts):
+                try:
+                    import fitz
+                    from PIL import Image
+                    import pytesseract
+
+                    pdf_document = fitz.open(stream=raw, filetype="pdf")
+                    for index, page_text in enumerate(page_texts):
+                        if page_text:
+                            continue
+                        page = pdf_document.load_page(index)
+                        pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                        if pixmap.width * pixmap.height > 25_000_000:
+                            raise HTTPException(413, "A rendered PDF page is too large to process.")
+                        image = Image.open(io.BytesIO(pixmap.tobytes("png")))
+                        page_texts[index] = pytesseract.image_to_string(image).strip()
+                    pdf_document.close()
+                except HTTPException:
+                    raise
+                except ImportError:
+                    raise HTTPException(
+                        503,
+                        "Scanned-PDF OCR is not configured. Install the PyMuPDF, Pillow, and pytesseract packages and the Tesseract OCR engine on the server.",
+                    )
+                except Exception:
+                    raise HTTPException(
+                        400,
+                        "The scanned PDF could not be processed. Check that Tesseract OCR is installed and upload a clear PDF scan.",
+                    )
+
+            text = "\n".join(page_texts)
         except HTTPException:
             raise
         except Exception:
