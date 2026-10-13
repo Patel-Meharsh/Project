@@ -50,7 +50,7 @@ def _norm(value: str) -> str:
 
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
     """Match item master names/codes found in receipt text; quantities remain suggestions."""
-    lines = [re.sub(r"\\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
+    lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
     found: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in db.query(models.ItemModel).all():
@@ -64,7 +64,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             if not (code_found or name_found) or not code or code in seen:
                 continue
             # Avoid claiming a quantity unless the row has a numeric value.
-            numbers = re.findall(r"(?<![A-Za-z])\\d+(?:,\\d{3})*(?:\\.\\d+)?", line)
+            numbers = re.findall(r"(?<![A-Za-z])\d+(?:,\d{3})*(?:\.\d+)?", line)
             numbers = [float(n.replace(",", "")) for n in numbers]
             qty = numbers[-2] if len(numbers) >= 2 else (numbers[-1] if numbers else None)
             rate = numbers[-1] if len(numbers) >= 3 else (item.rate or 0)
