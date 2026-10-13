@@ -439,9 +439,9 @@ const createGRN = async () => {
           wide>
           <FormGrid>
             <div style={{ gridColumn:'1/-1', border:'1px dashed #93c5fd', background:'#f8fbff', borderRadius:10, padding:14 }}>
-              <div style={{ fontWeight:700, fontSize:13.5, marginBottom:4 }}>Auto-fill from invoice / delivery document</div>
-              <div style={{ fontSize:12, color:'#64748b', marginBottom:10 }}>Upload a text PDF or a clear image. Extracted values are suggestions only; nothing is saved until you review and click Save GRN.</div>
-              <input type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp,application/pdf,image/png,image/jpeg,image/tiff,image/webp" disabled={extractingDocument}
+              <div style={{ fontWeight:700, fontSize:13.5, marginBottom:4 }}>Upload Receipt — auto-fill GRN</div>
+              <div style={{ fontSize:12, color:'#64748b', marginBottom:10 }}>Upload a receipt as JPG, JPEG, PNG, or PDF. Extracted values are suggestions only; nothing is saved until you review and click Save GRN.</div>
+              <input type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" disabled={extractingDocument}
                 onChange={e => { const file = e.target.files?.[0]; if (file) extractGRNDocument(file); e.target.value = '' }} />
               {extractingDocument && <div style={{ marginTop:8, fontSize:12, color:'#2563eb' }}>Reading document…</div>}
               {extractionResult && <div style={{ marginTop:10, fontSize:12 }}>
