@@ -44,6 +44,41 @@ def _number(value: str | None) -> float | None:
         return None
 
 
+def _norm(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (value or "").lower())
+
+
+def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
+    """Match item master names/codes found in receipt text; quantities remain suggestions."""
+    lines = [re.sub(r"\\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
+    found: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in db.query(models.ItemModel).all():
+        code = (item.code or "").strip()
+        name = (item.name or "").strip()
+        for line in lines:
+            norm_line = _norm(line)
+            code_found = bool(code and re.search(r"(?<![A-Za-z0-9])" + re.escape(code) + r"(?![A-Za-z0-9])", line, re.I))
+            name_norm = _norm(name)
+            name_found = bool(name_norm and len(name_norm) >= 4 and name_norm in norm_line)
+            if not (code_found or name_found) or not code or code in seen:
+                continue
+            # Avoid claiming a quantity unless the row has a numeric value.
+            numbers = re.findall(r"(?<![A-Za-z])\\d+(?:,\\d{3})*(?:\\.\\d+)?", line)
+            numbers = [float(n.replace(",", "")) for n in numbers]
+            qty = numbers[-2] if len(numbers) >= 2 else (numbers[-1] if numbers else None)
+            rate = numbers[-1] if len(numbers) >= 3 else (item.rate or 0)
+            found.append({
+                "item_code": code, "item_name": name,
+                "vendor_code": item.vendor_code or "", "vendor_name": "",
+                "recd_qty": qty, "accepted_qty": None, "rate": rate,
+                "match_status": "matched", "source": "receipt_text",
+            })
+            seen.add(code)
+            break
+    return found
+
+
 def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     invoice_no = _first([
         r"(?:invoice|tax invoice|bill)\s*(?:no|number|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
@@ -91,9 +126,10 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     if not po_no:
         warnings.append("Purchase order number was not detected.")
 
-    # Prefer existing PO lines when the extracted PO is an exact master-record match.
-    # Quantities received are deliberately left blank; an invoice/PO is not proof of actual delivery.
-    if po_match:
+    # First identify item-master rows visible in the receipt text. If that fails,
+    # use every line from the exact matched PO as a fallback.
+    items = _extract_item_rows(text, db)
+    if not items and po_match:
         try:
             po_lines = __import__("json").loads(po_match.line_items or "[]")
         except (ValueError, TypeError):
@@ -124,9 +160,11 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
                 "source": "purchase_order",
             })
         if items:
-            warnings.append("Line items were suggested from the matched PO. Enter actual received and accepted quantities after checking the delivery.")
-    elif re.search(r"\b(?:qty|quantity)\b", text, re.IGNORECASE):
-        warnings.append("Quantity text was found, but no safe item-line mapping was possible. Add or match line items manually.")
+            warnings.append("Line items were suggested from the matched PO. Review every item and confirm actual received and accepted quantities.")
+    if not items and re.search(r"\b(?:qty|quantity)\b", text, re.IGNORECASE):
+        warnings.append("Quantity text was found, but no item-master names/codes could be matched confidently. Add or match line items manually.")
+    elif items and any(row.get("source") == "receipt_text" for row in items):
+        warnings.append("Line items were detected from receipt text. Verify item mapping, quantities, and rates before saving.")
 
     if any(row.get("match_status") == "unmatched" for row in items):
         warnings.append("One or more PO line items could not be matched to the item master.")
