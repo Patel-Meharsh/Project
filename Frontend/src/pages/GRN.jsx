@@ -103,6 +103,8 @@ export default function GRN() {
   const [editMode, setEditMode] = useState(false)
   const [editTarget, setEditTarget] = useState(null)
   const [viewGrn, setViewGrn] = useState(null)
+  const [extractingDocument, setExtractingDocument] = useState(false)
+  const [extractionResult, setExtractionResult] = useState(null)
 
   const { user } = useAuth()
   const isAdmin = canDo(user?.role, 'admin')
@@ -214,6 +216,31 @@ export default function GRN() {
       setForm(f => ({ ...f, po_no }))
     }
   }
+
+const extractGRNDocument = async (file) => {
+  if (!file) return
+  setExtractingDocument(true)
+  setExtractionResult(null)
+  try {
+    const result = await grnApi.extractDocument(file)
+    setExtractionResult(result)
+    const fields = result.fields || {}
+    setForm(f => ({ ...f, invoice_no: fields.invoice_no || f.invoice_no, po_no: fields.po_no || f.po_no, grn_date: fields.grn_date || f.grn_date, store_location: fields.store_location || f.store_location }))
+    const matchedVendor = vendors.find(v => v.code === fields.vendor_code)
+    const suggestedRows = (result.line_items || []).map((row, idx) => ({
+      id: Date.now() + idx, item_code: row.item_code || '', item_name: row.item_name || '',
+      vendor_code: row.vendor_code || fields.vendor_code || '',
+      vendor_name: row.vendor_name || matchedVendor?.name || fields.vendor_name || '',
+      recd_qty: row.recd_qty ?? '', accepted_qty: row.accepted_qty ?? '', rate: row.rate ?? 0,
+    }))
+    if (suggestedRows.length) setLineItems(suggestedRows)
+    toast.success('Document read. Review every extracted field before saving.')
+  } catch (err) {
+    toast.error(err.response?.data?.detail || 'Could not extract document details.')
+  } finally {
+    setExtractingDocument(false)
+  }
+}
 
 const createGRN = async () => {
 
@@ -411,6 +438,22 @@ const createGRN = async () => {
           footer={<><button className="btn btn-outline" onClick={closeSlideOver}>Cancel</button><button className="btn btn-accent" onClick={createGRN}>{editTarget ? 'Update GRN' : 'Save GRN'}</button></>}
           wide>
           <FormGrid>
+            <div style={{ gridColumn:'1/-1', border:'1px dashed #93c5fd', background:'#f8fbff', borderRadius:10, padding:14 }}>
+              <div style={{ fontWeight:700, fontSize:13.5, marginBottom:4 }}>Auto-fill from invoice / delivery document</div>
+              <div style={{ fontSize:12, color:'#64748b', marginBottom:10 }}>Upload a text PDF or a clear image. Extracted values are suggestions only; nothing is saved until you review and click Save GRN.</div>
+              <input type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp,application/pdf,image/png,image/jpeg,image/tiff,image/webp" disabled={extractingDocument}
+                onChange={e => { const file = e.target.files?.[0]; if (file) extractGRNDocument(file); e.target.value = '' }} />
+              {extractingDocument && <div style={{ marginTop:8, fontSize:12, color:'#2563eb' }}>Reading document…</div>}
+              {extractionResult && <div style={{ marginTop:10, fontSize:12 }}>
+                <div style={{ fontWeight:700, color:'#166534', marginBottom:4 }}>Document processed — manual review required</div>
+                {(extractionResult.warnings || []).length > 0 && <ul style={{ margin:'4px 0 0', paddingLeft:18, color:'#92400e' }}>
+                  {extractionResult.warnings.map((warning, i) => <li key={i}>{warning}</li>)}
+                </ul>}
+                <details style={{ marginTop:8 }}><summary style={{ cursor:'pointer', color:'#475569' }}>View extracted text preview</summary>
+                  <pre style={{ whiteSpace:'pre-wrap', maxHeight:180, overflow:'auto', fontSize:11, marginTop:6 }}>{extractionResult.extracted_text_preview || 'No readable text detected.'}</pre>
+                </details>
+              </div>}
+            </div>
             {/* ── Top fields ── */}
             <FormRow label="GRN Number" half><input className="input" value={form.grn_no} readOnly style={{ background:'#f8f9fc', color:'#64748b' }} /></FormRow>
             <FormRow label="GRN Date" half><input className="input" type="date" value={form.grn_date} onChange={e => setForm({...form, grn_date:e.target.value})} /></FormRow>
