@@ -148,11 +148,33 @@ export default function GRN() {
     setShowCreate(false)
     setEditTarget(null)
     setRowError(false)
+    setExtractionResult(null)
+    setExtractingDocument(false)
   }
 
+  // Always start a new GRN with a clean draft. Never spread the previous form
+  // state here, because that can carry invoice/PO/vendor/remarks into the next receipt.
+  const blankGRNForm = () => ({
+    grn_no: '', grn_date: new Date().toISOString().split('T')[0],
+    invoice_no: '', po_no: '', uom: '', rate: 0,
+    received_by: 'Store Keeper', inspected_by: '',
+    store_location: 'STORE-CH', batch_lot: '', status: 'Stored', remarks: '',
+  })
+
   const openCreate = async () => {
-    const code = await codeApi.next('grn')
-    setForm(f => ({ ...f, grn_no: code, grn_date: new Date().toISOString().split('T')[0] }))
+    setEditTarget(null)
+    setForm(blankGRNForm())
+    setLineItems([emptyRow()])
+    setRowError(false)
+    setExtractionResult(null)
+    setExtractingDocument(false)
+    try {
+      const code = await codeApi.next('grn')
+      setForm(blank => ({ ...blank, grn_no: code }))
+    } catch (err) {
+      toast.error('Could not generate a GRN number. Please try again.')
+      return
+    }
     setShowCreate(true)
   }
 
@@ -225,7 +247,15 @@ const extractGRNDocument = async (file) => {
     const result = await grnApi.extractDocument(file)
     setExtractionResult(result)
     const fields = result.fields || {}
-    setForm(f => ({ ...f, invoice_no: fields.invoice_no || f.invoice_no, po_no: fields.po_no || f.po_no, grn_date: fields.grn_date || f.grn_date, store_location: fields.store_location || f.store_location }))
+    // This document is the source for the draft: clear missing extracted values
+    // instead of silently retaining values from a previously selected PO/document.
+    setForm(f => ({
+      ...f,
+      invoice_no: fields.invoice_no || '',
+      po_no: fields.po_no || '',
+      grn_date: fields.grn_date || f.grn_date,
+      store_location: fields.store_location || 'STORE-CH',
+    }))
     const matchedVendor = vendors.find(v => v.code === fields.vendor_code)
     const suggestedRows = (result.line_items || []).map((row, idx) => ({
       id: Date.now() + idx, item_code: row.item_code || '', item_name: row.item_name || '',
@@ -233,7 +263,9 @@ const extractGRNDocument = async (file) => {
       vendor_name: row.vendor_name || matchedVendor?.name || fields.vendor_name || '',
       recd_qty: row.recd_qty ?? '', accepted_qty: row.accepted_qty ?? '', rate: row.rate ?? 0,
     }))
-    if (suggestedRows.length) setLineItems(suggestedRows)
+    // Replace existing rows even when no items were detected, so rows from an
+    // earlier PO or receipt can never leak into this document's draft.
+    setLineItems(suggestedRows.length ? suggestedRows : [emptyRow()])
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
     toast.error(err.response?.data?.detail || 'Could not extract document details.')
