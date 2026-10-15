@@ -49,39 +49,111 @@ def _norm(value: str) -> str:
 
 
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
-    """Match item master names/codes found in receipt text; quantities remain suggestions."""
+    """Parse invoice-like item rows, then conservatively match descriptions to the item master."""
     lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
+    masters = db.query(models.ItemModel).all()
     found: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for item in db.query(models.ItemModel).all():
+    units = r"(?:BTL|BOTTLE|PKT|PACKET|NOS?\.?|PCS?\.?|MTR|METRE|METER|KG|GMS?|LTR|LITRE|ROLL|BOX|SET|PAIR)"
+    # Keep row parsing separate from master matching: invoices may contain valid
+    # goods that are named differently (or are not yet in the item master).
+    row_patterns = [
+        re.compile(
+            rf"^\s*\d{{1,3}}\s+(.+?)\s+(?:\d{{4,8}}\s+)?(?:\d{{1,2}}\s*%?\s+)?"
+            rf"(\d+(?:,\d{{3}})*(?:\.\d+)?)\s*({units})\s+"
+            rf"([\d,]+(?:\.\d{{1,2}})?)\s*(?:{units})?\s+(?:[\d.]+\s+)?"
+            rf"([\d,]+(?:\.\d{{1,2}})?)\s*$", re.I
+        ),
+        re.compile(
+            rf"^\s*\d{{1,3}}\s+(.+?)\s+(\d+(?:,\d{{3}})*(?:\.\d+)?)\s*({units})\s*$", re.I
+        ),
+    ]
+    for line in lines:
+        # Exclude tax/subtotal/footer rows, which often contain numbers resembling
+        # quantity/rate/amount columns.
+        if re.search(r"\b(?:cgst|sgst|igst|round\s*off|taxable value|amount chargeable|grand total|total)\b", line, re.I):
+            continue
+        parsed = None
+        for pattern in row_patterns:
+            match = pattern.match(line)
+            if match:
+                parsed = match.groups()
+                break
+        if not parsed:
+            continue
+        description = re.sub(r"\s+", " ", parsed[0]).strip(" .:-")
+        if not description or len(_norm(description)) < 3:
+            continue
+        qty = _number(parsed[1])
+        unit = parsed[2].upper().rstrip(".")
+        rate = _number(parsed[3]) if len(parsed) >= 5 else None
+        amount = _number(parsed[4]) if len(parsed) >= 5 else None
+        if qty is None or qty <= 0 or qty > 1_000_000:
+            continue
+
+        # Exact normalized name first, then conservative token similarity.
+        desc_norm = _norm(description)
+        candidates = []
+        for item in masters:
+            name_norm = _norm(item.name or "")
+            if not item.code or not name_norm:
+                continue
+            if name_norm == desc_norm or name_norm in desc_norm or desc_norm in name_norm:
+                candidates.append((1.0, item))
+            else:
+                from difflib import SequenceMatcher
+                score = SequenceMatcher(None, desc_norm, name_norm).ratio()
+                if score >= 0.78:
+                    candidates.append((score, item))
+        candidates.sort(key=lambda pair: pair[0], reverse=True)
+        matched = candidates[0][1] if candidates and (
+            len(candidates) == 1 or candidates[0][0] - candidates[1][0] >= 0.08
+        ) else None
+        code = matched.code if matched else ""
+        if code and code in seen:
+            continue
+        found.append({
+            "item_code": code,
+            "item_name": matched.name if matched else description,
+            "vendor_code": (matched.vendor_code or "") if matched else "",
+            "vendor_name": "",
+            "recd_qty": qty,
+            "accepted_qty": None,
+            "rate": rate if rate is not None else ((matched.rate or 0) if matched else 0),
+            "unit": unit,
+            "line_amount": amount,
+            "match_status": "matched" if matched else "unmatched",
+            "source": "receipt_text",
+        })
+        if code:
+            seen.add(code)
+
+    # Fallback for layouts where OCR did not preserve a usable table row.
+    if found:
+        return found
+    for item in masters:
         code = (item.code or "").strip()
         name = (item.name or "").strip()
+        if not code or not name or code in seen:
+            continue
+        name_norm = _norm(name)
+        if len(name_norm) < 4:
+            continue
         for line in lines:
-            norm_line = _norm(line)
-            code_found = bool(code and re.search(r"(?<![A-Za-z0-9])" + re.escape(code) + r"(?![A-Za-z0-9])", line, re.I))
-            name_norm = _norm(name)
-            name_found = bool(name_norm and len(name_norm) >= 4 and name_norm in norm_line)
-            if not (code_found or name_found) or not code or code in seen:
-                continue
-            # Avoid claiming a quantity unless the row has a numeric value.
-            numbers = re.findall(r"(?<![A-Za-z])\d+(?:,\d{3})*(?:\.\d+)?", line)
-            numbers = [float(n.replace(",", "")) for n in numbers]
-            qty = numbers[-2] if len(numbers) >= 2 else (numbers[-1] if numbers else None)
-            rate = numbers[-1] if len(numbers) >= 3 else (item.rate or 0)
-            found.append({
-                "item_code": code, "item_name": name,
-                "vendor_code": item.vendor_code or "", "vendor_name": "",
-                "recd_qty": qty, "accepted_qty": None, "rate": rate,
-                "match_status": "matched", "source": "receipt_text",
-            })
-            seen.add(code)
-            break
+            if name_norm in _norm(line):
+                found.append({
+                    "item_code": code, "item_name": name,
+                    "vendor_code": item.vendor_code or "", "vendor_name": "",
+                    "recd_qty": None, "accepted_qty": None, "rate": item.rate or 0,
+                    "match_status": "matched", "source": "receipt_text",
+                })
+                seen.add(code)
+                break
     return found
-
 
 def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     invoice_no = _first([
-        r"(?:invoice|tax invoice|bill)\s*(?:no|number|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
+        r"(?:invoice\s*(?:no\.?|number|#)|tax\s*invoice\s*(?:no\.?|number|#)?|bill\s*(?:no\.?|number|#))\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
     ], text)
     po_no = _first([
         r"(?:purchase order|\bP\.O\.?|\bPO)\s*(?:no|number|ref|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
@@ -90,11 +162,11 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
         r"(?:supplier|vendor)\s*(?:name)?\s*[:\-]\s*([^\n]{2,100})",
     ], text)
     date_raw = _first([
-        r"(?:invoice\s*)?date\s*[:\-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})",
+        r"(?:invoice\s*)?dated?\s*[:\-]?\s*(\d{1,2}[-/]\w{3}[-/]\d{2,4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})",
     ], text)
     invoice_date = None
     if date_raw:
-        for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y", "%Y-%m-%d", "%m/%d/%Y"):
+        for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y", "%d-%b-%Y", "%d-%b-%y", "%d/%b/%Y", "%d/%b/%y", "%Y-%m-%d", "%m/%d/%Y"):
             try:
                 invoice_date = datetime.strptime(date_raw, fmt).date().isoformat()
                 break
