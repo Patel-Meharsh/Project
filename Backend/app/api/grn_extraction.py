@@ -307,6 +307,9 @@ async def extract_grn_document(
             pages_needing_ocr = [
                 index for index, page_text in enumerate(page_texts)
                 if len(re.sub(r"\s+", "", page_text)) < 40
+                # Some digital PDFs expose plenty of header/footer text while
+                # their item table is not extractable as usable rows. OCR those too.
+                or not _extract_item_rows(page_text, db)
             ]
 
             # Render only pages that need OCR. PyMuPDF does not require Poppler.
