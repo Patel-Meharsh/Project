@@ -214,7 +214,7 @@ async def extract_grn_document(
             page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
             pages_needing_ocr = [
                 index for index, page_text in enumerate(page_texts)
-                if len(re.sub(r"\\s+", "", page_text)) < 40
+                if len(re.sub(r"\s+", "", page_text)) < 40
             ]
 
             # Render only pages that need OCR. PyMuPDF does not require Poppler.
@@ -235,7 +235,7 @@ async def extract_grn_document(
                             # Keep both sources on sparse/hybrid pages; don't discard
                             # embedded text if OCR finds only part of the page.
                             if ocr_text:
-                                page_texts[index] = "\\n".join(
+                                page_texts[index] = "\n".join(
                                     part for part in (page_texts[index], ocr_text) if part
                                 )
                 except HTTPException:
