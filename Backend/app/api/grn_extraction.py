@@ -355,11 +355,18 @@ async def extract_grn_document(
                             if pixmap.width * pixmap.height > 25_000_000:
                                 raise HTTPException(413, "A rendered PDF page is too large to process.")
                             image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
-                            ocr_text = pytesseract.image_to_string(image).strip()
+                            # Table invoices are often read as scattered columns by
+                            # the default OCR layout. Try two layout modes and keep the
+                            # result that preserves more non-empty text.
+                            ocr_candidates = [
+                                pytesseract.image_to_string(image, config="--oem 3 --psm 6").strip(),
+                                pytesseract.image_to_string(image, config="--oem 3 --psm 4").strip(),
+                            ]
+                            ocr_text = max(ocr_candidates, key=lambda value: len(re.sub(r"\\s+", "", value)))
                             # Keep both sources on sparse/hybrid pages; don't discard
                             # embedded text if OCR finds only part of the page.
                             if ocr_text:
-                                page_texts[index] = "\n".join(
+                                page_texts[index] = "\\n".join(
                                     part for part in (page_texts[index], ocr_text) if part
                                 )
                 except HTTPException:
@@ -390,7 +397,14 @@ async def extract_grn_document(
                 raise HTTPException(413, "Image dimensions are too large to process.")
             # OCR engines work most predictably with a standard RGB image.
             image = image.convert("RGB")
-            text = pytesseract.image_to_string(image)
+            # Phone photos of invoices have skew, shadows and table columns.
+            # Compare block-layout OCR modes instead of relying on Tesseract's default.
+            ocr_candidates = [
+                pytesseract.image_to_string(image, config="--oem 3 --psm 6").strip(),
+                pytesseract.image_to_string(image, config="--oem 3 --psm 4").strip(),
+                pytesseract.image_to_string(image, config="--oem 3 --psm 11").strip(),
+            ]
+            text = max(ocr_candidates, key=lambda value: len(re.sub(r"\\s+", "", value)))
         except HTTPException:
             raise
         except ImportError:
