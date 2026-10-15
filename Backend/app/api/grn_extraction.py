@@ -49,15 +49,15 @@ def _norm(value: str) -> str:
 
 
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
-    """Extract goods rows from common Indian tax-invoice tables and map them to Item Master."""
+    """Extract invoice rows even when OCR breaks a table into uneven text lines."""
     from difflib import SequenceMatcher
 
     lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
     masters = db.query(models.ItemModel).all()
     found: list[dict[str, Any]] = []
     seen_codes: set[str] = set()
-    unit_re = r"(?:BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MTR|MET(?:RE|ER)|KGS?|GMS?|LTRS?|LIT(?:RE|ER)S?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?|PCS?)"
-    amount_re = r"\d[\d,]*(?:\.\d{1,2})?"
+    unit_re = r"(?:BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MTR|MET(?:RE|ER)|KGS?|GMS?|LTRS?|LIT(?:RE|ER)S?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?)"
+    number_re = r"\d[\d,]*(?:\.\d{1,2})?"
 
     def match_master(description: str):
         dn = _norm(description)
@@ -71,85 +71,56 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             if nn == dn or nn in dn or dn in nn:
                 score = 1.0
             else:
-                # Token overlap helps with abbreviations/OCR punctuation while
-                # rejecting matches based on a single common word.
                 dt = set(re.findall(r"[a-z0-9]+", description.lower()))
                 nt = set(re.findall(r"[a-z0-9]+", (item.name or "").lower()))
                 overlap = len(dt & nt) / max(1, len(dt | nt))
                 seq = SequenceMatcher(None, dn, nn).ratio()
                 score = max(seq, overlap)
-            if score >= 0.55:
+            if score >= 0.48:
                 scored.append((score, item))
         scored.sort(key=lambda pair: pair[0], reverse=True)
-        if scored and (len(scored) == 1 or scored[0][0] - scored[1][0] >= 0.10):
+        if scored and (len(scored) == 1 or scored[0][0] - scored[1][0] >= 0.08):
             return scored[0][1]
         return None
 
     for line in lines:
-        # Ignore headers, GST breakdowns, totals, and invoice footer text.
-        if re.search(r"\b(?:cgst|sgst|igst|round\s*off|taxable value|amount chargeable|grand total|total|hsn/sac|description of goods|quantity\s+rate)\b", line, re.I):
+        if re.search(r"\b(?:cgst|sgst|igst|round\s*off|taxable value|amount chargeable|grand total|total|hsn/sac|description of goods)\b", line, re.I):
             continue
-        serial_match = re.match(r"^\s*(\d{1,3})\s+(.+?)\s*$", line)
-        if not serial_match:
-            continue
-        serial = int(serial_match.group(1))
-        if serial < 1 or serial > 250:
-            continue
-        body = serial_match.group(2)
 
-        # Preferred table layout: description, optional HSN, optional GST%,
-        # quantity+unit, rate, optional per-unit, optional discount, amount.
-        full = re.search(
-            rf"^(.*?)\s+(?:\d{{4,8}}\s+)?(?:\d{{1,2}}\s*%?\s+)?"
-            rf"({amount_re})\s*({unit_re})\s+({amount_re})\s*(?:{unit_re}\s*)?(?:[\d.]+\s+)?({amount_re})\s*$",
-            body, re.I,
-        )
-        description = ""
-        qty = rate = amount = None
-        unit = ""
-        if full:
-            description = full.group(1).strip(" .:-")
-            qty = _number(full.group(2))
-            unit = full.group(3).upper().rstrip(".")
-            rate = _number(full.group(4))
-            amount = _number(full.group(5))
-        else:
-            # OCR often loses column spacing or omits HSN/rate columns. Locate
-            # a quantity followed by a recognized unit and preserve the leading
-            # description; parse the last numeric columns only when plausible.
-            quantity_candidates = list(re.finditer(
-                rf"(?<![A-Za-z0-9])({amount_re})\s*({unit_re})\b", body, re.I
-            ))
-            if not quantity_candidates:
-                continue
-            # Quantity is normally in the right half of the row; ignore units
-            # embedded in descriptions like "Lizol 2ltr".
-            quantity_match = next(
-                (m for m in reversed(quantity_candidates)
-                 if len(_norm(body[:m.start()])) >= 3 and re.search(r"\s", body[:m.start()])),
-                None,
-            )
-            if not quantity_match:
-                continue
-            description = body[:quantity_match.start()].strip(" .:-")
-            qty = _number(quantity_match.group(1))
-            unit = quantity_match.group(2).upper().rstrip(".")
-            trailing = body[quantity_match.end():]
-            numbers = re.findall(amount_re, trailing)
-            if len(numbers) >= 2:
-                rate = _number(numbers[0])
-                amount = _number(numbers[-1])
-            elif len(numbers) == 1:
-                rate = _number(numbers[0])
+        # OCR may keep a row together, omit the serial number, or place a serial
+        # number directly against the description. Do not require a serial number.
+        body = re.sub(r"^\s*\d{1,3}\s*[.)]?\s*", "", line)
+        qty_matches = list(re.finditer(rf"(?<![A-Za-z])({number_re})\s*({unit_re})\b", body, re.I))
+        if not qty_matches:
+            continue
+        # Prefer a quantity-unit pair in the middle/right of a row. Ignore pack
+        # sizes in names (e.g. "Lizol 2ltr") when a later pair exists.
+        qm = next((m for m in reversed(qty_matches)
+                   if len(_norm(body[:m.start()])) >= 3 and re.search(r"[A-Za-z]", body[:m.start()])), None)
+        if not qm:
+            continue
 
-        # Trim HSN/GST tokens left behind by OCR/layout differences.
-        description = re.sub(r"\s+\d{4,8}\s*$", "", description).strip(" .:-")
-        description = re.sub(r"\s+\d{1,2}\s*%\s*$", "", description).strip(" .:-")
-        if not description or len(_norm(description)) < 3 or qty is None or qty <= 0 or qty > 1_000_000:
+        prefix = body[:qm.start()].strip(" .:-")
+        # Remove trailing HSN and GST columns from the description if OCR placed
+        # those columns before quantity.
+        prefix = re.sub(r"\s+\d{4,8}\s*$", "", prefix).strip()
+        prefix = re.sub(r"\s+\d{1,2}\s*%?\s*$", "", prefix).strip()
+        # If OCR combines columns in an unusual order, keep the leading textual
+        # span only; numeric-only spans are not item descriptions.
+        description_match = re.match(r"([A-Za-z][A-Za-z0-9 &()/.,'_-]{2,}?)\s*(?=\s+\d{4,8}\b|$)", prefix)
+        description = (description_match.group(1) if description_match else prefix).strip(" .:-")
+        description = re.sub(r"\s+", " ", description)
+        if len(_norm(description)) < 3 or not re.search(r"[A-Za-z]", description):
             continue
-        # A serial number followed by a tax/summary phrase is not a goods row.
-        if re.search(r"\b(?:cgst|sgst|igst|total|round off|tax)\b", description, re.I):
+        if re.search(r"\b(?:cgst|sgst|igst|total|round off|tax|gstin|invoice|dated)\b", description, re.I):
             continue
+
+        qty = _number(qm.group(1))
+        unit = qm.group(2).upper().rstrip(".")
+        tail = body[qm.end():]
+        trailing_numbers = re.findall(number_re, tail)
+        rate = _number(trailing_numbers[0]) if trailing_numbers else None
+        amount = _number(trailing_numbers[-1]) if len(trailing_numbers) >= 2 else None
 
         matched = match_master(description)
         code = (matched.code or "") if matched else ""
@@ -171,17 +142,14 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
         if code:
             seen_codes.add(code)
 
-    # If OCR layout prevented quantity parsing, still surface confidently detected
-    # item-master names as suggestions rather than returning an empty item list.
+    # Last-resort suggestions: match known item names anywhere in OCR text.
+    # This still surfaces item choices when OCR separates table columns by line.
     if not found:
-        normalized_lines = [_norm(line) for line in lines]
+        normalized_text = _norm(text)
         for item in masters:
-            code = (item.code or "").strip()
-            name = (item.name or "").strip()
-            name_norm = _norm(name)
-            if not code or not name_norm or len(name_norm) < 4 or code in seen_codes:
-                continue
-            if any(name_norm in line for line in normalized_lines):
+            code, name = (item.code or "").strip(), (item.name or "").strip()
+            nn = _norm(name)
+            if code and nn and len(nn) >= 4 and nn in normalized_text and code not in seen_codes:
                 found.append({
                     "item_code": code, "item_name": name,
                     "vendor_code": item.vendor_code or "", "vendor_name": "",
