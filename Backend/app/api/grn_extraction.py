@@ -208,28 +208,36 @@ async def extract_grn_document(
             if len(reader.pages) > 30:
                 raise HTTPException(413, "PDFs are limited to 30 pages.")
 
-            # First use embedded text because it is faster and usually more accurate.
+            # Extract embedded text first; this is faster and usually more accurate for
+            # digitally generated PDFs. Sparse text can indicate a scanned page with
+            # only a heading or footer, so OCR those pages as well.
             page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
+            pages_needing_ocr = [
+                index for index, page_text in enumerate(page_texts)
+                if len(re.sub(r"\\s+", "", page_text)) < 40
+            ]
 
-            # Scanned PDFs often have no embedded text. Render only pages that need OCR.
-            # PyMuPDF renders pages without requiring a separate Poppler installation.
-            if any(not page_text for page_text in page_texts):
+            # Render only pages that need OCR. PyMuPDF does not require Poppler.
+            if pages_needing_ocr:
                 try:
                     import pymupdf
                     from PIL import Image
                     import pytesseract
 
-                    pdf_document = pymupdf.open(stream=raw, filetype="pdf")
-                    for index, page_text in enumerate(page_texts):
-                        if page_text:
-                            continue
-                        page = pdf_document.load_page(index)
-                        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
-                        if pixmap.width * pixmap.height > 25_000_000:
-                            raise HTTPException(413, "A rendered PDF page is too large to process.")
-                        image = Image.open(io.BytesIO(pixmap.tobytes("png")))
-                        page_texts[index] = pytesseract.image_to_string(image).strip()
-                    pdf_document.close()
+                    with pymupdf.open(stream=raw, filetype="pdf") as pdf_document:
+                        for index in pages_needing_ocr:
+                            page = pdf_document.load_page(index)
+                            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
+                            if pixmap.width * pixmap.height > 25_000_000:
+                                raise HTTPException(413, "A rendered PDF page is too large to process.")
+                            image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
+                            ocr_text = pytesseract.image_to_string(image).strip()
+                            # Keep both sources on sparse/hybrid pages; don't discard
+                            # embedded text if OCR finds only part of the page.
+                            if ocr_text:
+                                page_texts[index] = "\\n".join(
+                                    part for part in (page_texts[index], ocr_text) if part
+                                )
                 except HTTPException:
                     raise
                 except ImportError:
@@ -250,11 +258,14 @@ async def extract_grn_document(
             raise HTTPException(400, "The PDF could not be read. Please upload a valid PDF.")
     else:
         try:
-            from PIL import Image
+            from PIL import Image, ImageOps
             import pytesseract
             image = Image.open(io.BytesIO(raw))
+            image = ImageOps.exif_transpose(image)  # Respect phone-camera orientation.
             if image.width * image.height > 25_000_000:
                 raise HTTPException(413, "Image dimensions are too large to process.")
+            # OCR engines work most predictably with a standard RGB image.
+            image = image.convert("RGB")
             text = pytesseract.image_to_string(image)
         except HTTPException:
             raise
