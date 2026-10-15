@@ -49,68 +49,111 @@ def _norm(value: str) -> str:
 
 
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
-    """Parse invoice-like item rows, then conservatively match descriptions to the item master."""
+    """Extract goods rows from common Indian tax-invoice tables and map them to Item Master."""
+    from difflib import SequenceMatcher
+
     lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
     masters = db.query(models.ItemModel).all()
     found: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    units = r"(?:BTL|BOTTLE|PKT|PACKET|NOS?\.?|PCS?\.?|MTR|METRE|METER|KG|GMS?|LTR|LITRE|ROLL|BOX|SET|PAIR)"
-    # Keep row parsing separate from master matching: invoices may contain valid
-    # goods that are named differently (or are not yet in the item master).
-    row_patterns = [
-        re.compile(
-            rf"^\s*\d{{1,3}}\s+(.+?)\s+(?:\d{{4,8}}\s+)?(?:\d{{1,2}}\s*%?\s+)?"
-            rf"(\d+(?:,\d{{3}})*(?:\.\d+)?)\s*({units})\s+"
-            rf"([\d,]+(?:\.\d{{1,2}})?)\s*(?:{units})?\s+(?:[\d.]+\s+)?"
-            rf"([\d,]+(?:\.\d{{1,2}})?)\s*$", re.I
-        ),
-        re.compile(
-            rf"^\s*\d{{1,3}}\s+(.+?)\s+(\d+(?:,\d{{3}})*(?:\.\d+)?)\s*({units})\s*$", re.I
-        ),
-    ]
+    seen_codes: set[str] = set()
+    unit_re = r"(?:BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MTR|MET(?:RE|ER)|KGS?|GMS?|LTRS?|LIT(?:RE|ER)S?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?|PCS?)"
+    amount_re = r"\d[\d,]*(?:\.\d{1,2})?"
+
+    def match_master(description: str):
+        dn = _norm(description)
+        if not dn:
+            return None
+        scored = []
+        for item in masters:
+            nn = _norm(item.name or "")
+            if not item.code or not nn:
+                continue
+            if nn == dn or nn in dn or dn in nn:
+                score = 1.0
+            else:
+                # Token overlap helps with abbreviations/OCR punctuation while
+                # rejecting matches based on a single common word.
+                dt = set(re.findall(r"[a-z0-9]+", description.lower()))
+                nt = set(re.findall(r"[a-z0-9]+", (item.name or "").lower()))
+                overlap = len(dt & nt) / max(1, len(dt | nt))
+                seq = SequenceMatcher(None, dn, nn).ratio()
+                score = max(seq, overlap)
+            if score >= 0.55:
+                scored.append((score, item))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        if scored and (len(scored) == 1 or scored[0][0] - scored[1][0] >= 0.10):
+            return scored[0][1]
+        return None
+
     for line in lines:
-        # Exclude tax/subtotal/footer rows, which often contain numbers resembling
-        # quantity/rate/amount columns.
-        if re.search(r"\b(?:cgst|sgst|igst|round\s*off|taxable value|amount chargeable|grand total|total)\b", line, re.I):
+        # Ignore headers, GST breakdowns, totals, and invoice footer text.
+        if re.search(r"\b(?:cgst|sgst|igst|round\s*off|taxable value|amount chargeable|grand total|total|hsn/sac|description of goods|quantity\s+rate)\b", line, re.I):
             continue
-        parsed = None
-        for pattern in row_patterns:
-            match = pattern.match(line)
-            if match:
-                parsed = match.groups()
-                break
-        if not parsed:
+        serial_match = re.match(r"^\s*(\d{1,3})\s+(.+?)\s*$", line)
+        if not serial_match:
             continue
-        description = re.sub(r"\s+", " ", parsed[0]).strip(" .:-")
-        if not description or len(_norm(description)) < 3:
+        serial = int(serial_match.group(1))
+        if serial < 1 or serial > 250:
             continue
-        qty = _number(parsed[1])
-        unit = parsed[2].upper().rstrip(".")
-        rate = _number(parsed[3]) if len(parsed) >= 5 else None
-        amount = _number(parsed[4]) if len(parsed) >= 5 else None
-        if qty is None or qty <= 0 or qty > 1_000_000:
+        body = serial_match.group(2)
+
+        # Preferred table layout: description, optional HSN, optional GST%,
+        # quantity+unit, rate, optional per-unit, optional discount, amount.
+        full = re.search(
+            rf"^(.*?)\s+(?:\d{{4,8}}\s+)?(?:\d{{1,2}}\s*%?\s+)?"
+            rf"({amount_re})\s*({unit_re})\s+({amount_re})\s*(?:{unit_re}\s*)?(?:[\d.]+\s+)?({amount_re})\s*$",
+            body, re.I,
+        )
+        description = ""
+        qty = rate = amount = None
+        unit = ""
+        if full:
+            description = full.group(1).strip(" .:-")
+            qty = _number(full.group(2))
+            unit = full.group(3).upper().rstrip(".")
+            rate = _number(full.group(4))
+            amount = _number(full.group(5))
+        else:
+            # OCR often loses column spacing or omits HSN/rate columns. Locate
+            # a quantity followed by a recognized unit and preserve the leading
+            # description; parse the last numeric columns only when plausible.
+            quantity_candidates = list(re.finditer(
+                rf"(?<![A-Za-z0-9])({amount_re})\s*({unit_re})\b", body, re.I
+            ))
+            if not quantity_candidates:
+                continue
+            # Quantity is normally in the right half of the row; ignore units
+            # embedded in descriptions like "Lizol 2ltr".
+            quantity_match = next(
+                (m for m in reversed(quantity_candidates)
+                 if len(_norm(body[:m.start()])) >= 3 and re.search(r"\s", body[:m.start()])),
+                None,
+            )
+            if not quantity_match:
+                continue
+            description = body[:quantity_match.start()].strip(" .:-")
+            qty = _number(quantity_match.group(1))
+            unit = quantity_match.group(2).upper().rstrip(".")
+            trailing = body[quantity_match.end():]
+            numbers = re.findall(amount_re, trailing)
+            if len(numbers) >= 2:
+                rate = _number(numbers[0])
+                amount = _number(numbers[-1])
+            elif len(numbers) == 1:
+                rate = _number(numbers[0])
+
+        # Trim HSN/GST tokens left behind by OCR/layout differences.
+        description = re.sub(r"\s+\d{4,8}\s*$", "", description).strip(" .:-")
+        description = re.sub(r"\s+\d{1,2}\s*%\s*$", "", description).strip(" .:-")
+        if not description or len(_norm(description)) < 3 or qty is None or qty <= 0 or qty > 1_000_000:
+            continue
+        # A serial number followed by a tax/summary phrase is not a goods row.
+        if re.search(r"\b(?:cgst|sgst|igst|total|round off|tax)\b", description, re.I):
             continue
 
-        # Exact normalized name first, then conservative token similarity.
-        desc_norm = _norm(description)
-        candidates = []
-        for item in masters:
-            name_norm = _norm(item.name or "")
-            if not item.code or not name_norm:
-                continue
-            if name_norm == desc_norm or name_norm in desc_norm or desc_norm in name_norm:
-                candidates.append((1.0, item))
-            else:
-                from difflib import SequenceMatcher
-                score = SequenceMatcher(None, desc_norm, name_norm).ratio()
-                if score >= 0.78:
-                    candidates.append((score, item))
-        candidates.sort(key=lambda pair: pair[0], reverse=True)
-        matched = candidates[0][1] if candidates and (
-            len(candidates) == 1 or candidates[0][0] - candidates[1][0] >= 0.08
-        ) else None
-        code = matched.code if matched else ""
-        if code and code in seen:
+        matched = match_master(description)
+        code = (matched.code or "") if matched else ""
+        if code and code in seen_codes:
             continue
         found.append({
             "item_code": code,
@@ -126,29 +169,26 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             "source": "receipt_text",
         })
         if code:
-            seen.add(code)
+            seen_codes.add(code)
 
-    # Fallback for layouts where OCR did not preserve a usable table row.
-    if found:
-        return found
-    for item in masters:
-        code = (item.code or "").strip()
-        name = (item.name or "").strip()
-        if not code or not name or code in seen:
-            continue
-        name_norm = _norm(name)
-        if len(name_norm) < 4:
-            continue
-        for line in lines:
-            if name_norm in _norm(line):
+    # If OCR layout prevented quantity parsing, still surface confidently detected
+    # item-master names as suggestions rather than returning an empty item list.
+    if not found:
+        normalized_lines = [_norm(line) for line in lines]
+        for item in masters:
+            code = (item.code or "").strip()
+            name = (item.name or "").strip()
+            name_norm = _norm(name)
+            if not code or not name_norm or len(name_norm) < 4 or code in seen_codes:
+                continue
+            if any(name_norm in line for line in normalized_lines):
                 found.append({
                     "item_code": code, "item_name": name,
                     "vendor_code": item.vendor_code or "", "vendor_name": "",
                     "recd_qty": None, "accepted_qty": None, "rate": item.rate or 0,
                     "match_status": "matched", "source": "receipt_text",
                 })
-                seen.add(code)
-                break
+                seen_codes.add(code)
     return found
 
 def _extract_fields(text: str, db: Session) -> dict[str, Any]:
