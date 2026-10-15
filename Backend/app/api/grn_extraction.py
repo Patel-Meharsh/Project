@@ -153,7 +153,8 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
 
 def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     invoice_no = _first([
-        r"(?:invoice\s*(?:no\.?|number|#)|tax\s*invoice\s*(?:no\.?|number|#)?|bill\s*(?:no\.?|number|#))\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
+        r"(?:invoice|bill)\s*(?:no\.?|number|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
+        r"tax\s*invoice\s*(?:no\.?|number|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
     ], text)
     po_no = _first([
         r"(?:purchase order|\bP\.O\.?|\bPO)\s*(?:no|number|ref|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
@@ -181,6 +182,17 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
                    or norm in re.sub(r"[^a-z0-9]", "", (v.name or "").lower())]
         if len(matches) == 1:
             vendor_match = matches[0]
+    # Many Indian tax invoices show the supplier name as a heading rather than
+    # using a literal "Vendor:" or "Supplier:" label. Match known vendor names
+    # anywhere in the document, but only accept a unique, meaningful match.
+    if not vendor_match:
+        normalized_text = _norm(text)
+        named_matches = [
+            v for v in vendors
+            if len(_norm(v.name or "")) >= 5 and _norm(v.name or "") in normalized_text
+        ]
+        if len(named_matches) == 1:
+            vendor_match = named_matches[0]
 
     po_match = db.query(models.PurchaseOrderModel).filter_by(po_no=po_no).first() if po_no else None
     items: list[dict[str, Any]] = []
