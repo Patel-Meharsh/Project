@@ -330,11 +330,11 @@ async def extract_grn_document(
                                 pytesseract.image_to_string(image, config="--oem 3 --psm 6").strip(),
                                 pytesseract.image_to_string(image, config="--oem 3 --psm 4").strip(),
                             ]
-                            ocr_text = max(ocr_candidates, key=lambda value: len(re.sub(r"\\s+", "", value)))
+                            ocr_text = max(ocr_candidates, key=lambda value: len(re.sub(r"\s+", "", value)))
                             # Keep both sources on sparse/hybrid pages; don't discard
                             # embedded text if OCR finds only part of the page.
                             if ocr_text:
-                                page_texts[index] = "\\n".join(
+                                page_texts[index] = "\n".join(
                                     part for part in (page_texts[index], ocr_text) if part
                                 )
                 except HTTPException:
@@ -372,7 +372,7 @@ async def extract_grn_document(
                 pytesseract.image_to_string(image, config="--oem 3 --psm 4").strip(),
                 pytesseract.image_to_string(image, config="--oem 3 --psm 11").strip(),
             ]
-            text = max(ocr_candidates, key=lambda value: len(re.sub(r"\\s+", "", value)))
+            text = max(ocr_candidates, key=lambda value: len(re.sub(r"\s+", "", value)))
         except HTTPException:
             raise
         except ImportError:
