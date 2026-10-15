@@ -215,16 +215,16 @@ async def extract_grn_document(
             # PyMuPDF renders pages without requiring a separate Poppler installation.
             if any(not page_text for page_text in page_texts):
                 try:
-                    import fitz
+                    import pymupdf
                     from PIL import Image
                     import pytesseract
 
-                    pdf_document = fitz.open(stream=raw, filetype="pdf")
+                    pdf_document = pymupdf.open(stream=raw, filetype="pdf")
                     for index, page_text in enumerate(page_texts):
                         if page_text:
                             continue
                         page = pdf_document.load_page(index)
-                        pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
                         if pixmap.width * pixmap.height > 25_000_000:
                             raise HTTPException(413, "A rendered PDF page is too large to process.")
                         image = Image.open(io.BytesIO(pixmap.tobytes("png")))
