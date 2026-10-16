@@ -48,6 +48,80 @@ def _norm(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (value or "").lower())
 
 
+def _ocr_quality_score(text: str) -> float:
+    """Rank OCR candidates by readable invoice-like content, not raw text length."""
+    if not text or not text.strip():
+        return 0.0
+
+    compact = re.sub(r"\s+", "", text)
+    if not compact:
+        return 0.0
+
+    alnum = sum(char.isalnum() for char in compact)
+    readable_ratio = alnum / max(1, len(compact))
+    words = re.findall(r"[A-Za-z]{2,}", text)
+    numbers = re.findall(r"\d+(?:[.,]\d+)?", text)
+    invoice_terms = re.findall(
+        r"\b(?:invoice|bill|date|qty|quantity|rate|amount|total|item|description|"
+        r"hsn|gst|po|purchase|order|vendor|supplier|pcs|nos|kg|kgs|ltr|box|pkt)\b",
+        text,
+        re.IGNORECASE,
+    )
+    # Penalize OCR noise such as long runs of punctuation or replacement symbols.
+    noise = len(re.findall(r"[^A-Za-z0-9\s.,:/()%'₹&+-]", text))
+    score = (len(words) * 2.0) + (len(numbers) * 1.2) + (len(invoice_terms) * 2.5)
+    score += readable_ratio * 8.0
+    score -= noise * 1.5
+    # Very short fragments are rarely enough to recover an invoice table.
+    if len(compact) < 20:
+        score *= 0.5
+    return score
+
+
+def _prepare_ocr_variants(image):
+    """Return lightweight image variants that help Tesseract read scans and photos."""
+    from PIL import Image, ImageEnhance, ImageOps, ImageFilter
+
+    image = ImageOps.exif_transpose(image)
+    if image.width * image.height > 25_000_000:
+        raise HTTPException(413, "Image dimensions are too large to process.")
+
+    gray = ImageOps.grayscale(image)
+    gray = ImageOps.autocontrast(gray)
+    # Small phone uploads and 150-DPI PDF renders often need more pixels for
+    # character recognition. Keep the existing 25MP safety cap in place.
+    longest = max(gray.size)
+    if longest < 2600:
+        scale = min(2.0, 2600 / max(1, longest))
+        target = (int(gray.width * scale), int(gray.height * scale))
+        if target[0] * target[1] <= 25_000_000:
+            gray = gray.resize(target, Image.Resampling.LANCZOS)
+
+    sharp = ImageEnhance.Sharpness(gray).enhance(1.6).filter(ImageFilter.SHARPEN)
+    # A thresholded variant can improve faint photocopies; retain grayscale too,
+    # because thresholding can erase thin fonts and decimal points.
+    threshold = gray.point(lambda pixel: 255 if pixel > 175 else 0)
+    return [gray, sharp, threshold]
+
+
+def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
+    """Try multiple preprocessed images/layout modes and choose the most readable text."""
+    import pytesseract
+
+    candidates: list[str] = []
+    for variant in _prepare_ocr_variants(image):
+        for mode in modes:
+            candidate = pytesseract.image_to_string(
+                variant, config=f"--oem 3 --psm {mode}"
+            ).strip()
+            if candidate:
+                candidates.append(candidate)
+
+    if not candidates:
+        return ""
+    return max(candidates, key=_ocr_quality_score)
+
+
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
     """Extract invoice rows even when OCR breaks a table into uneven text lines."""
     from difflib import SequenceMatcher
@@ -326,14 +400,9 @@ async def extract_grn_document(
                             if pixmap.width * pixmap.height > 25_000_000:
                                 raise HTTPException(413, "A rendered PDF page is too large to process.")
                             image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
-                            # Table invoices are often read as scattered columns by
-                            # the default OCR layout. Try two layout modes and keep the
-                            # result that preserves more non-empty text.
-                            ocr_candidates = [
-                                pytesseract.image_to_string(image, config="--oem 3 --psm 6").strip(),
-                                pytesseract.image_to_string(image, config="--oem 3 --psm 4").strip(),
-                            ]
-                            ocr_text = max(ocr_candidates, key=lambda value: len(re.sub(r"\s+", "", value)))
+                            # Compare grayscale, sharpened, and thresholded scans using
+                            # invoice-aware scoring rather than simply choosing the longest OCR.
+                            ocr_text = _run_ocr_candidates(image, modes=(6, 4, 11))
                             # Keep both sources on sparse/hybrid pages; don't discard
                             # embedded text if OCR finds only part of the page.
                             if ocr_text:
@@ -360,22 +429,10 @@ async def extract_grn_document(
             raise HTTPException(400, "The PDF could not be read. Please upload a valid PDF.")
     else:
         try:
-            from PIL import Image, ImageOps
-            import pytesseract
+            from PIL import Image
             image = Image.open(io.BytesIO(raw))
-            image = ImageOps.exif_transpose(image)  # Respect phone-camera orientation.
-            if image.width * image.height > 25_000_000:
-                raise HTTPException(413, "Image dimensions are too large to process.")
-            # OCR engines work most predictably with a standard RGB image.
-            image = image.convert("RGB")
-            # Phone photos of invoices have skew, shadows and table columns.
-            # Compare block-layout OCR modes instead of relying on Tesseract's default.
-            ocr_candidates = [
-                pytesseract.image_to_string(image, config="--oem 3 --psm 6").strip(),
-                pytesseract.image_to_string(image, config="--oem 3 --psm 4").strip(),
-                pytesseract.image_to_string(image, config="--oem 3 --psm 11").strip(),
-            ]
-            text = max(ocr_candidates, key=lambda value: len(re.sub(r"\s+", "", value)))
+            # OCR helper handles orientation, contrast, resolution, and candidate scoring.
+            text = _run_ocr_candidates(image, modes=(6, 4, 11))
         except HTTPException:
             raise
         except ImportError:
