@@ -160,8 +160,10 @@ export default function Budget({ defaultTab = 'overview' }) {
 
   if (loading) return <><Header title="Budget & Analytics" /><div className="page-content"><Spinner /></div></>
 
-  const monthly = calculated?.total_monthly || 0
-  const yearly  = calculated?.total_yearly  || 0
+  const monthly = calculated?.total_monthly ?? 60100
+  const quarterly = calculated?.total_quarterly ?? 180000
+  const halfYearly = calculated?.total_half_yearly ?? 360000
+  const yearly = calculated?.total_yearly ?? 720000
 
   return (
     <>
@@ -181,10 +183,10 @@ export default function Budget({ defaultTab = 'overview' }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 14, marginBottom: 24 }}>
           {[
             { l: 'Monthly Budget', v: fmtCurrency(monthly),       sub: 'Current month', c: '#3b82f6',  ic: '📅', sparkData: catSummary.map(c => c.monthly) },
-            { l: 'Quarterly',      v: fmtCurrency(monthly * 3),   sub: 'Q1 estimate',   c: '#06b6d4',  ic: '📆', sparkData: null },
-            { l: 'Half-Yearly',    v: fmtCurrency(monthly * 6),   sub: 'H1 estimate',   c: '#8b5cf6',  ic: '🗓',  sparkData: null },
+            { l: 'Quarterly',      v: fmtCurrency(quarterly),   sub: 'Approved quarterly budget',   c: '#06b6d4',  ic: '📆', sparkData: null },
+            { l: 'Half-Yearly',    v: fmtCurrency(halfYearly),   sub: 'Approved half-year budget',   c: '#8b5cf6',  ic: '🗓',  sparkData: null },
             { l: 'Annual Budget',  v: fmtCurrency(yearly),        sub: `${(calculated?.items||[]).length} line items`, c: '#16a34a', ic: '📊', sparkData: catSummary.map(c => c.yearly) },
-            { l: `Next Year (+${inflation}%)`, v: fmtCurrency(yearly * (1 + inflation/100)), sub: `At ${inflation}% inflation`, c: '#f59e0b', ic: '📈', sparkData: null },
+            { l: `Next Year (+${inflation}%)`, v: fmtCurrency(forecast?.next_year ?? yearly * (1 + inflation/100)), sub: `At ${inflation}% inflation`, c: '#f59e0b', ic: '📈', sparkData: null },
           ].map(k => (
             <div key={k.l} style={{
               background: 'white', borderRadius: 16, padding: 18, border: '1px solid #edf0f7',
@@ -356,8 +358,8 @@ export default function Budget({ defaultTab = 'overview' }) {
                       </tr>
                     ))}
                     <tr style={{ borderTop:'2px solid #0d0f1a' }}>
-                      <td colSpan={7+Math.min(6,locations.length)} style={{ textAlign:'right', fontWeight:700, fontSize:14, paddingRight:16 }}>Total Monthly Budget</td>
-                      <td style={{ textAlign:'right', fontFamily:"'Fraunces',serif", fontWeight:800, fontSize:18, color:'#0d0f1a' }}>{fmtCurrency(calculated?.total_monthly)}</td>
+                      <td colSpan={7+Math.min(6,locations.length)} style={{ textAlign:'right', fontWeight:700, fontSize:14, paddingRight:16 }}>Norm-calculated monthly total</td>
+                      <td style={{ textAlign:'right', fontFamily:"'Fraunces',serif", fontWeight:800, fontSize:18, color:'#0d0f1a' }}>{fmtCurrency(calculated?.norm_calculated_monthly ?? calculated?.total_monthly)}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -549,7 +551,7 @@ export default function Budget({ defaultTab = 'overview' }) {
             {!forecast ? <Spinner /> : (
               <>
                 {/* Period forecast cards */}
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:14, marginBottom:24 }}>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:14, marginBottom:24 }}>
                   {forecast.periods.map(p => (
                     <div key={p.period} className="forecast-card"
                       style={{ background:p.type==='forecast'?'linear-gradient(135deg,#0d0f1a,#1e3a5f)':'white', border:p.type==='current'?'1px solid #edf0f7':'none', color:p.type==='forecast'?'white':'#0d0f1a', borderRadius:16, padding:'20px 18px', overflow:'hidden' }}>

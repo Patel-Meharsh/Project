@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Treemap } from 'recharts'
 import { dashboardApi, budgetCalcApi } from '../lib/api'
 import { fmtCurrency, fmtNum, CATEGORY_COLORS } from '../lib/utils'
 import { Spinner } from '../components/UI'
@@ -19,21 +19,19 @@ export default function Dashboard() {
     const [s, c, ab] = await Promise.all([
       dashboardApi.kpis().catch(err => { toast.error('Failed to load KPIs'); return {} }),
       dashboardApi.spendByCategory().catch(() => []),
-      budgetCalcApi.getCategorySummary().catch(() => []),
+      budgetCalcApi.getApproved().catch(() => null),
     ])
-    // Use the most recent month that has actual spend; fall back to current month
-    const spend = (s?.monthly_spend || []).filter(m => m.value > 0)
-    const bestMonth = spend.length > 0
-      ? Math.max(...spend.map(m => m.month))
-      : new Date().getMonth() + 1
-    const bv = await budgetCalcApi.getVsActual(bestMonth).catch(() => null)
+    // Compare this calendar month's spend with the approved monthly budget.
+    const currentMonth = new Date().getMonth() + 1
+    const bv = await budgetCalcApi.getVsActual(currentMonth, new Date().getFullYear()).catch(() => null)
     setBvA(bv)
-    return { kpis: s || {}, cats: Array.isArray(c) ? c : [], annualBudget: Array.isArray(ab) ? ab : [] }
+    return { kpis: s || {}, cats: Array.isArray(c) ? c : [], annualBudget: Array.isArray(ab?.categories) ? ab.categories : [], approvedBudget: ab }
   })
 
   const data = fetchResult?.kpis || {}
   const cats = fetchResult?.cats || []
   const annualBudget = fetchResult?.annualBudget || []
+  const approvedBudget = fetchResult?.approvedBudget || null
 
   if (loading) return (
     <>
@@ -43,11 +41,35 @@ export default function Dashboard() {
   )
 
   const spendData = (data.monthly_spend||[]).map(m => ({ name: MONTHS[m.month], value: m.value }))
-  const catPieData = cats.map(c => ({ name: c.category, label: c.category, value: Number(c.value || 0) }))
+  // Build the chart from categories that actually have positive issuance spend.
+  // New categories are included automatically; zero-spend categories are omitted.
+  const categoryTotals = new Map()
+  cats.forEach(item => {
+    const rawName = String(item.category || '').trim()
+    const amount = Number(item.value)
+    if (!rawName || !Number.isFinite(amount) || amount <= 0) return
+
+    const key = rawName.toLowerCase()
+    const existing = categoryTotals.get(key)
+    categoryTotals.set(key, {
+      name: existing?.name || rawName,
+      value: (existing?.value || 0) + amount,
+    })
+  })
+  const categoryPieData = Array.from(categoryTotals.values())
+    .filter(item => item.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .map(item => ({
+      ...item,
+      color: CATEGORY_COLORS[item.name] || '#94a3b8',
+    }))
+  const totalCategorySpend = categoryPieData.reduce((sum, item) => sum + item.value, 0)
 
   const reorders = data.reorder_alerts || []
 
-  const totalAnnual = annualBudget.reduce((sum, c) => sum + (c.yearly || 0), 0)
+  const totalAnnual = approvedBudget?.yearly ?? 720000
+  const categoryAnnualTotal = annualBudget.reduce((sum, c) => sum + (c.yearly || 0), 0)
+  const unallocatedAnnual = totalAnnual - categoryAnnualTotal
 
   const annualData = annualBudget
     .sort((a,b) => (b.yearly || 0) - (a.yearly || 0))
@@ -130,13 +152,13 @@ export default function Dashboard() {
 
           {/* Budget vs Actual mini widget */}
           {bvA && (
-            <div className="panel fade-in" style={{ cursor:'pointer' }} onClick={()=>navigate('/budget/variance')}>
+            <div className="panel fade-in">
               <div className="panel-header">
                 <div>
-                  <div className="panel-title">Budget vs Actual — {new Date().toLocaleString('en-IN',{month:'short'})}</div>
-                  <div className="panel-sub">Click to see full analysis</div>
+                  <div className="panel-title">Budget vs Actual — {MONTHS[bvA.month] || MONTHS[new Date().getMonth()+1]}</div>
+                  <div className="panel-sub">Monthly budget compared with actual spend</div>
                 </div>
-                <span style={{ fontSize:12, color:'#3b82f6', fontWeight:500 }}>View all →</span>
+                <button type="button" className="btn btn-outline btn-sm" onClick={() => navigate('/budget/variance')} style={{ fontSize:12 }}>View all →</button>
               </div>
               <div className="panel-body">
                 <div style={{ display:'flex', gap:16, marginBottom:16 }}>
@@ -164,25 +186,60 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Row 3: Category spend pie + Reorder table */}
-        <div className="chart-grid" style={{ marginBottom:20 }}>
-          <div className="panel fade-in">
+        {/* Dashboard cards arranged in the approved two-column layout. */}
+        <div className="dashboard-four-card-layout">
+          <div className="dashboard-card-column dashboard-card-column-left">
+            <div className="panel fade-in dashboard-category-panel">
             <div className="panel-header">
               <div>
                 <div className="panel-title">Spend by Category</div>
                 <div className="panel-sub">From issuance records</div>
               </div>
             </div>
-            <div className="panel-body" style={{ height:230 }}>
-              {catPieData.some(d => d.value > 0) ? (
+            <div className="panel-body dashboard-treemap-body">
+              {totalCategorySpend > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={catPieData} dataKey="value" nameKey="label" cx="50%" cy="50%" outerRadius={65} innerRadius={35}>
-                      {catPieData.map((e,i) => <Cell key={i} fill={CATEGORY_COLORS[e.label]||'#94a3b8'} />)}
-                    </Pie>
-                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize:11, paddingTop:8 }} formatter={v=><span style={{ fontSize:11 }}>{v}</span>} />
-                    <Tooltip formatter={v=>[fmtCurrency(v),'Spend']} contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }} />
-                  </PieChart>
+                  <Treemap
+                    data={categoryPieData.map(item => ({ name: item.name, size: item.value, value: item.value, fill: item.color }))}
+                    dataKey="size"
+                    nameKey="name"
+                    stroke="#ffffff"
+                    strokeWidth={3}
+                    aspectRatio={1.5}
+                    content={({ x = 0, y = 0, width = 0, height = 0, name = '', value, size, fill }) => {
+                      const safeName = typeof name === 'string' ? name : ''
+                      const amount = Number(value ?? size) || 0
+                      if (width <= 0 || height <= 0) return null
+                      const share = totalCategorySpend > 0 ? (amount / totalCategorySpend) * 100 : 0
+                      const showLabel = safeName.length > 0 && width > 75 && height > 42
+                      return (
+                        <g>
+                          <rect x={x} y={y} width={width} height={height} fill={fill || '#94a3b8'} stroke="#ffffff" strokeWidth={3} />
+                          {showLabel && (
+                            <>
+                              <text x={x + 10} y={y + 20} fill="#ffffff" fontSize={11.5} fontWeight={600}>
+                                {safeName.length > 22 ? `${safeName.slice(0, 19)}…` : safeName}
+                              </text>
+                              {height > 62 && (
+                                <text x={x + 10} y={y + 38} fill="#ffffff" fontSize={11}>
+                                  {fmtCurrency(amount)} · {share.toFixed(1)}%
+                                </text>
+                              )}
+                            </>
+                          )}
+                        </g>
+                      )
+                    }}
+                  >
+                    <Tooltip
+                      formatter={(value, name, props) => {
+                        const amount = Number(value) || 0
+                        const share = totalCategorySpend > 0 ? (amount / totalCategorySpend) * 100 : 0
+                        return [`${fmtCurrency(amount)} (${share.toFixed(1)}%)`, props?.payload?.name || name || 'Category']
+                      }}
+                      contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }}
+                    />
+                  </Treemap>
                 </ResponsiveContainer>
               ) : (
                 <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'#94a3b8', fontSize:13 }}>
@@ -191,54 +248,8 @@ export default function Dashboard() {
               )}
             </div>
           </div>
-
-          <div className="panel fade-in">
-            <div className="panel-header">
-              <div className="panel-title">Reorder Alerts</div>
-              <button className="btn btn-outline btn-sm" onClick={()=>navigate('/inventory')}>View Inventory →</button>
-            </div>
-            <div className="panel-body" style={{ padding:'8px 0' }}>
-            {reorders.length === 0 ? (
-              <div style={{ textAlign:'center', padding:32, color:'#94a3b8' }}>
-                <div style={{ fontSize:32, marginBottom:8 }}>✅</div>
-                <div style={{ fontSize:13 }}>All items above reorder level</div>
-              </div>
-            ) : (
-              <>
-                {reorders.slice(0, 6).map(r=>(
-                  <div key={r.code} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 20px', borderBottom:'1px solid #f8f9fc' }}>
-                    <div style={{ width:36, height:36, borderRadius:8, background:'#fef2f2', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, flexShrink:0 }}>⚠️</div>
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontWeight:500, fontSize:13 }}>{r.name}</div>
-                      <div style={{ fontSize:11, color:'#94a3b8' }}>{r.code} · {r.location}</div>
-                    </div>
-                    <div style={{ textAlign:'right' }}>
-                      <div style={{ fontFamily:"'Fraunces',serif", fontWeight:700, fontSize:16, color:'#dc2626' }}>{r.closing}</div>
-                      <div style={{ fontSize:10, color:'#94a3b8' }}>ROL: {r.rol}</div>
-                    </div>
-                  </div>
-                ))}
-
-                {reorders.length > 6 && (
-                  <div style={{ textAlign:'center', padding:12 }}>
-                    <button 
-                      className="btn btn-outline btn-sm"
-                      onClick={()=>navigate('/inventory')}
-                    >
-                      View all {reorders.length} items →
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-            </div>
-          </div>
-        </div>
-
-        {/* Row 4: Quick nav cards + Annual budget */}
-        <div className="chart-grid-3">
-          <div className="panel fade-in" style={{ gridColumn:'1/3' }}>
-            <div className="panel-header"><div className="panel-title">Quick Actions</div><div className="panel-sub">Jump to any module</div></div>
+            <div className="panel fade-in dashboard-quick-actions">
+            <div className="panel-header"><div><div className="panel-title">Quick Actions</div><div className="panel-sub">Jump to any module</div></div></div>
             <div className="panel-body">
               <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:10 }}>
                 {[
@@ -260,13 +271,59 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
-
-          <div className="panel fade-in">
+          </div>
+          <div className="dashboard-card-column dashboard-card-column-right">
+            <div className="panel fade-in dashboard-reorder-panel">
             <div className="panel-header">
-              <div className="panel-title">Annual Budget</div>
+              <div className="panel-title">Reorder Alerts</div>
+              <button className="btn btn-outline btn-sm" onClick={()=>navigate('/inventory')}>View Inventory →</button>
+            </div>
+            <div className="panel-body" style={{ padding:'8px 0' }}>
+            {reorders.length === 0 ? (
+              <div style={{ textAlign:'center', padding:32, color:'#94a3b8' }}>
+                <div style={{ fontSize:32, marginBottom:8 }}>✅</div>
+                <div style={{ fontSize:13 }}>All items above reorder level</div>
+              </div>
+            ) : (
+              <>
+                {reorders.slice(0, 4).map(r=>(
+                  <div key={r.code} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 20px', borderBottom:'1px solid #f8f9fc' }}>
+                    <div style={{ width:36, height:36, borderRadius:8, background:'#fef2f2', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, flexShrink:0 }}>⚠️</div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontWeight:500, fontSize:13 }}>{r.name}</div>
+                      <div style={{ fontSize:11, color:'#94a3b8' }}>{r.code} · {r.location}</div>
+                    </div>
+                    <div style={{ textAlign:'right' }}>
+                      <div style={{ fontFamily:"'Fraunces',serif", fontWeight:700, fontSize:16, color:'#dc2626' }}>{r.closing}</div>
+                      <div style={{ fontSize:10, color:'#94a3b8' }}>ROL: {r.rol}</div>
+                    </div>
+                  </div>
+                ))}
+
+                {reorders.length > 4 && (
+                  <div style={{ textAlign:'center', padding:12 }}>
+                    <button 
+                      className="btn btn-outline btn-sm"
+                      onClick={()=>navigate('/inventory')}
+                    >
+                      View all {reorders.length} items →
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+            </div>
+          </div>
+            <div className="panel fade-in dashboard-annual-budget">
+            <div className="panel-header">
+              <div>
+                <div className="panel-title">Annual Budget</div>
+                <div className="panel-sub">{fmtCurrency(categoryAnnualTotal)} allocated · {fmtCurrency(unallocatedAnnual)} unallocated</div>
+              </div>
               <button className="btn btn-outline btn-sm" onClick={()=>navigate('/budget')}>Details →</button>
             </div>
             <div className="panel-body">
+
               {
                 annualData.length > 0 ? (
                 annualData.map(({cat,val,color,pct})=>(
@@ -293,8 +350,8 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-
-      </div>
+          </div>
+        </div>
     </>
   )
 }

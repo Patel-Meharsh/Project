@@ -128,11 +128,12 @@ export const returnsApi = {
 
 // ── BUDGET ────────────────────────────────────────────────────────────────────
 export const budgetCalcApi = {
+  getApproved:        ()          => api.get('/budget/approved').then(r => r.data),
   calculate:          ()          => api.post('/budget/calculate').then(r => r.data),
   getCalculated:      ()          => api.get('/budget/calculated').then(r => r.data),
-  getVsActual:        (month)     => api.get('/budget/vs-actual', { params: { month: month || 1 } }).then(r => r.data),
-  getForecast:        (inflation) => api.get('/budget/forecast', { params: { inflation: inflation || 6 } }).then(r => r.data),
-  getMonthlyForecast: (inflation) => api.get('/budget/monthly-forecast', { params: { inflation: inflation || 6 } }).then(r => r.data),
+  getVsActual:        (month, year) => api.get('/budget/vs-actual', { params: { month: month || 1, year: year || new Date().getFullYear() } }).then(r => r.data),
+  getForecast:        (inflation) => api.get('/budget/forecast', { params: { inflation: inflation ?? 6 } }).then(r => r.data),
+  getMonthlyForecast: (inflation) => api.get('/budget/monthly-forecast', { params: { inflation: inflation ?? 6 } }).then(r => r.data),
   getCategorySummary: ()          => api.get('/budget/category-summary').then(r => r.data),
   getLocationSummary: ()          => api.get('/budget/location-summary').then(r => r.data),
 }

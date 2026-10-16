@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import get_db
 from app import models
+from app.budget_config import APPROVED_BUDGET
 from app.config import settings
 from app.auth import hash_password, verify_password, create_token, decode_token, needs_rehash
 import io
@@ -288,9 +289,17 @@ def dashboard_kpis(db: Session = Depends(get_db), current_user: models.UserModel
     )
     ytd_po = db.query(func.sum(models.PurchaseOrderModel.qty_ordered * models.PurchaseOrderModel.rate)).scalar() or 0
     iss = db.query(models.IssuanceLogModel).all()
-    monthly = {m: 0 for m in range(1, 13)}
-    for i in iss:
-        k = i.month; monthly[k] = monthly.get(k, 0) + (i.qty * i.rate)
+    current_year = date.today().year
+    monthly = {m: 0.0 for m in range(1, 13)}
+    for issuance in iss:
+        if issuance.date:
+            if issuance.date.year != current_year:
+                continue
+            month_num = issuance.date.month
+        else:
+            month_num = issuance.month
+        if month_num and 1 <= month_num <= 12:
+            monthly[month_num] += (issuance.qty or 0) * (issuance.rate or 0)
     # Reorder alerts — aggregate best closing per item across all locations
     reorder_items = []
     for code, best in item_best_closing.items():
@@ -323,14 +332,17 @@ def spend_by_category(db: Session = Depends(get_db), current_user: models.UserMo
 def spend_by_location(
     db: Session = Depends(get_db),
     current_user: models.UserModel = Depends(_get_current_user)):
-    rows, _ = _compute_budget(db)
+    rows, norm_total = _compute_budget(db)
 
-    # Aggregate per location
+    # Allocate the approved monthly budget across locations in proportion to
+    # the norms-based model, while keeping the project-wide total authoritative.
     loc_totals = {}
     for r in rows:
         for loc_code, data in r["locations"].items():
             loc_totals.setdefault(loc_code, 0)
             loc_totals[loc_code] += data["value"]
+    if norm_total > 0:
+        loc_totals = {code: value * APPROVED_BUDGET["monthly"] / norm_total for code, value in loc_totals.items()}
 
     # Fetch location metadata
     locs = {l.code: l for l in db.query(models.LocationModel).all()}
@@ -621,7 +633,7 @@ def get_prs(status: Optional[str] = None, db: Session = Depends(get_db), current
             li_parsed = _json.loads(pr.line_items) if getattr(pr, 'line_items', None) else []
         except Exception:
             li_parsed = []
-        result.append({"pr_no":pr.pr_no,"pr_date":str(pr.pr_date) if pr.pr_date else None,"item_code":pr.item_code,"req_qty":pr.req_qty,"location_code":pr.location_code,"department":pr.department,"requested_by":pr.requested_by,"priority":pr.priority,"required_date":str(pr.required_date) if pr.required_date else None,"justification":pr.justification,"status":pr.status,"approved_by":pr.approved_by,"approval_date":str(pr.approval_date) if pr.approval_date else None,"po_ref":pr.po_ref,"item_name":item.name if item else pr.item_code,"category":item.category if item else "","uom":item.uom if item else "","rate":item.rate if item else 0,"est_value":(pr.req_qty or 0)*(item.rate if item else 0),"line_items":li_parsed})
+        result.append({"pr_no":pr.pr_no,"pr_date":str(pr.pr_date) if pr.pr_date else None,"item_code":pr.item_code,"req_qty":pr.req_qty,"location_code":pr.location_code,"department":pr.department,"requested_by":pr.requested_by,"priority":pr.priority,"required_date":str(pr.required_date) if pr.required_date else None,"justification":pr.justification,"status":pr.status,"approved_by":pr.approved_by,"approval_date":str(pr.approval_date) if pr.approval_date else None,"po_ref":pr.po_ref,"item_name":item.name if item else pr.item_code,"category":item.category if item else "","uom":item.uom if item else "","rate":item.rate if item else 0,"est_value":round(sum(float(li.get("qty") or 0) * float(li.get("rate") or 0) for li in li_parsed), 2) if li_parsed else (pr.req_qty or 0)*(item.rate if item else 0),"line_items":li_parsed})
     return result
 
 @router.post("/purchase-requisitions")
@@ -1625,96 +1637,195 @@ def _compute_budget(db: Session):
 
     return result, round(total_monthly, 2)
 
+@router.get("/budget/approved")
+def get_approved_budget(current_user: models.UserModel = Depends(_get_current_user)):
+    """Authoritative business-approved period budgets and category allocations."""
+    categories = []
+    category_total = sum(c["yearly"] for c in APPROVED_BUDGET["categories"])
+    for row in APPROVED_BUDGET["categories"]:
+        yearly = row["yearly"]
+        categories.append({
+            "category": row["category"],
+            "monthly": round(yearly / 12, 2),
+            "quarterly": round(yearly / 4, 2),
+            "half_yearly": round(yearly / 2, 2),
+            "yearly": yearly,
+            "pct": round(yearly / category_total * 100, 2) if category_total else 0,
+        })
+    return {
+        "monthly": APPROVED_BUDGET["monthly"],
+        "quarterly": APPROVED_BUDGET["quarterly"],
+        "half_yearly": APPROVED_BUDGET["half_yearly"],
+        "yearly": APPROVED_BUDGET["yearly"],
+        "default_inflation_pct": APPROVED_BUDGET["default_inflation_pct"],
+        "category_allocation_total": round(category_total, 2),
+        "category_allocation_gap": round(APPROVED_BUDGET["yearly"] - category_total, 2),
+        "categories": categories,
+    }
+
+
 @router.get("/budget/calculated")
 def get_budget_calculated(db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
-    rows, total = _compute_budget(db)
-    return {"items": rows, "total_monthly": total, "total_quarterly": round(total*3,2), "total_yearly": round(total*12,2)}
+    rows, norm_total = _compute_budget(db)
+    return {
+        "items": rows,
+        "total_monthly": APPROVED_BUDGET["monthly"],
+        "total_quarterly": APPROVED_BUDGET["quarterly"],
+        "total_half_yearly": APPROVED_BUDGET["half_yearly"],
+        "total_yearly": APPROVED_BUDGET["yearly"],
+        "norm_calculated_monthly": norm_total,
+    }
+
 
 @router.post("/budget/calculate")
 def recalculate_budget(db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
     _require_role(current_user, "analyst")
-    rows, total = _compute_budget(db)
-    return {"message": "Budget recalculated", "total_monthly": total, "items_count": len(rows)}
+    rows, norm_total = _compute_budget(db)
+    return {
+        "message": "Budget recalculated",
+        "total_monthly": APPROVED_BUDGET["monthly"],
+        "norm_calculated_monthly": norm_total,
+        "items_count": len(rows),
+    }
+
 
 @router.get("/budget/vs-actual")
-def budget_vs_actual(month: int = 1, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+def budget_vs_actual(month: int = 1, year: Optional[int] = None, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    selected_year = year or date.today().year
     rows, _ = _compute_budget(db)
-    iss = db.query(models.IssuanceLogModel).filter(models.IssuanceLogModel.month == month).all()
-    actual_qty = {}; actual_val = {}
-    for i in iss:
-        key = (i.item_code, i.location_code)
-
-        actual_qty[key] = actual_qty.get(key, 0) + i.qty
-        actual_val[key] = actual_val.get(key, 0) + (i.qty * i.rate)
+    issuances = db.query(models.IssuanceLogModel).all()
+    selected_issuances = [
+        iss for iss in issuances
+        if (iss.date.year == selected_year and iss.date.month == month)
+        or (iss.date is None and iss.month == month)
+    ]
+    actual_qty = {}
+    actual_val = {}
+    for iss in selected_issuances:
+        key = (iss.item_code, iss.location_code)
+        actual_qty[key] = actual_qty.get(key, 0) + (iss.qty or 0)
+        actual_val[key] = actual_val.get(key, 0) + ((iss.qty or 0) * (iss.rate or 0))
 
     result = []
     for row in rows:
-        total_a_qty = 0
-        total_a_val = 0
-
-        for loc_code in row["locations"]:
-            key = (row["item_code"], loc_code)
-            total_a_qty += actual_qty.get(key, 0)
-            total_a_val += actual_val.get(key, 0)
-
-        a_qty = total_a_qty
-        a_val = total_a_val
-        b_val = row["total_value"]
-        variance = b_val - a_val
+        # Include this item's issuances from every location, not only locations
+        # that currently have a non-zero norm-based budget row.
+        total_a_qty = sum(qty for (item_code, _), qty in actual_qty.items() if item_code == row["item_code"])
+        total_a_val = sum(value for (item_code, _), value in actual_val.items() if item_code == row["item_code"])
+        budget_value = row["total_value"]
+        actual_value = round(total_a_val, 2)
+        variance = budget_value - actual_value
         result.append({
             "item_code": row["item_code"], "item_name": row["item_name"], "category": row["category"],
-            "uom": row["norm_unit"], "budget_qty": row["total_qty"], "budget_value": b_val,
-            "actual_qty": round(a_qty,2), "actual_value": round(a_val,2),
-            "variance_qty": round(row["total_qty"] - a_qty, 2),
+            "uom": row["norm_unit"], "budget_qty": row["total_qty"], "budget_value": budget_value,
+            "actual_qty": round(total_a_qty, 2), "actual_value": actual_value,
+            "variance_qty": round(row["total_qty"] - total_a_qty, 2),
             "variance_value": round(variance, 2),
-            "variance_pct": round((variance/b_val*100) if b_val else 0, 1),
-            "utilization_pct": round((a_val/b_val*100) if b_val else 0, 1),
+            "variance_pct": round((variance / budget_value * 100) if budget_value else 0, 1),
+            "utilization_pct": round((actual_value / budget_value * 100) if budget_value else 0, 1),
             "status": "Over Budget" if variance < 0 else "Under Budget" if variance > 0 else "On Budget"
         })
-    budget_total = sum(r["budget_value"] for r in result)
-    actual_total = sum(r["actual_value"] for r in result)
-    return {"month": month, "items": result, "budget_total": round(budget_total,2), "actual_total": round(actual_total,2), "variance_total": round(budget_total-actual_total,2), "utilization_pct": round(actual_total/budget_total*100 if budget_total else 0, 1)}
+    # Surface actual spend for issued items that have no consumption norm,
+    # so the item table's actual column does not silently omit those issues.
+    norm_item_codes = {row["item_code"] for row in rows}
+    issued_without_norm = {}
+    item_master = {item.code: item for item in db.query(models.ItemModel).all()}
+    for iss in selected_issuances:
+        if iss.item_code in norm_item_codes:
+            continue
+        bucket = issued_without_norm.setdefault(iss.item_code, {"qty": 0.0, "value": 0.0})
+        bucket["qty"] += iss.qty or 0
+        bucket["value"] += (iss.qty or 0) * (iss.rate or 0)
+    for item_code, actual in issued_without_norm.items():
+        item = item_master.get(item_code)
+        actual_value = round(actual["value"], 2)
+        result.append({
+            "item_code": item_code, "item_name": item.name if item else item_code,
+            "category": item.category if item else "Uncategorized",
+            "uom": item.uom if item else "", "budget_qty": 0, "budget_value": 0,
+            "actual_qty": round(actual["qty"], 2), "actual_value": actual_value,
+            "variance_qty": round(-actual["qty"], 2), "variance_value": round(-actual_value, 2),
+            "variance_pct": 0, "utilization_pct": 0,
+            "status": "Over Budget" if actual_value > 0 else "On Budget",
+        })
+
+    # Total actual spend must include every issuance in the selected month,
+    # including items that do not currently have a consumption norm.
+    actual_total = round(sum((iss.qty or 0) * (iss.rate or 0) for iss in selected_issuances), 2)
+    approved_monthly = APPROVED_BUDGET["monthly"]
+    variance_total = round(approved_monthly - actual_total, 2)
+    return {
+        "month": month, "year": selected_year, "items": result,
+        "budget_total": approved_monthly,
+        "norm_calculated_total": round(sum(r["budget_value"] for r in result), 2),
+        "actual_total": actual_total,
+        "variance_total": variance_total,
+        "utilization_pct": round(actual_total / approved_monthly * 100 if approved_monthly else 0, 1),
+        "status": "Over Budget" if actual_total > approved_monthly else "Under Budget" if actual_total < approved_monthly else "On Budget",
+    }
+
 
 @router.get("/budget/forecast")
 def budget_forecast(inflation: float = 6, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
-    _, monthly = _compute_budget(db)
-    yearly = monthly * 12
+    inflation = max(0, min(float(inflation), 50))
+    monthly = APPROVED_BUDGET["monthly"]
+    quarterly = APPROVED_BUDGET["quarterly"]
+    half_yearly = APPROVED_BUDGET["half_yearly"]
+    yearly = APPROVED_BUDGET["yearly"]
     inf = inflation / 100
     periods = [
-        {"period": "Current Month", "value": round(monthly, 2), "type": "current"},
-        {"period": "Current Quarter", "value": round(monthly*3, 2), "type": "current"},
-        {"period": "Current Year",   "value": round(yearly, 2),    "type": "current"},
-        {"period": f"Next Year (+{inflation}% inflation)", "value": round(yearly*(1+inf), 2), "type": "forecast"},
-        {"period": "3-Year Total",   "value": round(yearly*(1 + (1+inf) + (1+inf)**2), 2), "type": "forecast"},
+        {"period": "Current Month", "value": monthly, "type": "current"},
+        {"period": "Current Quarter", "value": quarterly, "type": "current"},
+        {"period": "Half Year", "value": half_yearly, "type": "current"},
+        {"period": "Current Year", "value": yearly, "type": "current"},
+        {"period": f"Next Year (+{inflation:g}% inflation)", "value": round(yearly * (1 + inf), 2), "type": "forecast"},
+        {"period": "3-Year Total", "value": round(yearly * (1 + (1 + inf) + (1 + inf) ** 2), 2), "type": "forecast"},
     ]
-    # Category-wise forecast
-    rows, _ = _compute_budget(db)
-    cat_curr = {}
-    for r in rows:
-        cat_curr[r["category"]] = cat_curr.get(r["category"], 0) + r["total_value"]*12
-    cat_forecast = [{"category":k,"current_year":round(v,2),"next_year":round(v*(1+inf),2),"increase":round(v*inf,2)} for k,v in cat_curr.items()]
-    return {"inflation_pct": inflation, "periods": periods, "category_forecast": cat_forecast, "monthly": monthly, "yearly": yearly}
+    category_forecast = []
+    for category in APPROVED_BUDGET["categories"]:
+        current = category["yearly"]
+        category_forecast.append({
+            "category": category["category"],
+            "current_year": current,
+            "next_year": round(current * (1 + inf), 2),
+            "increase": round(current * inf, 2),
+        })
+    return {
+        "inflation_pct": inflation, "periods": periods,
+        "category_forecast": category_forecast, "monthly": monthly,
+        "quarterly": quarterly, "half_yearly": half_yearly, "yearly": yearly,
+        "next_year": round(yearly * (1 + inf), 2),
+    }
+
 
 @router.get("/budget/category-summary")
 def budget_cat_summary(db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
-    rows, total = _compute_budget(db)
-    cats = {}
-    for r in rows:
-        c = r["category"]
-        cats.setdefault(c, 0)
-        cats[c] += r["total_value"]
-    return [{"category":k,"monthly":round(v,2),"quarterly":round(v*3,2),"yearly":round(v*12,2),"pct":round(v/total*100 if total else 0,1)} for k,v in sorted(cats.items(), key=lambda x:-x[1])]
+    approved = get_approved_budget(current_user)
+    return approved["categories"]
+
 
 @router.get("/budget/location-summary")
 def budget_loc_summary(db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
-    rows, _ = _compute_budget(db)
+    rows, norm_total = _compute_budget(db)
     locs = {l.code: l for l in db.query(models.LocationModel).all()}
     loc_vals = {}
-    for r in rows:
-        for loc_code, data in r["locations"].items():
+    for row in rows:
+        for loc_code, data in row["locations"].items():
             loc_vals.setdefault(loc_code, 0)
             loc_vals[loc_code] += data["value"]
-    return [{"location":k,"name":locs.get(k).name if locs.get(k) else k,"area":locs.get(k).area_sqft if locs.get(k) else 0,"headcount":locs.get(k).headcount if locs.get(k) else 0,"monthly":round(v,2),"quarterly":round(v*3,2),"yearly":round(v*12,2)} for k,v in sorted(loc_vals.items(), key=lambda x:-x[1])]
+    return [
+        {
+            "location": code,
+            "name": locs.get(code).name if locs.get(code) else code,
+            "area": locs.get(code).area_sqft if locs.get(code) else 0,
+            "headcount": locs.get(code).headcount if locs.get(code) else 0,
+            "monthly": round(APPROVED_BUDGET["monthly"] * value / norm_total, 2) if norm_total else 0,
+            "quarterly": round(APPROVED_BUDGET["quarterly"] * value / norm_total, 2) if norm_total else 0,
+            "half_yearly": round(APPROVED_BUDGET["half_yearly"] * value / norm_total, 2) if norm_total else 0,
+            "yearly": round(APPROVED_BUDGET["yearly"] * value / norm_total, 2) if norm_total else 0,
+        }
+        for code, value in sorted(loc_vals.items(), key=lambda pair: -pair[1])
+    ]
 
 
 # ─── CATEGORIES ──────────────────────────────────────────────────────────────
@@ -2349,44 +2460,50 @@ def delete_vendor_rate_card(code: str, rate_card_id: str, db: Session = Depends(
 # ─── MONTHLY BUDGET FORECAST ──────────────────────────────────────────────────
 @router.get("/budget/monthly-forecast")
 def monthly_budget_forecast(inflation: float = 6, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
-    """Return month-by-month actual spend + forecasted budget for next 12 months."""
+    """Return current-year actual spend and approved-budget-based monthly projections."""
+    inflation = max(0, min(float(inflation), 50))
+    today = date.today()
+    current_year = today.year
     issuances = db.query(models.IssuanceLogModel).all()
-    # Group actual spend by month
     monthly_actual = {m: 0.0 for m in range(1, 13)}
     for iss in issuances:
-        m = iss.month or (iss.date.month if iss.date else None)
-        if m and 1 <= m <= 12:
-            monthly_actual[m] += (iss.qty or 0) * (iss.rate or 0)
-    # Average actual monthly spend as base
-    avg = sum(monthly_actual.values()) / 12
-    inf_factor = 1 + inflation / 100
-    # Build 12-month plan: actual where available, forecast where not
-    today = date.today()
-    current_month = today.month
+        if iss.date:
+            if iss.date.year != current_year:
+                continue
+            month_num = iss.date.month
+        else:
+            month_num = iss.month
+        if month_num and 1 <= month_num <= 12:
+            monthly_actual[month_num] += (iss.qty or 0) * (iss.rate or 0)
+
+    monthly_budget = APPROVED_BUDGET["monthly"]
+    inflation_factor = 1 + inflation / 100
     months_out = []
-    for i, m in enumerate(range(1, 13)):
-        label = calendar.month_abbr[m]
-        actual = round(monthly_actual[m], 2)
-        # Forecasted = avg * seasonal weight (crude), scaled up by inflation vs avg
-        seasonal = actual / avg if avg > 0 else 1.0
-        forecast = round(avg * inf_factor * (seasonal if seasonal > 0.1 else 1.0), 2)
+    for month_num in range(1, 13):
+        actual = round(monthly_actual[month_num], 2)
+        forecast = round(monthly_budget * inflation_factor, 2)
         months_out.append({
-            "month": m,
-            "label": label,
+            "month": month_num,
+            "label": calendar.month_abbr[month_num],
             "actual": actual,
+            "budget": monthly_budget,
             "forecast": forecast,
-            "is_past": m < current_month,
-            "is_current": m == current_month,
+            "is_past": month_num < today.month,
+            "is_current": month_num == today.month,
         })
-    yearly_actual  = round(sum(monthly_actual.values()), 2)
-    yearly_forecast = round(sum(r["forecast"] for r in months_out), 2)
+    yearly_actual = round(sum(monthly_actual.values()), 2)
+    yearly_forecast = round(sum(row["forecast"] for row in months_out), 2)
     return {
+        "year": current_year,
         "months": months_out,
         "yearly_actual": yearly_actual,
+        "yearly_budget": APPROVED_BUDGET["yearly"],
         "yearly_forecast": yearly_forecast,
-        "avg_monthly": round(avg, 2),
+        "avg_monthly": round(yearly_actual / 12, 2),
+        "monthly_budget": monthly_budget,
         "inflation_pct": inflation,
     }
+
 
 # ─── DELETE ROUTES (admin+ only) ─────────────────────────────────────────────
 @router.delete("/hk-master/bulk")
