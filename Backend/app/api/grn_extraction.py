@@ -1297,16 +1297,48 @@ async def extract_grn_document(
             with Image.open(io.BytesIO(raw)) as source_image:
                 image_items = _extract_image_table_line_items(source_image.convert("RGB"), db)
             if image_items:
-                result["line_items"] = image_items
+                # Keep the table-aware OCR as the primary source, but do not
+                # discard additional distinct rows found by the text-line parser.
+                # A photographed invoice can split descriptions and numeric cells
+                # across OCR lines; the two independent passes can recover different
+                # valid rows. Merge only rows with plausible quantities/rates and
+                # avoid duplicates by normalized description + quantity.
+                text_items = result.get("line_items") or []
+                merged_items = list(image_items)
+                seen_item_keys = {
+                    (_norm(str(row.get("item_name") or "")), row.get("recd_qty"))
+                    for row in merged_items
+                }
+                for candidate in text_items:
+                    description = str(candidate.get("item_name") or "").strip()
+                    qty_value = candidate.get("recd_qty")
+                    rate_value = candidate.get("rate")
+                    if not description or not re.search(r"[A-Za-z]{2,}", description):
+                        continue
+                    if qty_value is None or rate_value is None or qty_value <= 0 or rate_value < 0:
+                        continue
+                    if qty_value >= 100000 or (float(qty_value).is_integer() and 1000 <= qty_value < 100000):
+                        continue
+                    key = (_norm(description), qty_value)
+                    if key in seen_item_keys:
+                        continue
+                    # Reject obvious non-stock charges even if the text parser found them.
+                    if re.search(r"\\b(?:carting|freight|transport(?:ation)?|delivery\\s+charges?|packing\\s+charges?|handling\\s+charges?|loading|unloading|round\\s*off)\\b", description, re.I):
+                        continue
+                    merged_items.append(candidate)
+                    seen_item_keys.add(key)
+                # Prefer the merged result only when it adds independently parsed rows;
+                # never let an empty/noisy text pass replace table rows.
+                result["line_items"] = merged_items
                 result["warnings"] = [
                     warning for warning in result.get("warnings", [])
                     if "Line items were detected from receipt text" not in warning
                     and "One or more PO line items could not be matched" not in warning
                 ]
                 result["warnings"].append(
-                    "Line items were read from detected image-table columns. Verify item names, quantities, and rates before saving."
+                    "Line items were read from image-table and text OCR passes. Verify item names, quantities, and rates before saving."
                 )
-                if any(row.get("match_status") == "unmatched" for row in image_items):
+                if any(row.get("match_status") == "unmatched" for row in merged_items):
                     result["warnings"].append(
                         "One or more invoice descriptions could not be matched confidently to the item master."
                     )
