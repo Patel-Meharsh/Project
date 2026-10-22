@@ -343,17 +343,34 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
                     re.search(r"\b\d{4,8}\b", prefix_candidate)
                     or re.search(r"\d\s*%", prefix_candidate)
                 )
+                # Start with structural evidence, then strongly prefer a quantity
+                # whose following rate and line amount satisfy qty × rate ≈ amount.
+                # This prevents pack sizes and numbers embedded in descriptions
+                # from winning just because they have more numbers after them.
                 score = min(len(suffix_numbers), 3) * 10 + (8 if has_hsn_or_gst else 0)
+                parsed_suffix = [_number(value) for value in suffix_numbers]
+                qty_value = _number(candidate.group(1))
+                if qty_value is not None and len(parsed_suffix) >= 2:
+                    rate_value = parsed_suffix[0]
+                    amount_value = parsed_suffix[-1]
+                    if rate_value is not None and amount_value is not None:
+                        expected = qty_value * rate_value
+                        if abs(expected - amount_value) <= max(2.0, abs(amount_value) * 0.03):
+                            score += 45
+                        else:
+                            score -= 8
                 # A long HSN/SAC number immediately after a pair means that pair
                 # was probably a pack size inside the description, not billed qty.
                 if suffix_numbers and len(suffix_numbers[0].replace(",", "").split(".")[0]) in range(4, 9):
                     score -= 20
+                # Quantity candidates embedded in a product description are less
+                # likely than candidates whose prefix already contains a product name.
                 if len(_norm(prefix_candidate)) >= 3 and re.search(r"[A-Za-z]", prefix_candidate):
                     ranked_pairs.append((score, candidate))
             if not ranked_pairs:
                 continue
-            # Keep left-to-right order for ties: the actual quantity generally
-            # appears before the repeated UOM in the rate/per columns.
+            # Sort by confidence score; Python's stable sort preserves left-to-right
+            # order when candidates have equally strong evidence.
             ranked_pairs.sort(key=lambda pair: pair[0], reverse=True)
             qm = ranked_pairs[0][1]
             prefix = body[:qm.start()].strip(" .:-")
