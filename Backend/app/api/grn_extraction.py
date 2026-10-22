@@ -86,16 +86,18 @@ def _ocr_quality_score(text: str) -> float:
                 row_like += 1
                 # Reward rows whose quantity x rate agrees with line amount.
                 # This helps choose between OCR variants, e.g. 1 PKT vs 4 PKT.
-                pair = re.search(rf"(?<![A-Za-z])(\d[\d,.]*)\s*{unit}\b", normalized_line, re.I)
-                if pair:
+                pairs = list(re.finditer(rf"(?<![A-Za-z])(\d[\d,.]*)\s*{unit}\b", normalized_line, re.I))
+                arithmetic_matches = 0
+                for pair in pairs:
                     qty_value = _number(pair.group(1))
-                    after = normalized_line[pair.end():]
-                    after_values = [_number(value) for value in re.findall(r"\d[\d,.]*", after)]
+                    after_values = [_number(value) for value in re.findall(r"\d[\d,.]*", normalized_line[pair.end():])]
                     if qty_value is not None and len(after_values) >= 2:
                         rate_value, amount_value = after_values[0], after_values[-1]
                         if rate_value is not None and amount_value is not None:
                             delta = abs(qty_value * rate_value - amount_value)
-                            score += 12 if delta <= max(2.0, amount_value * 0.03) else -10
+                            if delta <= max(2.0, amount_value * 0.03):
+                                arithmetic_matches += 1
+                score += 12 if arithmetic_matches else -10
     score += row_like * 35.0
     if len(compact) < 20:
         score *= 0.5
@@ -192,7 +194,9 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
 
     if not candidates:
         return ""
-    return max(candidates, key=_ocr_quality_score)
+    best_text = max(candidates, key=_ocr_quality_score)
+    # Apply the same quantity correction to both plain OCR and reconstructed TSV text.
+    return re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", best_text, flags=re.I)
 
 
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
@@ -250,7 +254,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
 
         # OCR may keep a row together, omit the serial number, or place a serial
         # number directly against the description. Do not require a serial number.
-        body = re.sub(r"^\s*\d{1,3}\s*[.)]?\s*", "", line)
+        body = re.sub(r"^\s*[\W_]*\d{1,3}\s*[\W_]*", "", line)
         qty_matches = list(re.finditer(rf"(?<![A-Za-z])({number_re})\s*({unit_re})\b", body, re.I))
         qty = rate = amount = None
         unit = ""
