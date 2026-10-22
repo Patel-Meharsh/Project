@@ -1311,9 +1311,30 @@ async def extract_grn_document(
                 # avoid duplicates by normalized description + quantity.
                 text_items = result.get("line_items") or []
                 merged_items = list(image_items)
+                # Image-table rows are the primary source. Text OCR is a fallback
+                # for genuinely missing rows, not a second list to append wholesale.
+                # Independent OCR passes often describe the same numeric row differently
+                # (for example, "Lemon" vs "Soft Broom") when the photo is skewed.
+                # Deduplicate by invoice numeric signature before adding text candidates.
+                def numeric_signature(row):
+                    qty = row.get("recd_qty")
+                    rate = row.get("rate")
+                    amount = row.get("line_amount")
+                    if qty is None or rate is None:
+                        return None
+                    return (
+                        round(float(qty), 4),
+                        round(float(rate), 4),
+                        round(float(amount), 2) if amount is not None else None,
+                    )
+
                 seen_item_keys = {
                     (_norm(str(row.get("item_name") or "")), row.get("recd_qty"))
                     for row in merged_items
+                }
+                seen_numeric_signatures = {
+                    signature for row in merged_items
+                    if (signature := numeric_signature(row)) is not None
                 }
                 for candidate in text_items:
                     description = str(candidate.get("item_name") or "").strip()
@@ -1321,18 +1342,24 @@ async def extract_grn_document(
                     rate_value = candidate.get("rate")
                     if not description or not re.search(r"[A-Za-z]{2,}", description):
                         continue
+                    meaningful_tokens = re.findall(r"[A-Za-z]{2,}", description)
+                    if not meaningful_tokens or sum(len(token) for token in meaningful_tokens) < 4:
+                        continue
                     if qty_value is None or rate_value is None or qty_value <= 0 or rate_value < 0:
                         continue
                     if qty_value >= 100000 or (float(qty_value).is_integer() and 1000 <= qty_value < 100000):
                         continue
                     key = (_norm(description), qty_value)
-                    if key in seen_item_keys:
+                    signature = numeric_signature(candidate)
+                    if key in seen_item_keys or (signature is not None and signature in seen_numeric_signatures):
                         continue
                     # Reject obvious non-stock charges even if the text parser found them.
                     if re.search(r"\\b(?:carting|freight|transport(?:ation)?|delivery\\s+charges?|packing\\s+charges?|handling\\s+charges?|loading|unloading|round\\s*off)\\b", description, re.I):
                         continue
                     merged_items.append(candidate)
                     seen_item_keys.add(key)
+                    if signature is not None:
+                        seen_numeric_signatures.add(signature)
                 # Prefer the merged result only when it adds independently parsed rows;
                 # never let an empty/noisy text pass replace table rows.
                 result["line_items"] = merged_items
