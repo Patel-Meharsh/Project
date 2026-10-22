@@ -105,6 +105,7 @@ export default function GRN() {
   const [viewGrn, setViewGrn] = useState(null)
   const [extractingDocument, setExtractingDocument] = useState(false)
   const [extractionResult, setExtractionResult] = useState(null)
+  const [selectedDocumentName, setSelectedDocumentName] = useState('')
 
   const { user } = useAuth()
   const isAdmin = canDo(user?.role, 'admin')
@@ -493,8 +494,13 @@ const createGRN = async () => {
             <div style={{ gridColumn:'1/-1', border:'1px dashed #93c5fd', background:'#f8fbff', borderRadius:10, padding:14 }}>
               <div style={{ fontWeight:700, fontSize:13.5, marginBottom:4 }}>Upload Receipt — auto-fill GRN</div>
               <div style={{ fontSize:12, color:'#64748b', marginBottom:10 }}>Upload a receipt as JPG, JPEG, PNG, or PDF. Extracted values are suggestions only; nothing is saved until you review and click Save GRN.</div>
-              <input type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" disabled={extractingDocument}
-                onChange={e => { const file = e.target.files?.[0]; if (file) extractGRNDocument(file); e.target.value = '' }} />
+              <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+                <input type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" disabled={extractingDocument}
+                  onChange={e => { const file = e.target.files?.[0]; if (file) { setSelectedDocumentName(file.name); extractGRNDocument(file) } }} />
+                <span title={selectedDocumentName} style={{ fontSize:12, color:selectedDocumentName ? '#334155' : '#94a3b8', maxWidth:230, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                  {selectedDocumentName || 'No file selected'}
+                </span>
+              </div>
               {extractingDocument && <div style={{ marginTop:8, fontSize:12, color:'#2563eb' }}>Reading document…</div>}
               {extractionResult && <div style={{ marginTop:10, fontSize:12 }}>
                 <div style={{ fontWeight:700, color:'#166534', marginBottom:4 }}>Document processed — manual review required</div>
