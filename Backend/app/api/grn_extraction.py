@@ -491,6 +491,156 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             already_represented.add(nn)
     return found
 
+
+def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any]]:
+    """Extract line items from a digital PDF using word coordinates and table columns.
+
+    Unlike flattened PDF text, word coordinates preserve which values belong to
+    the description, quantity, rate, and amount columns. This is especially useful
+    for invoices whose embedded text is emitted in column-wise rather than row-wise
+    order.
+    """
+    try:
+        import pymupdf
+    except ImportError:
+        return []
+
+    from difflib import SequenceMatcher
+
+    try:
+        document = pymupdf.open(stream=raw, filetype="pdf")
+    except Exception:
+        return []
+
+    masters = db.query(models.ItemModel).all()
+    extracted: list[dict[str, Any]] = []
+
+    def match_master(description: str):
+        normalized = _norm(description)
+        if not normalized:
+            return None
+        candidates = []
+        desc_tokens = set(re.findall(r"[a-z0-9]+", description.lower()))
+        for item in masters:
+            name = (item.name or "").strip()
+            code = (item.code or "").strip()
+            normalized_name = _norm(name)
+            if not name or not code:
+                continue
+            name_tokens = set(re.findall(r"[a-z0-9]+", name.lower()))
+            overlap = len(desc_tokens & name_tokens) / max(1, len(desc_tokens | name_tokens))
+            score = max(
+                SequenceMatcher(None, normalized, normalized_name).ratio(),
+                overlap,
+                1.0 if normalized_name in normalized or normalized in normalized_name else 0.0,
+            )
+            if score >= 0.42:
+                candidates.append((score, item))
+        candidates.sort(key=lambda pair: pair[0], reverse=True)
+        if candidates and (
+            len(candidates) == 1 or candidates[0][0] - candidates[1][0] >= 0.07
+        ):
+            return candidates[0][1]
+        return None
+
+    try:
+        for page in document:
+            words = page.get_text("words")
+            if not words:
+                continue
+
+            # Find the invoice's goods table header. Coordinates are PDF points.
+            header_y = None
+            for word in words:
+                if word[4].strip().lower() == "description":
+                    nearby = [
+                        item for item in words
+                        if abs(((item[1] + item[3]) / 2) - ((word[1] + word[3]) / 2)) < 14
+                    ]
+                    labels = " ".join(item[4].lower() for item in nearby)
+                    if "quantity" in labels and "amount" in labels:
+                        header_y = (word[1] + word[3]) / 2
+                        break
+            if header_y is None:
+                continue
+
+            # Cluster words by their vertical centre, then read each row by x position.
+            table_words = [
+                {"text": str(w[4]).strip(), "x0": float(w[0]), "x1": float(w[2]),
+                 "y": (float(w[1]) + float(w[3])) / 2}
+                for w in words
+                if str(w[4]).strip() and (float(w[1]) + float(w[3])) / 2 > header_y + 8
+            ]
+            table_words.sort(key=lambda item: (item["y"], item["x0"]))
+            rows: list[list[dict[str, Any]]] = []
+            for word in table_words:
+                # Invoice row text is usually on a shared baseline; a small tolerance
+                # accommodates slightly different font sizes in the same row.
+                target = next(
+                    (row for row in reversed(rows[-3:])
+                     if abs(word["y"] - sum(w["y"] for w in row) / len(row)) <= 3.2),
+                    None,
+                )
+                if target is None:
+                    rows.append([word])
+                else:
+                    target.append(word)
+
+            for row in rows:
+                row.sort(key=lambda item: item["x0"])
+                desc_words = [w for w in row if w["x0"] < 190]
+                if not desc_words:
+                    continue
+                description = " ".join(w["text"] for w in desc_words).strip(" .:|")
+                # Strip the invoice serial number without removing leading numbers
+                # that are part of a real product name, e.g. "15 W LED ...".
+                description = re.sub(r"^\s*\d{1,2}\s+(?=[A-Za-z])", "", description).strip()
+                if not description or not re.search(r"[A-Za-z]{2,}", description):
+                    continue
+                if re.search(r"\b(?:description|goods|services|total|cgst|sgst|igst|hsn|taxable|invoice)\b", description, re.I):
+                    continue
+
+                qty_words = [w for w in row if 255 <= w["x0"] < 315]
+                rate_words = [w for w in row if 315 <= w["x0"] < 350]
+                amount_words = [w for w in row if w["x0"] >= 400]
+                qty_text = " ".join(w["text"] for w in qty_words)
+                rate_text = " ".join(w["text"] for w in rate_words)
+                amount_text = " ".join(w["text"] for w in amount_words)
+
+                qty_match = re.search(
+                    r"(\d[\d,]*(?:\.\d{1,3})?)\s*(BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MTR|MET(?:RE|ER)|KGS?|GMS?|LTRS?|LIT(?:RE|ER)S?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?)\b",
+                    qty_text, re.I,
+                )
+                qty = _number(qty_match.group(1)) if qty_match else None
+                unit = qty_match.group(2).upper().rstrip(".") if qty_match else ""
+                rate_match = re.search(r"\d[\d,]*(?:\.\d{1,2})?", rate_text)
+                rate = _number(rate_match.group(0)) if rate_match else None
+                amount_matches = re.findall(r"\d[\d,]*(?:\.\d{1,2})?", amount_text)
+                amount = _number(amount_matches[-1]) if amount_matches else None
+
+                # Skip non-item text, but retain a real description-only charge row
+                # such as carting where the invoice prints an amount but no quantity.
+                if qty is None and rate is None and amount is None:
+                    continue
+                matched = match_master(description)
+                extracted.append({
+                    "item_code": (matched.code or "") if matched else "",
+                    "item_name": matched.name if matched else description,
+                    "vendor_code": (matched.vendor_code or "") if matched else "",
+                    "vendor_name": "",
+                    "recd_qty": qty,
+                    "accepted_qty": None,
+                    "rate": rate,
+                    "unit": unit,
+                    "line_amount": amount,
+                    "match_status": "matched" if matched else "unmatched",
+                    "source": "receipt_text",
+                })
+    finally:
+        document.close()
+
+    return extracted
+
 def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     # Invoice labels vary by supplier and OCR may turn punctuation into spaces.
     # Capture the value after an explicit invoice/bill number label, including
