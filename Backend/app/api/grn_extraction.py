@@ -288,8 +288,14 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             ranked_pairs.sort(key=lambda pair: pair[0], reverse=True)
             qm = ranked_pairs[0][1]
             prefix = body[:qm.start()].strip(" .:-")
-            prefix = re.sub(r"\s+\d{4,8}\s*$", "", prefix).strip()
-            prefix = re.sub(r"\s+\d{1,2}\s*%?\s*$", "", prefix).strip()
+            # HSN/SAC and GST are separate invoice columns that OCR often
+            # appends to the description. Remove these tokens anywhere in the
+            # prefix, not only at the very end (the old order missed HSN when
+            # the GST percentage appeared after it).
+            prefix = re.sub(r"(?<!\d)\d{4,8}(?!\d)", " ", prefix)
+            prefix = re.sub(r"(?<!\d)\d{1,2}\s*%", " ", prefix)
+            prefix = re.sub(r"\b(?:HSN/?SAC|SAC|HSN)\b", " ", prefix, flags=re.I)
+            prefix = re.sub(r"\s+", " ", prefix).strip(" .:-|")
             description = prefix
             qty = _number(qm.group(1))
             unit = qm.group(2).upper().rstrip(".")
@@ -379,7 +385,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
                 found.append({
                     "item_code": code, "item_name": name,
                     "vendor_code": item.vendor_code or "", "vendor_name": "",
-                    "recd_qty": None, "accepted_qty": None, "rate": item.rate or 0,
+                    "recd_qty": None, "accepted_qty": None, "rate": None,
                     "match_status": "matched", "source": "receipt_text",
                 })
                 seen_codes.add(code)
