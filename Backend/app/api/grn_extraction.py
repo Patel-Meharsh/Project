@@ -335,12 +335,16 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
     return found
 
 def _extract_fields(text: str, db: Session) -> dict[str, Any]:
+    # Invoice labels vary by supplier and OCR may turn punctuation into spaces.
+    # Capture the value after an explicit invoice/bill number label, including
+    # values such as GST/7518/26-27.
     invoice_no = _first([
-        r"(?:invoice|bill)\s*(?:no\.?|number|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
-        r"tax\s*invoice\s*(?:no\.?|number|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
+        r"(?:invoice|inv\.?|bill)\s*(?:no\.?|number|num\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
+        r"(?:invoice|inv\.?|bill)\s*(?:no\.?|number|num\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9\s/_.-]{2,}?)(?=\s+(?:dated?|date|ref(?:erence)?\.?|gstin|party)\b|$)",
     ], text)
+    # Do not interpret generic prose containing "purchase order" as a PO number.
     po_no = _first([
-        r"(?:purchase order|\bP\.O\.?|\bPO)\s*(?:no|number|ref|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
+        r"(?:purchase\s*order|P\.?\s*O\.?)\s*(?:no\.?|number|ref(?:erence)?\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
     ], text)
     vendor_text = _first([
         r"(?:supplier|vendor)\s*(?:name)?\s*[:\-]\s*([^\n]{2,100})",
