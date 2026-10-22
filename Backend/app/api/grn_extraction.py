@@ -676,12 +676,26 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     vendor_text = _first([
         r"(?:supplier|vendor)\s*(?:name)?\s*[:\-]\s*([^\n]{2,100})",
     ], text)
+    if not vendor_text:
+        # Some invoices print the supplier as a heading without a "Vendor:" label.
+        # Use a short header line as a display fallback; master matching below still
+        # decides whether a vendor code can be assigned.
+        ignored_header = re.compile(
+            r"(invoice|tax invoice|bill no|invoice no|gstin|state code|date|phone|mobile|email|www|page|amount)",
+            re.I,
+        )
+        for header_line in text.splitlines()[:10]:
+            candidate = re.sub(r"\s+", " ", header_line).strip(" :|-")
+            if 4 <= len(candidate) <= 90 and re.search(r"[A-Za-z]{3,}", candidate) and not ignored_header.search(candidate):
+                vendor_text = candidate
+                break
     date_raw = _first([
-        r"(?:invoice\s*)?dated?\s*[:\-]?\s*(\d{1,2}[-/]\w{3}[-/]\d{2,4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})",
+        r"(?:invoice\s*)?(?:date|dated)\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}[-/ ]\w{3}[-/ ]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})",
+        r"\b(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b",
     ], text)
     invoice_date = None
     if date_raw:
-        for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y", "%d-%b-%Y", "%d-%b-%y", "%d/%b/%Y", "%d/%b/%y", "%Y-%m-%d", "%m/%d/%Y"):
+        for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y", "%d-%m-%y", "%d.%m.%y", "%d-%b-%Y", "%d-%b-%y", "%d/%b/%Y", "%d/%b/%y", "%d %b %Y", "%d %b %y", "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%m/%d/%Y"):
             try:
                 invoice_date = datetime.strptime(date_raw, fmt).date().isoformat()
                 break
