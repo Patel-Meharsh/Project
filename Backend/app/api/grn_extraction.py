@@ -127,11 +127,76 @@ def _prepare_ocr_variants(image):
     # A thresholded variant can improve faint photocopies; retain grayscale too,
     # because thresholding can erase thin fonts and decimal points.
     threshold = gray.point(lambda pixel: 255 if pixel > 175 else 0)
-    return [gray, sharp, threshold]
+    variants = [gray, sharp, threshold]
+
+    # OpenCV adaptive thresholding helps with uneven lighting and shaded paper.
+    try:
+        import cv2
+        import numpy as np
+
+        adaptive = cv2.adaptiveThreshold(
+            np.asarray(gray), 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, 31, 11,
+        )
+        variants.append(Image.fromarray(adaptive))
+    except ImportError:
+        pass
+    return variants
+
+
+_paddle_ocr_engine = None
+
+
+def _paddleocr_candidate(image) -> str:
+    """Use PaddleOCR as an optional local OCR candidate; no cloud services."""
+    global _paddle_ocr_engine
+    try:
+        import numpy as np
+        from paddleocr import PaddleOCR
+
+        if _paddle_ocr_engine is None:
+            _paddle_ocr_engine = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+        result = _paddle_ocr_engine.ocr(np.asarray(image.convert("RGB")), cls=True) or []
+        words = []
+        for page_result in result:
+            for entry in page_result or []:
+                try:
+                    box, recognition = entry
+                    label, confidence = recognition
+                    if label and float(confidence) >= 0.25:
+                        xs = [point[0] for point in box]
+                        ys = [point[1] for point in box]
+                        words.append({"text": str(label).strip(), "x": sum(xs) / len(xs), "y": sum(ys) / len(ys)})
+                except (TypeError, ValueError, IndexError):
+                    continue
+        words.sort(key=lambda word: (word["y"], word["x"]))
+        rows = []
+        tolerance = max(10, int(image.height * 0.012))
+        for word in words:
+            target = None
+            for row in reversed(rows[-4:]):
+                centre = sum(item["y"] for item in row) / len(row)
+                if abs(word["y"] - centre) <= tolerance:
+                    target = row
+                    break
+            if target is None:
+                rows.append([word])
+            else:
+                target.append(word)
+        return "\n".join(
+            " ".join(item["text"] for item in sorted(row, key=lambda item: item["x"]))
+            for row in rows
+        ).strip()
+    except ImportError:
+        # PaddleOCR is optional because its model runtime is large.
+        return ""
+    except Exception:
+        # A PaddleOCR/model-version issue must not break the Tesseract path.
+        return ""
 
 
 def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
-    """Try multiple preprocessed images/layout modes and choose the most readable text."""
+    """Compare Tesseract and optional PaddleOCR candidates after local preprocessing."""
     import pytesseract
 
     candidates: list[str] = []
@@ -191,6 +256,10 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
             except Exception:
                 # Plain OCR remains available if TSV/bounding-box reconstruction fails.
                 pass
+
+    paddle_text = _paddleocr_candidate(image)
+    if paddle_text:
+        candidates.append(paddle_text)
 
     if not candidates:
         return ""
