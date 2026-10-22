@@ -905,6 +905,28 @@ async def extract_grn_document(
             raise HTTPException(400, "The image could not be processed. Try a clear PNG or JPG scan.") from exc
 
     result = _extract_fields(text, db)
+
+    # For PDFs with embedded text, use the table's actual word coordinates when
+    # available. This avoids treating header fragments (e.g. "SHE/") as products
+    # and keeps description, quantity, rate, and amount from separate columns
+    # attached to the same invoice row. Scanned PDFs still use the OCR parser.
+    if content_type == "application/pdf":
+        coordinate_items = _extract_pdf_table_line_items(raw, db)
+        if coordinate_items:
+            result["line_items"] = coordinate_items
+            result["warnings"] = [
+                warning for warning in result.get("warnings", [])
+                if "Line items were detected from receipt text" not in warning
+                and "One or more PO line items could not be matched" not in warning
+            ]
+            result["warnings"].append(
+                "Line items were read from PDF table positions. Verify item mapping, quantities, and rates before saving."
+            )
+            if any(row.get("match_status") == "unmatched" for row in coordinate_items):
+                result["warnings"].append(
+                    "One or more invoice descriptions could not be matched confidently to the item master."
+                )
+
     result["filename"] = (file.filename or "document")[:160]
     result["document_type"] = "pdf" if content_type == "application/pdf" else "image"
     return result
