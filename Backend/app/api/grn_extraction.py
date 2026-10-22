@@ -822,175 +822,176 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 )
             except Exception:
                 continue
-        words = []
-        for i, raw_text in enumerate(data.get("text", [])):
-            token = (raw_text or "").strip()
-            try:
-                confidence = float(data["conf"][i])
-            except (ValueError, TypeError, IndexError):
-                confidence = -1
-            if not token or confidence < 20:
+            words = []
+            for i, raw_text in enumerate(data.get("text", [])):
+                token = (raw_text or "").strip()
+                try:
+                    confidence = float(data["conf"][i])
+                except (ValueError, TypeError, IndexError):
+                    confidence = -1
+                if not token or confidence < 20:
+                    continue
+                x, y = int(data["left"][i]), int(data["top"][i])
+                width, height = int(data["width"][i]), int(data["height"][i])
+                words.append({
+                    "text": token, "x0": x, "x1": x + width,
+                    "y": y + height / 2, "height": max(1, height),
+                    "block": data.get("block_num", [0] * len(data["text"]))[i],
+                    "par": data.get("par_num", [0] * len(data["text"]))[i],
+                    "line": data.get("line_num", [0] * len(data["text"]))[i],
+                })
+            if not words:
                 continue
-            x, y = int(data["left"][i]), int(data["top"][i])
-            width, height = int(data["width"][i]), int(data["height"][i])
-            words.append({
-                "text": token, "x0": x, "x1": x + width,
-                "y": y + height / 2, "height": max(1, height),
-                "block": data.get("block_num", [0] * len(data["text"]))[i],
-                "par": data.get("par_num", [0] * len(data["text"]))[i],
-                "line": data.get("line_num", [0] * len(data["text"]))[i],
-            })
-        if not words:
-            continue
-        median_height = sorted(w["height"] for w in words)[len(words) // 2]
-        tolerance = max(7, min(18, median_height * 0.9))
-        visual_rows: list[list[dict[str, Any]]] = []
-        for word in sorted(words, key=lambda w: (w["y"], w["x0"])):
-            possible = [(abs(sum(item["y"] for item in row) / len(row) - word["y"]), row)
-                        for row in visual_rows[-5:]]
-            possible = [entry for entry in possible if entry[0] <= tolerance]
-            if possible:
-                min(possible, key=lambda entry: entry[0])[1].append(word)
-            else:
-                visual_rows.append([word])
-        for row in visual_rows:
-            row.sort(key=lambda w: w["x0"])
-
-        header_index = None
-        header_centers: dict[str, float] = {}
-        for idx, row in enumerate(visual_rows):
-            labels: dict[str, list[dict[str, Any]]] = {}
-            for word in row:
-                kind = label_kind(word["text"])
-                if kind:
-                    labels.setdefault(kind, []).append(word)
-            if "description" in labels and "qty" in labels and "rate" in labels:
-                # In Indian tax invoices, "GST Rate" is a separate tax column.
-                # Its word "Rate" must not be averaged with the actual item-rate
-                # header, or the inferred Qty/Rate boundaries drift into HSN/GST.
-                if "ignore_gst" in labels:
-                    qty_center = sum((w["x0"] + w["x1"]) / 2 for w in labels["qty"]) / len(labels["qty"])
-                    real_rate_words = [
-                        w for w in labels["rate"]
-                        if (w["x0"] + w["x1"]) / 2 > qty_center
-                    ]
-                    if real_rate_words:
-                        labels["rate"] = real_rate_words
-                header_index = idx
-                header_centers = {
-                    kind: sum((w["x0"] + w["x1"]) / 2 for w in group) / len(group)
-                    for kind, group in labels.items()
-                }
-                break
-        if header_index is None:
-            continue
-
-        ordered_columns = sorted(
-            (x, name) for name, x in header_centers.items()
-            if name in {"description", "qty", "rate", "amount", "unit"}
-            or name.startswith("ignore_")
-        )
-        if not any(name == "description" for _, name in ordered_columns):
-            continue
-        boundaries = [(ordered_columns[i][0] + ordered_columns[i + 1][0]) / 2
-                      for i in range(len(ordered_columns) - 1)]
-
-        def which_column(x: float) -> str | None:
-            index = 0
-            while index < len(boundaries) and x >= boundaries[index]:
-                index += 1
-            return ordered_columns[index][1] if ordered_columns else None
-
-        current_rows: list[dict[str, Any]] = []
-        for row in visual_rows[header_index + 1:]:
-            row_text = " ".join(w["text"] for w in row)
-            if re.search(r"\b(?:grand\s+total|sub\s*total|total\s+amount|amount\s+in\s+words|taxable\s+value|cgst|sgst|igst|round\s*off|terms\s+and\s+conditions|bank\s+details)\b", row_text, re.I):
-                break
-            cells: dict[str, list[dict[str, Any]]] = {}
-            for word in row:
-                kind = which_column((word["x0"] + word["x1"]) / 2)
-                if kind:
-                    cells.setdefault(kind, []).append(word)
-
-            def cell(kind: str) -> str:
-                return " ".join(w["text"] for w in sorted(cells.get(kind, []), key=lambda w: w["x0"]))
-
-            description = re.sub(r"\s+", " ", cell("description")).strip(" .:|-\t")
-            if not description or not re.search(r"[A-Za-z]{2,}", description):
-                continue
-            if re.search(r"\b(?:description|particulars|quantity|qty|rate|amount|subtotal|total|cgst|sgst|igst|taxable|invoice|page|gstin)\b", description, re.I):
-                continue
-            # Freight/carting/packing are invoice charges, not stock items.
-            if re.search(r"\b(?:carting|freight|transport(?:ation)?|delivery\s+charges?|packing\s+charges?|handling\s+charges?|loading|unloading|round\s*off)\b", description, re.I):
-                continue
-            description = re.sub(r"^\s*\d{1,3}[.)]?\s+(?=[A-Za-z])", "", description).strip()
-            qty_text, rate_text = cell("qty"), cell("rate")
-            qty_match, rate_match = number_re.search(qty_text), number_re.search(rate_text)
-            qty = _number(qty_match.group(0)) if qty_match else None
-            rate = _number(rate_match.group(0)) if rate_match else None
-            amount_matches = list(number_re.finditer(cell("amount")))
-            amount = _number(amount_matches[-1].group(0)) if amount_matches else None
-            unit_match = unit_re.search(qty_text + " " + cell("unit"))
-            unit = unit_match.group(1).upper().rstrip(".") if unit_match else ""
-
-            # The user's required columns are item name, quantity and rate.
-            # Do not add a row when OCR could not find either numeric field.
-            if qty is None or rate is None or qty <= 0 or rate < 0:
-                continue
-            # Fail closed on HSN/SAC codes shifted into Qty (e.g. 38089400).
-            # A suspicious row is omitted for manual review rather than allowing
-            # an eight-digit tax code to inflate received/accepted inventory.
-            qty_digits = str(int(qty)) if float(qty).is_integer() else ""
-            if qty >= 100000 or (4 <= len(qty_digits) <= 8 and qty == int(qty)):
-                continue
-            if re.fullmatch(r"[\d\s.,/-]+", description):
-                continue
-            matched = match_master(description)
-            current_rows.append({
-                "item_code": (matched.code or "") if matched else "",
-                "item_name": description,
-                "vendor_code": (matched.vendor_code or "") if matched else "",
-                "vendor_name": "",
-                "recd_qty": qty,
-                "accepted_qty": None,
-                "rate": rate,
-                "unit": unit,
-                "line_amount": amount,
-                "match_status": "matched" if matched else "unmatched",
-                "source": "receipt_text",
-            })
-        # Score row integrity, not just count. Invoice line amount should agree
-        # with quantity × rate within rounding tolerance. Wrong column assignments
-        # are penalized; missing amounts remain usable but lower-confidence.
-        candidate_score = 0.0
-        seen_descriptions: set[str] = set()
-        for item in current_rows:
-            qty_value = item.get("recd_qty")
-            rate_value = item.get("rate")
-            amount_value = item.get("line_amount")
-            description_key = _norm(item.get("item_name", ""))
-            if description_key in seen_descriptions:
-                candidate_score -= 8
-            seen_descriptions.add(description_key)
-            candidate_score += 8
-            if amount_value is not None and qty_value is not None and rate_value is not None:
-                expected = qty_value * rate_value
-                if abs(expected - amount_value) <= max(2.0, abs(amount_value) * 0.03):
-                    candidate_score += 12
+            median_height = sorted(w["height"] for w in words)[len(words) // 2]
+            tolerance = max(7, min(18, median_height * 0.9))
+            visual_rows: list[list[dict[str, Any]]] = []
+            for word in sorted(words, key=lambda w: (w["y"], w["x0"])):
+                possible = [(abs(sum(item["y"] for item in row) / len(row) - word["y"]), row)
+                            for row in visual_rows[-5:]]
+                possible = [entry for entry in possible if entry[0] <= tolerance]
+                if possible:
+                    min(possible, key=lambda entry: entry[0])[1].append(word)
                 else:
-                    candidate_score -= 10
-            else:
-                candidate_score -= 1
-            if qty_value is not None and (qty_value > 10000 or (float(qty_value).is_integer() and 1000 <= qty_value < 100000)):
-                candidate_score -= 20
-            if not item.get("unit"):
-                candidate_score -= 0.5
-        # Prefer a candidate with more valid rows only after evaluating integrity.
-        if candidate_score > best_score or (
-            candidate_score == best_score and len(current_rows) > len(best_rows)
-        ):
-            best_score = candidate_score
-            best_rows = current_rows
+                    visual_rows.append([word])
+            for row in visual_rows:
+                row.sort(key=lambda w: w["x0"])
+
+            header_index = None
+            header_centers: dict[str, float] = {}
+            for idx, row in enumerate(visual_rows):
+                labels: dict[str, list[dict[str, Any]]] = {}
+                for word in row:
+                    kind = label_kind(word["text"])
+                    if kind:
+                        labels.setdefault(kind, []).append(word)
+                if "description" in labels and "qty" in labels and "rate" in labels:
+                    # In Indian tax invoices, "GST Rate" is a separate tax column.
+                    # Its word "Rate" must not be averaged with the actual item-rate
+                    # header, or the inferred Qty/Rate boundaries drift into HSN/GST.
+                    if "ignore_gst" in labels:
+                        qty_center = sum((w["x0"] + w["x1"]) / 2 for w in labels["qty"]) / len(labels["qty"])
+                        real_rate_words = [
+                            w for w in labels["rate"]
+                            if (w["x0"] + w["x1"]) / 2 > qty_center
+                        ]
+                        if real_rate_words:
+                            labels["rate"] = real_rate_words
+                    header_index = idx
+                    header_centers = {
+                        kind: sum((w["x0"] + w["x1"]) / 2 for w in group) / len(group)
+                        for kind, group in labels.items()
+                    }
+                    break
+            if header_index is None:
+                continue
+
+            ordered_columns = sorted(
+                (x, name) for name, x in header_centers.items()
+                if name in {"description", "qty", "rate", "amount", "unit"}
+                or name.startswith("ignore_")
+            )
+            if not any(name == "description" for _, name in ordered_columns):
+                continue
+            boundaries = [(ordered_columns[i][0] + ordered_columns[i + 1][0]) / 2
+                          for i in range(len(ordered_columns) - 1)]
+
+            def which_column(x: float) -> str | None:
+                index = 0
+                while index < len(boundaries) and x >= boundaries[index]:
+                    index += 1
+                return ordered_columns[index][1] if ordered_columns else None
+
+            current_rows: list[dict[str, Any]] = []
+            for row in visual_rows[header_index + 1:]:
+                row_text = " ".join(w["text"] for w in row)
+                if re.search(r"\b(?:grand\s+total|sub\s*total|total\s+amount|amount\s+in\s+words|taxable\s+value|cgst|sgst|igst|round\s*off|terms\s+and\s+conditions|bank\s+details)\b", row_text, re.I):
+                    break
+                cells: dict[str, list[dict[str, Any]]] = {}
+                for word in row:
+                    kind = which_column((word["x0"] + word["x1"]) / 2)
+                    if kind:
+                        cells.setdefault(kind, []).append(word)
+
+                def cell(kind: str) -> str:
+                    return " ".join(w["text"] for w in sorted(cells.get(kind, []), key=lambda w: w["x0"]))
+
+                description = re.sub(r"\s+", " ", cell("description")).strip(" .:|-\t")
+                if not description or not re.search(r"[A-Za-z]{2,}", description):
+                    continue
+                if re.search(r"\b(?:description|particulars|quantity|qty|rate|amount|subtotal|total|cgst|sgst|igst|taxable|invoice|page|gstin)\b", description, re.I):
+                    continue
+                # Freight/carting/packing are invoice charges, not stock items.
+                if re.search(r"\b(?:carting|freight|transport(?:ation)?|delivery\s+charges?|packing\s+charges?|handling\s+charges?|loading|unloading|round\s*off)\b", description, re.I):
+                    continue
+                description = re.sub(r"^\s*\d{1,3}[.)]?\s+(?=[A-Za-z])", "", description).strip()
+                qty_text, rate_text = cell("qty"), cell("rate")
+                qty_match, rate_match = number_re.search(qty_text), number_re.search(rate_text)
+                qty = _number(qty_match.group(0)) if qty_match else None
+                rate = _number(rate_match.group(0)) if rate_match else None
+                amount_matches = list(number_re.finditer(cell("amount")))
+                amount = _number(amount_matches[-1].group(0)) if amount_matches else None
+                unit_match = unit_re.search(qty_text + " " + cell("unit"))
+                unit = unit_match.group(1).upper().rstrip(".") if unit_match else ""
+
+                # The user's required columns are item name, quantity and rate.
+                # Do not add a row when OCR could not find either numeric field.
+                if qty is None or rate is None or qty <= 0 or rate < 0:
+                    continue
+                # Fail closed on HSN/SAC codes shifted into Qty (e.g. 38089400).
+                # A suspicious row is omitted for manual review rather than allowing
+                # an eight-digit tax code to inflate received/accepted inventory.
+                qty_digits = str(int(qty)) if float(qty).is_integer() else ""
+                if qty >= 100000 or (4 <= len(qty_digits) <= 8 and qty == int(qty)):
+                    continue
+                if re.fullmatch(r"[\d\s.,/-]+", description):
+                    continue
+                matched = match_master(description)
+                current_rows.append({
+                    "item_code": (matched.code or "") if matched else "",
+                    "item_name": description,
+                    "vendor_code": (matched.vendor_code or "") if matched else "",
+                    "vendor_name": "",
+                    "recd_qty": qty,
+                    "accepted_qty": None,
+                    "rate": rate,
+                    "unit": unit,
+                    "line_amount": amount,
+                    "match_status": "matched" if matched else "unmatched",
+                    "source": "receipt_text",
+                })
+            # Score row integrity, not just count. Invoice line amount should agree
+            # with quantity × rate within rounding tolerance. Wrong column assignments
+            # are penalized; missing amounts remain usable but lower-confidence.
+            candidate_score = 0.0
+            seen_descriptions: set[str] = set()
+            for item in current_rows:
+                qty_value = item.get("recd_qty")
+                rate_value = item.get("rate")
+                amount_value = item.get("line_amount")
+                description_key = _norm(item.get("item_name", ""))
+                if description_key in seen_descriptions:
+                    candidate_score -= 8
+                seen_descriptions.add(description_key)
+                candidate_score += 8
+                if amount_value is not None and qty_value is not None and rate_value is not None:
+                    expected = qty_value * rate_value
+                    if abs(expected - amount_value) <= max(2.0, abs(amount_value) * 0.03):
+                        candidate_score += 12
+                    else:
+                        candidate_score -= 10
+                else:
+                    candidate_score -= 1
+                if qty_value is not None and (qty_value > 10000 or (float(qty_value).is_integer() and 1000 <= qty_value < 100000)):
+                    candidate_score -= 20
+                if not item.get("unit"):
+                    candidate_score -= 0.5
+            # Prefer a candidate with more valid rows only after evaluating integrity.
+            if candidate_score > best_score or (
+                candidate_score == best_score and len(current_rows) > len(best_rows)
+            ):
+                best_score = candidate_score
+                best_rows = current_rows
+
     return best_rows
 
 
