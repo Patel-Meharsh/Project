@@ -602,9 +602,28 @@ async def extract_grn_document(
     current_user: models.UserModel = Depends(_get_current_user),
 ):
     """Parse a PDF/image into an editable draft suggestion; does not persist anything."""
-    content_type = (file.content_type or "").lower()
-    if content_type not in ALLOWED_TYPES:
+    # Browsers/proxies sometimes send application/octet-stream for PDFs.
+    # Detect the real format from both the filename and the file signature.
+    supplied_type = (file.content_type or "").lower().split(";")[0].strip()
+    filename = (file.filename or "").lower()
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Document exceeds the 10 MB upload limit.")
+    if not raw:
+        raise HTTPException(400, "The uploaded document is empty.")
+
+    is_pdf = raw.startswith(b"%PDF-") or filename.endswith(".pdf") or supplied_type == "application/pdf"
+    if is_pdf:
+        content_type = "application/pdf"
+    elif supplied_type in {"image/jpeg", "image/png"}:
+        content_type = supplied_type
+    elif filename.endswith((".jpg", ".jpeg")) or raw.startswith(b"\xff\xd8\xff"):
+        content_type = "image/jpeg"
+    elif filename.endswith(".png") or raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        content_type = "image/png"
+    else:
         raise HTTPException(415, "Upload a receipt in JPG, JPEG, PNG, or PDF format.")
+
     raw = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "Document exceeds the 10 MB upload limit.")
@@ -618,16 +637,14 @@ async def extract_grn_document(
             reader = PdfReader(io.BytesIO(raw))
             if len(reader.pages) > 30:
                 raise HTTPException(413, "PDFs are limited to 30 pages.")
-
-            # First pass: embedded text (fast, accurate for digital PDFs).
-            page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
-            if not page_texts:
+            if not reader.pages:
                 raise HTTPException(400, "The PDF contains no readable pages.")
 
-            # Second pass: extract table rows from PDFs where text extraction has
-            # lost column boundaries. pdfplumber is used for tables only to avoid
-            # duplicating all body text from pypdf.
+            # Read embedded text first; scanned pages commonly return empty text.
+            page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
             table_text_by_page: list[str] = ["" for _ in page_texts]
+
+            # Extract table cells as row-shaped text where possible.
             try:
                 import pdfplumber
                 with pdfplumber.open(io.BytesIO(raw)) as pdf:
@@ -635,64 +652,83 @@ async def extract_grn_document(
                         rows = []
                         for table in (page.extract_tables() or []):
                             for row in table:
-                                cells = [re.sub(r"\s+", " ", (cell or "")).strip() for cell in row]
+                                cells = [re.sub(r"\\s+", " ", (cell or "")).strip() for cell in row]
                                 if any(cells):
                                     rows.append(" | ".join(cells))
                         if rows:
-                            table_text_by_page[index] = "\n".join(rows)
-            except ImportError:
-                # Table extraction is an enhancement; embedded text and OCR still work.
-                pass
+                            table_text_by_page[index] = "\\n".join(rows)
             except Exception:
-                # A malformed table layout should not prevent the PDF from being read.
+                # Table extraction is optional; OCR/text extraction must still run.
                 pass
 
-            # OCR pages with sparse text or a table that still cannot be parsed
-            # into plausible item rows. Render via PyMuPDF (no Poppler dependency).
-            pages_needing_ocr = []
-            for index, page_text in enumerate(page_texts):
-                combined_page = "\n".join(part for part in (page_text, table_text_by_page[index]) if part)
-                if (
-                    len(re.sub(r"\s+", "", page_text)) < 40
-                    or not _extract_item_rows(combined_page, db)
-                ):
-                    pages_needing_ocr.append(index)
+            # Crucial fallback: a page is OCR'd if it has little embedded text OR
+            # embedded/table text produces no actual receipt-text line rows.
+            # Do not use the item-master fallback here; it can make a bad PDF look parsed.
+            try:
+                import pymupdf
+                from PIL import Image
+                with pymupdf.open(stream=raw, filetype="pdf") as pdf_document:
+                    for index in range(len(page_texts)):
+                        embedded = page_texts[index]
+                        table_text = table_text_by_page[index]
+                        digital_candidate = "\\n".join(part for part in (embedded, table_text) if part).strip()
+                        parsed_rows = [
+                            row for row in _extract_item_rows(digital_candidate, db)
+                            if row.get("source") == "receipt_text"
+                        ] if digital_candidate else []
+                        needs_ocr = (
+                            len(re.sub(r"\\s+", "", embedded)) < 80
+                            or len(parsed_rows) == 0
+                        )
+                        if not needs_ocr:
+                            continue
 
-            if pages_needing_ocr:
-                try:
-                    import pymupdf
-                    from PIL import Image
-                    with pymupdf.open(stream=raw, filetype="pdf") as pdf_document:
-                        for index in pages_needing_ocr:
-                            page = pdf_document.load_page(index)
+                        page = pdf_document.load_page(index)
+                        # Render at 300 DPI-equivalent for small invoice print.
+                        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(3, 3), alpha=False)
+                        if pixmap.width * pixmap.height > 25_000_000:
+                            # Keep the page within the image safety cap.
                             pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
-                            if pixmap.width * pixmap.height > 25_000_000:
-                                raise HTTPException(413, "A rendered PDF page is too large to process.")
-                            image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
-                            ocr_text = _run_ocr_candidates(image, modes=(6, 4, 11))
-                            if ocr_text:
-                                page_texts[index] = "\n".join(
-                                    part for part in (page_texts[index], ocr_text) if part
+                        if pixmap.width * pixmap.height > 25_000_000:
+                            raise HTTPException(413, "A rendered PDF page is too large to process.")
+                        image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
+                        ocr_text = _run_ocr_candidates(image, modes=(6, 4, 11))
+                        if ocr_text:
+                            ocr_rows = [
+                                row for row in _extract_item_rows(ocr_text, db)
+                                if row.get("source") == "receipt_text"
+                            ]
+                            # Prefer OCR when it recovers more invoice rows or a
+                            # higher-quality text candidate; avoid blindly appending
+                            # duplicate headers and rows to embedded PDF text.
+                            if (
+                                len(ocr_rows) > len(parsed_rows)
+                                or (
+                                    not parsed_rows
+                                    and _ocr_quality_score(ocr_text) > _ocr_quality_score(digital_candidate)
                                 )
-                except HTTPException:
-                    raise
-                except ImportError:
-                    raise HTTPException(
-                        503,
-                        "Scanned-PDF OCR is not configured. Install PyMuPDF, Pillow, pytesseract, and the Tesseract OCR engine on the server.",
-                    )
-                except Exception as exc:
-                    raise HTTPException(
-                        400,
-                        "The scanned PDF could not be processed. Check that Tesseract OCR is installed and upload a clear PDF scan.",
-                    ) from exc
+                            ):
+                                page_texts[index] = ocr_text
+                                table_text_by_page[index] = ""
+                            elif not embedded.strip():
+                                page_texts[index] = ocr_text
+            except HTTPException:
+                raise
+            except ImportError as exc:
+                raise HTTPException(
+                    503,
+                    "PDF processing needs PyMuPDF, Pillow, pytesseract, and the Tesseract OCR engine installed on the backend.",
+                ) from exc
+            except Exception as exc:
+                raise HTTPException(
+                    400,
+                    "The PDF could not be processed. Ensure it is a valid PDF and Tesseract OCR is installed for scanned pages.",
+                ) from exc
 
-            # Keep digital text, extracted table rows, and OCR candidates together.
-            # The parser then sees both ordinary invoice text and row-shaped table data.
-            text = "\n".join(
-                "\n".join(part for part in (page_texts[index], table_text_by_page[index]) if part)
+            text = "\\n".join(
+                "\\n".join(part for part in (page_texts[index], table_text_by_page[index]) if part)
                 for index in range(len(page_texts))
-            )
+            ).strip()
         except HTTPException:
             raise
         except Exception as exc:
