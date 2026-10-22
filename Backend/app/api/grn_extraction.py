@@ -237,12 +237,29 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
         unit = ""
 
         if qty_matches:
-            # Prefer a quantity-unit pair near the right side of the description.
-            # Product pack sizes such as "2 LTR" can appear before the actual quantity.
-            qm = next((m for m in reversed(qty_matches)
-                       if len(_norm(body[:m.start()])) >= 3 and re.search(r"[A-Za-z]", body[:m.start()])), None)
-            if not qm:
+            # Do not choose the rightmost number+unit pair blindly. Invoice rows
+            # commonly contain both the billed quantity ("2 BTL") and the rate's
+            # unit ("330.00 BTL"). The latter was being mistaken for quantity.
+            # Prefer a pair followed by rate + rate-UOM + line amount, and prefer
+            # pairs preceded by HSN/GST columns over product pack sizes ("2 Ltr").
+            ranked_pairs = []
+            for candidate in qty_matches:
+                prefix_candidate = body[:candidate.start()]
+                suffix_candidate = body[candidate.end():]
+                suffix_numbers = re.findall(number_re, suffix_candidate)
+                has_hsn_or_gst = bool(
+                    re.search(r"\b\d{4,8}\b", prefix_candidate)
+                    or re.search(r"\d\s*%", prefix_candidate)
+                )
+                score = min(len(suffix_numbers), 3) * 10 + (8 if has_hsn_or_gst else 0)
+                if len(_norm(prefix_candidate)) >= 3 and re.search(r"[A-Za-z]", prefix_candidate):
+                    ranked_pairs.append((score, candidate))
+            if not ranked_pairs:
                 continue
+            # Keep left-to-right order for ties: the actual quantity generally
+            # appears before the repeated UOM in the rate/per columns.
+            ranked_pairs.sort(key=lambda pair: pair[0], reverse=True)
+            qm = ranked_pairs[0][1]
             prefix = body[:qm.start()].strip(" .:-")
             prefix = re.sub(r"\s+\d{4,8}\s*$", "", prefix).strip()
             prefix = re.sub(r"\s+\d{1,2}\s*%?\s*$", "", prefix).strip()
