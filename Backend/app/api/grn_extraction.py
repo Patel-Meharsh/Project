@@ -814,8 +814,11 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
     # threshold-only images. Compare candidates by the number of complete rows.
     for variant in _prepare_ocr_variants(image)[:2]:
         try:
+            # PSM 4 treats the invoice as a table and is substantially better
+            # than PSM 6 for this column-heavy receipt layout. The parser still
+            # evaluates both grayscale and sharpened variants below.
             data = pytesseract.image_to_data(
-                variant, config="--oem 3 --psm 6", output_type=Output.DICT
+                variant, config="--oem 3 --psm 4", output_type=Output.DICT
             )
         except Exception:
             continue
