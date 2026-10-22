@@ -1354,7 +1354,7 @@ async def extract_grn_document(
                     if key in seen_item_keys or (signature is not None and signature in seen_numeric_signatures):
                         continue
                     # Reject obvious non-stock charges even if the text parser found them.
-                    if re.search(r"\\b(?:carting|freight|transport(?:ation)?|delivery\\s+charges?|packing\\s+charges?|handling\\s+charges?|loading|unloading|round\\s*off)\\b", description, re.I):
+                    if re.search(r"\b(?:carting|freight|transport(?:ation)?|delivery\s+charges?|packing\s+charges?|handling\s+charges?|loading|unloading|round\s*off)\b", description, re.I):
                         continue
                     merged_items.append(candidate)
                     seen_item_keys.add(key)
