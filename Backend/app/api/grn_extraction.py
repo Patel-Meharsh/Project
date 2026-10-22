@@ -924,6 +924,12 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 if re.search(r"\b(?:carting|freight|transport(?:ation)?|delivery\s+charges?|packing\s+charges?|handling\s+charges?|loading|unloading|round\s*off)\b", description, re.I):
                     continue
                 description = re.sub(r"^\s*\d{1,3}[.)]?\s+(?=[A-Za-z])", "", description).strip()
+                # Reject tiny OCR fragments (e.g. "sis") as item descriptions.
+                # They are commonly misread remnants of a longer product name and
+                # must not become a selectable GRN item or trigger a weak catalog match.
+                meaningful_tokens = re.findall(r"[A-Za-z]{2,}", description)
+                if not meaningful_tokens or sum(len(token) for token in meaningful_tokens) < 4:
+                    continue
                 qty_text, rate_text = cell("qty"), cell("rate")
                 qty_match, rate_match = number_re.search(qty_text), number_re.search(rate_text)
                 qty = _number(qty_match.group(0)) if qty_match else None
