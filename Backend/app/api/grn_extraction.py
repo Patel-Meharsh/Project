@@ -227,8 +227,9 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
 
         matched = match_master(description)
         code = (matched.code or "") if matched else ""
-        if code and code in seen_codes:
-            continue
+        # Do not deduplicate invoice rows by item code: a supplier may list the
+        # same catalog item on multiple lines with different quantities, variants,
+        # delivery batches, or rates. Preserve every detected row for GRN review.
         found.append({
             "item_code": code,
             "item_name": matched.name if matched else description,
