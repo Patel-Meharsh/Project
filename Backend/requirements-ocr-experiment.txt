@@ -1,0 +1,7 @@
+# Optional OCR evaluation dependencies.
+# Install these only in a development/benchmark environment, not production yet.
+-r requirements.txt
+pdfplumber>=0.11.0
+# PaddleOCR 2.x API is used by the initial benchmark script.
+paddleocr>=2.7.0,<3.0
+paddlepaddle
