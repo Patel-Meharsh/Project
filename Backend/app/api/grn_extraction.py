@@ -810,18 +810,18 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
         return None
 
     best_rows: list[dict[str, Any]] = []
-    # Grayscale/sharpened versions usually preserve table alignment better than
-    # threshold-only images. Compare candidates by the number of complete rows.
-    for variant in _prepare_ocr_variants(image)[:2]:
-        try:
-            # PSM 4 treats the invoice as a table and is substantially better
-            # than PSM 6 for this column-heavy receipt layout. The parser still
-            # evaluates both grayscale and sharpened variants below.
-            data = pytesseract.image_to_data(
-                variant, config="--oem 3 --psm 4", output_type=Output.DICT
-            )
-        except Exception:
-            continue
+    best_score = float("-inf")
+    # Evaluate multiple segmentation modes and image variants. Selecting the
+    # candidate with the largest raw row count alone is unsafe: a noisy pass can
+    # create extra rows by splitting descriptions from their numeric columns.
+    for variant in _prepare_ocr_variants(image)[:3]:
+        for psm in (4, 6, 11):
+            try:
+                data = pytesseract.image_to_data(
+                    variant, config=f"--oem 3 --psm {psm}", output_type=Output.DICT
+                )
+            except Exception:
+                continue
         words = []
         for i, raw_text in enumerate(data.get("text", [])):
             token = (raw_text or "").strip()
@@ -959,7 +959,37 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 "match_status": "matched" if matched else "unmatched",
                 "source": "receipt_text",
             })
-        if len(current_rows) > len(best_rows):
+        # Score row integrity, not just count. Invoice line amount should agree
+        # with quantity × rate within rounding tolerance. Wrong column assignments
+        # are penalized; missing amounts remain usable but lower-confidence.
+        candidate_score = 0.0
+        seen_descriptions: set[str] = set()
+        for item in current_rows:
+            qty_value = item.get("recd_qty")
+            rate_value = item.get("rate")
+            amount_value = item.get("line_amount")
+            description_key = _norm(item.get("item_name", ""))
+            if description_key in seen_descriptions:
+                candidate_score -= 8
+            seen_descriptions.add(description_key)
+            candidate_score += 8
+            if amount_value is not None and qty_value is not None and rate_value is not None:
+                expected = qty_value * rate_value
+                if abs(expected - amount_value) <= max(2.0, abs(amount_value) * 0.03):
+                    candidate_score += 12
+                else:
+                    candidate_score -= 10
+            else:
+                candidate_score -= 1
+            if qty_value is not None and (qty_value > 10000 or (float(qty_value).is_integer() and 1000 <= qty_value < 100000)):
+                candidate_score -= 20
+            if not item.get("unit"):
+                candidate_score -= 0.5
+        # Prefer a candidate with more valid rows only after evaluating integrity.
+        if candidate_score > best_score or (
+            candidate_score == best_score and len(current_rows) > len(best_rows)
+        ):
+            best_score = candidate_score
             best_rows = current_rows
     return best_rows
 
