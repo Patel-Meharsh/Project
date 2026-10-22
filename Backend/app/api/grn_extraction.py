@@ -493,12 +493,10 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
 
 
 def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any]]:
-    """Extract line items from a digital PDF using word coordinates and table columns.
+    """Extract digital-PDF invoice rows using dynamically detected table headers.
 
-    Unlike flattened PDF text, word coordinates preserve which values belong to
-    the description, quantity, rate, and amount columns. This is especially useful
-    for invoices whose embedded text is emitted in column-wise rather than row-wise
-    order.
+    Column positions are inferred from each document's own header words. No
+    supplier-specific x coordinates or fixed invoice layout are assumed.
     """
     try:
         import pymupdf
@@ -514,16 +512,23 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
 
     masters = db.query(models.ItemModel).all()
     extracted: list[dict[str, Any]] = []
+    number_re = re.compile(r"(?<![A-Za-z])[-+]?\d[\d,]*(?:\.\d{1,4})?")
+    unit_re = re.compile(
+        r"\b(BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MTR|MET(?:RE|ER)S?|"
+        r"KGS?|GMS?|LTRS?|LIT(?:RE|ER)S?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?|"
+        r"DOZ(?:EN)?|BAGS?|REAMS?|TUBES?|CANS?|JARS?|UNITS?|SQ\.?\s*FT|"
+        r"SQ\.?\s*M|FT|FEET|INCH(?:ES)?|MM|CM|LBS?|TONS?)\b",
+        re.I,
+    )
 
     def match_master(description: str):
         normalized = _norm(description)
-        if not normalized:
+        if len(normalized) < 3:
             return None
         candidates = []
         desc_tokens = set(re.findall(r"[a-z0-9]+", description.lower()))
         for item in masters:
-            name = (item.name or "").strip()
-            code = (item.code or "").strip()
+            name, code = (item.name or "").strip(), (item.code or "").strip()
             normalized_name = _norm(name)
             if not name or not code:
                 continue
@@ -534,114 +539,183 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 overlap,
                 1.0 if normalized_name in normalized or normalized in normalized_name else 0.0,
             )
-            if score >= 0.42:
+            if score >= 0.55:
                 candidates.append((score, item))
         candidates.sort(key=lambda pair: pair[0], reverse=True)
         if candidates and (
-            len(candidates) == 1 or candidates[0][0] - candidates[1][0] >= 0.07
+            len(candidates) == 1 or candidates[0][0] - candidates[1][0] >= 0.10
         ):
             return candidates[0][1]
         return None
 
+    def token_kind(value: str) -> str | None:
+        token = re.sub(r"[^a-z]", "", value.lower())
+        if token in {"description", "particulars", "item", "itemdescription", "product", "products", "goods", "details"}:
+            return "description"
+        if token in {"qty", "quantity", "qnty", "qtys"}:
+            return "qty"
+        if token in {"rate", "price", "unitprice", "unitrate", "basicrate", "mrp"}:
+            return "rate"
+        if token in {"amount", "amt", "value", "totalamount", "netamount", "lineamount"}:
+            return "amount"
+        if token in {"unit", "uom", "units"}:
+            return "unit"
+        return None
+
+    def close_row(words: list[dict[str, Any]], tolerance: float) -> list[list[dict[str, Any]]]:
+        """Cluster words into visual rows using relative text height."""
+        rows: list[list[dict[str, Any]]] = []
+        for word in sorted(words, key=lambda item: (item["y"], item["x0"])):
+            candidates = [
+                (abs(sum(w["y"] for w in row) / len(row) - word["y"]), row)
+                for row in rows[-5:]
+            ]
+            candidates = [pair for pair in candidates if pair[0] <= tolerance]
+            if candidates:
+                _, best = min(candidates, key=lambda pair: pair[0])
+                best.append(word)
+            else:
+                rows.append([word])
+        for row in rows:
+            row.sort(key=lambda item: item["x0"])
+        return rows
+
     try:
         for page in document:
-            words = page.get_text("words")
-            if not words:
+            raw_words = page.get_text("words")
+            if not raw_words:
                 continue
-
-            # Find the invoice's goods table header. Coordinates are PDF points.
-            header_y = None
-            for word in words:
-                if word[4].strip().lower() == "description":
-                    nearby = [
-                        item for item in words
-                        if abs(((item[1] + item[3]) / 2) - ((word[1] + word[3]) / 2)) < 14
-                    ]
-                    labels = " ".join(item[4].lower() for item in nearby)
-                    if "quantity" in labels and "amount" in labels:
-                        header_y = (word[1] + word[3]) / 2
-                        break
-            if header_y is None:
-                continue
-
-            # Cluster words by their vertical centre, then read each row by x position.
-            # Stop before the invoice's lower tax-summary table, which also has
-            # numeric columns and must not be mistaken for goods rows.
-            total_y_values = [
-                (float(w[1]) + float(w[3])) / 2
-                for w in words
-                if str(w[4]).strip().lower() == "total"
-                and float(w[0]) < 220
-                and (float(w[1]) + float(w[3])) / 2 > header_y + 8
+            words = [
+                {
+                    "text": str(w[4]).strip(),
+                    "x0": float(w[0]),
+                    "x1": float(w[2]),
+                    "y": (float(w[1]) + float(w[3])) / 2,
+                    "height": max(1.0, float(w[3]) - float(w[1])),
+                }
+                for w in raw_words if str(w[4]).strip()
             ]
-            table_end_y = min(total_y_values) if total_y_values else header_y + 220
-            table_words = [
-                {"text": str(w[4]).strip(), "x0": float(w[0]), "x1": float(w[2]),
-                 # Amount values in this PDF family sit a few points lower than
-                 # the description baseline; compensate before row assignment.
-                 "y": (float(w[1]) + float(w[3])) / 2 - (6.0 if float(w[0]) >= 400 else 0.0)}
-                for w in words
-                if str(w[4]).strip()
-                and header_y + 17 < (float(w[1]) + float(w[3])) / 2 < table_end_y
-            ]
-            table_words.sort(key=lambda item: (item["y"], item["x0"]))
+            median_height = sorted(w["height"] for w in words)[len(words) // 2]
+            y_tolerance = max(2.5, min(6.0, median_height * 0.65))
+            visual_rows = close_row(words, y_tolerance)
 
-            # Use description-column baselines as row anchors. PDF generators often
-            # assign different vertical coordinates to the description, quantity,
-            # rate, and amount cells, so clustering every word by y alone can split
-            # the amount away from its product row.
-            description_words = [word for word in table_words if word["x0"] < 190]
-            anchors: list[float] = []
-            for word in description_words:
-                if not anchors or abs(word["y"] - anchors[-1]) > 3.2:
-                    anchors.append(word["y"])
-                else:
-                    anchors[-1] = (anchors[-1] + word["y"]) / 2
-
-            rows: list[list[dict[str, Any]]] = [[] for _ in anchors]
-            for word in table_words:
-                if not anchors:
+            # Detect a header from a group of common label synonyms. Require a
+            # description-like label and at least two numeric-column labels so
+            # ordinary prose or a totals section is not mistaken for the table.
+            header = None
+            header_row_index = -1
+            for row_index, row in enumerate(visual_rows):
+                kinds: dict[str, list[dict[str, Any]]] = {}
+                for word in row:
+                    kind = token_kind(word["text"])
+                    if kind:
+                        kinds.setdefault(kind, []).append(word)
+                numeric_kinds = set(kinds) & {"qty", "rate", "amount"}
+                if "description" in kinds and len(numeric_kinds) >= 2:
+                    header = {kind: sum((w["x0"] + w["x1"]) / 2 for w in group) / len(group)
+                              for kind, group in kinds.items()}
+                    header_row_index = row_index
                     break
-                nearest_index = min(range(len(anchors)), key=lambda index: abs(word["y"] - anchors[index]))
-                if abs(word["y"] - anchors[nearest_index]) <= 8.5:
-                    rows[nearest_index].append(word)
+            if header is None:
+                # Some invoices use a short "Item" heading and omit a separate
+                # description heading. Accept it only when the row also contains
+                # quantity, rate/price and amount/value labels.
+                for row_index, row in enumerate(visual_rows):
+                    labels = {}
+                    for word in row:
+                        kind = token_kind(word["text"])
+                        if kind:
+                            labels.setdefault(kind, []).append(word)
+                    if "description" in labels and {"qty", "amount"}.issubset(labels) and "rate" in labels:
+                        header = {kind: sum((w["x0"] + w["x1"]) / 2 for w in group) / len(group)
+                                  for kind, group in labels.items()}
+                        header_row_index = row_index
+                        break
+            if header is None:
+                continue
 
-            for row in rows:
-                row.sort(key=lambda item: item["x0"])
-                desc_words = [w for w in row if w["x0"] < 190]
-                if not desc_words:
-                    continue
-                description = " ".join(w["text"] for w in desc_words).strip(" .:|")
-                # Strip the invoice serial number without removing leading numbers
-                # that are part of a real product name, e.g. "15 W LED ...".
-                description = re.sub(r"^\s*\d{1,2}\s+(?=[A-Za-z])", "", description).strip()
+            desc_x = header.get("description")
+            if desc_x is None:
+                continue
+            # Use header centers to infer column boundaries for this invoice.
+            # If a label is absent, its value stays blank rather than borrowing a
+            # number from a neighboring column.
+            column_centers = sorted(
+                (x, kind) for kind, x in header.items()
+                if kind in {"description", "qty", "rate", "amount", "unit"}
+            )
+            boundaries = [
+                (column_centers[i][0] + column_centers[i + 1][0]) / 2
+                for i in range(len(column_centers) - 1)
+            ]
+
+            def column_for(x: float) -> str | None:
+                if not column_centers:
+                    return None
+                idx = 0
+                while idx < len(boundaries) and x >= boundaries[idx]:
+                    idx += 1
+                return column_centers[idx][1]
+
+            # Limit extraction to the goods table, stopping at totals/tax summary.
+            body_words = []
+            for row in visual_rows[header_row_index + 1:]:
+                row_text = " ".join(w["text"] for w in row)
+                if re.search(r"\b(?:grand\s+total|invoice\s+total|total\s+amount|amount\s+in\s+words|taxable\s+value|cgst|sgst|igst|round\s*off|terms\s+and\s+conditions|bank\s+details)\b", row_text, re.I):
+                    break
+                if re.search(r"\btotal\b", row_text, re.I) and not re.search(r"\b(?:sub\s*total|total\s+qty)\b", row_text, re.I):
+                    break
+                body_words.extend(row)
+
+            if not body_words:
+                continue
+            body_rows = close_row(body_words, max(y_tolerance, median_height * 0.8))
+
+            for row in body_rows:
+                # Build each cell according to dynamically inferred column boundaries.
+                cells: dict[str, list[dict[str, Any]]] = {}
+                for word in row:
+                    kind = column_for((word["x0"] + word["x1"]) / 2)
+                    if kind:
+                        cells.setdefault(kind, []).append(word)
+                description_words = sorted(cells.get("description", []), key=lambda w: w["x0"])
+                description = " ".join(w["text"] for w in description_words).strip(" .:|-\t")
                 if not description or not re.search(r"[A-Za-z]{2,}", description):
                     continue
-                if re.search(r"\b(?:description|goods|services|total|cgst|sgst|igst|hsn|taxable|invoice)\b", description, re.I):
+                if re.search(r"\b(?:description|particulars|quantity|qty|rate|amount|subtotal|grand total|cgst|sgst|igst|taxable|invoice|page)\b", description, re.I):
                     continue
+                # Remove only a leading row serial; preserve meaningful leading
+                # product values such as "15 W LED fitting".
+                description = re.sub(r"^\s*\d{1,3}[.)]?\s+(?=[A-Za-z])", "", description).strip()
 
-                qty_words = [w for w in row if 255 <= w["x0"] < 315]
-                rate_words = [w for w in row if 315 <= w["x0"] < 350]
-                amount_words = [w for w in row if w["x0"] >= 400]
-                qty_text = " ".join(w["text"] for w in qty_words)
-                rate_text = " ".join(w["text"] for w in rate_words)
-                amount_text = " ".join(w["text"] for w in amount_words)
+                def cell_text(kind: str) -> str:
+                    return " ".join(w["text"] for w in sorted(cells.get(kind, []), key=lambda w: w["x0"]))
 
-                qty_match = re.search(
-                    r"(\d[\d,]*(?:\.\d{1,3})?)\s*(BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MTR|MET(?:RE|ER)|KGS?|GMS?|LTRS?|LIT(?:RE|ER)S?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?)\b",
-                    qty_text, re.I,
-                )
-                qty = _number(qty_match.group(1)) if qty_match else None
-                unit = qty_match.group(2).upper().rstrip(".") if qty_match else ""
-                rate_match = re.search(r"\d[\d,]*(?:\.\d{1,2})?", rate_text)
+                qty_text = cell_text("qty")
+                rate_text = cell_text("rate")
+                amount_text = cell_text("amount")
+                unit_text = cell_text("unit")
+                qty_match = number_re.search(qty_text)
+                rate_match = number_re.search(rate_text)
+                amount_matches = list(number_re.finditer(amount_text))
+                qty = _number(qty_match.group(0)) if qty_match else None
                 rate = _number(rate_match.group(0)) if rate_match else None
-                amount_matches = re.findall(r"\d[\d,]*(?:\.\d{1,2})?", amount_text)
-                amount = _number(amount_matches[-1]) if amount_matches else None
+                amount = _number(amount_matches[-1].group(0)) if amount_matches else None
+                unit_match = unit_re.search((qty_text + " " + unit_text).strip())
+                unit = unit_match.group(1).upper().rstrip(".") if unit_match else ""
 
-                # Skip non-item text, but retain a real description-only charge row
-                # such as carting where the invoice prints an amount but no quantity.
+                # Some tables print the UOM next to quantity; others put it in
+                # its own column. Never infer quantity/rate from description text.
                 if qty is None and rate is None and amount is None:
                     continue
+                if qty is not None and rate is not None and amount is not None:
+                    expected = qty * rate
+                    # Tax-inclusive or rounded lines can differ slightly; only
+                    # clear values on a substantial mismatch, don't rewrite them.
+                    if abs(expected - amount) > max(3.0, abs(amount) * 0.08):
+                        # Preserve the source values for human review, and mark
+                        # uncertainty in the warning rather than silently blanking.
+                        pass
                 matched = match_master(description)
                 extracted.append({
                     "item_code": (matched.code or "") if matched else "",
@@ -659,7 +733,16 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
     finally:
         document.close()
 
-    return extracted
+    # Keep repeated descriptions if they are separate invoice lines, but avoid
+    # accidental duplicate rows generated by wrapped/overlapping text extraction.
+    deduped = []
+    seen = set()
+    for row in extracted:
+        key = (_norm(row["item_name"]), row.get("recd_qty"), row.get("rate"), row.get("line_amount"))
+        if key not in seen:
+            seen.add(key)
+            deduped.append(row)
+    return deduped
 
 def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     # Invoice labels vary by supplier and OCR may turn punctuation into spaces.
