@@ -774,12 +774,19 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
             return "amount"
         if value in {"unit", "uom", "units"}:
             return "unit"
+        # Keep each non-item column as its own boundary. Collapsing HSN,
+        # GST and Discount into one shared "ignore" center shifts that center
+        # toward Quantity and can route HSN codes (e.g. 38089400) into Qty.
         if value in {"hsn", "sac", "hsnsac"}:
-            return "ignore"
-        if value in {"gst", "tax", "gstpercent", "gstpercentage", "discount", "disc", "d"}:
-            return "ignore"
+            return "ignore_hsn"
+        if value in {"gst", "tax", "gstrate", "gstpercent", "gstpercentage"}:
+            return "ignore_gst"
+        if value in {"discount", "disc", "d"}:
+            return "ignore_discount"
         if value in {"value", "supply"}:
-            return "ignore"
+            return "ignore_value_supply"
+        if value in {"per"}:
+            return "ignore_rate_unit"
         return None
 
     def match_master(description: str):
@@ -866,7 +873,8 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
 
         ordered_columns = sorted(
             (x, name) for name, x in header_centers.items()
-            if name in {"description", "qty", "rate", "amount", "unit", "ignore"}
+            if name in {"description", "qty", "rate", "amount", "unit"}
+            or name.startswith("ignore_")
         )
         if not any(name == "description" for _, name in ordered_columns):
             continue
