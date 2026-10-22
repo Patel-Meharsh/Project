@@ -154,7 +154,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
                         rows.append([word])
                     else:
                         best_row.append(word)
-                reconstructed = "\\n".join(
+                reconstructed = "\n".join(
                     " ".join(item["text"] for item in sorted(row, key=lambda item: item["x"]))
                     for row in rows
                 ).strip()
