@@ -541,8 +541,14 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
             return "unit"
         # These columns must retain their own spatial zones so their values are
         # never assigned to the nearest quantity/rate/amount column.
-        if token in {"hsn", "hsnsac", "sac", "gst", "gstpercent", "tax", "discount", "disc", "d", "value", "supply"}:
-            return "ignore"
+        if token in {"hsn", "hsnsac", "sac"}:
+            return "hsn"
+        if token in {"gst", "gstpercent", "tax"}:
+            return "gst"
+        if token in {"discount", "disc", "d"}:
+            return "discount"
+        if token in {"value", "supply"}:
+            return "value_supply"
         return None
 
     def close_row(words: list[dict[str, Any]], tolerance: float) -> list[list[dict[str, Any]]]:
@@ -625,7 +631,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
             # number from a neighboring column.
             column_centers = sorted(
                 (x, kind) for kind, x in header.items()
-                if kind in {"description", "qty", "rate", "amount", "unit", "ignore"}
+                if kind in {"description", "qty", "rate", "amount", "unit", "hsn", "gst", "discount", "value_supply"}
             )
             boundaries = [
                 (column_centers[i][0] + column_centers[i + 1][0]) / 2
