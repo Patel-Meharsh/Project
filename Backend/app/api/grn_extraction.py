@@ -444,7 +444,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
         # delivery batches, or rates. Preserve every detected row for GRN review.
         found.append({
             "item_code": code,
-            "item_name": matched.name if matched else description,
+            "item_name": description,
             "vendor_code": (matched.vendor_code or "") if matched else "",
             "vendor_name": "",
             "recd_qty": qty,
@@ -514,11 +514,11 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 overlap,
                 1.0 if normalized_name in normalized or normalized in normalized_name else 0.0,
             )
-            if score >= 0.55:
+            if score >= 0.72:
                 candidates.append((score, item))
         candidates.sort(key=lambda pair: pair[0], reverse=True)
         if candidates and (
-            len(candidates) == 1 or candidates[0][0] - candidates[1][0] >= 0.10
+            len(candidates) == 1 or candidates[0][0] - candidates[1][0] >= 0.16
         ):
             return candidates[0][1]
         return None
@@ -694,7 +694,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 matched = match_master(description)
                 extracted.append({
                     "item_code": (matched.code or "") if matched else "",
-                    "item_name": matched.name if matched else description,
+                    "item_name": description,
                     "vendor_code": (matched.vendor_code or "") if matched else "",
                     "vendor_name": "",
                     "recd_qty": qty,
@@ -894,7 +894,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
             matched = match_master(description)
             current_rows.append({
                 "item_code": (matched.code or "") if matched else "",
-                "item_name": matched.name if matched else description,
+                "item_name": description,
                 "vendor_code": (matched.vendor_code or "") if matched else "",
                 "vendor_name": "",
                 "recd_qty": qty,
