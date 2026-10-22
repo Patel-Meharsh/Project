@@ -695,13 +695,7 @@ async def extract_grn_document(
                             # Prefer OCR when it recovers more invoice rows or a
                             # higher-quality text candidate; avoid blindly appending
                             # duplicate headers and rows to embedded PDF text.
-                            if (
-                                len(ocr_rows) > len(parsed_rows)
-                                or (
-                                    not parsed_rows
-                                    and _ocr_quality_score(ocr_text) > _ocr_quality_score(digital_candidate)
-                                )
-                            ):
+                            if len(ocr_rows) > len(parsed_rows) or not parsed_rows:
                                 page_texts[index] = ocr_text
                                 table_text_by_page[index] = ""
                             elif not embedded.strip():
