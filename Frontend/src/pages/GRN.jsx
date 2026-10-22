@@ -253,16 +253,34 @@ const extractGRNDocument = async (file) => {
       ...f,
       invoice_no: fields.invoice_no || '',
       po_no: fields.po_no || '',
-      grn_date: fields.grn_date || f.grn_date,
+      // If this upload has no readable date, use today's date rather than keeping
+      // a date extracted from a different receipt uploaded earlier in this draft.
+      grn_date: fields.grn_date || new Date().toISOString().split('T')[0],
       store_location: fields.store_location || 'STORE-CH',
     }))
+    const normalizeItemName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
     const matchedVendor = vendors.find(v => v.code === fields.vendor_code)
-    const suggestedRows = (result.line_items || []).map((row, idx) => ({
-      id: Date.now() + idx, item_code: row.item_code || '', item_name: row.item_name || '',
-      vendor_code: row.vendor_code || fields.vendor_code || '',
-      vendor_name: row.vendor_name || matchedVendor?.name || fields.vendor_name || '',
-      recd_qty: row.recd_qty ?? '', accepted_qty: row.accepted_qty ?? '', rate: row.rate ?? 0,
-    }))
+    const suggestedRows = (result.line_items || []).map((row, idx) => {
+      // Backend OCR matching is primary. If OCR only returned the item name,
+      // use a conservative exact normalized-name match against the local item master.
+      const masterMatch = items.find(item =>
+        (row.item_code && item.code === row.item_code) ||
+        (normalizeItemName(row.item_name) &&
+          normalizeItemName(item.name) === normalizeItemName(row.item_name))
+      )
+      return {
+        id: Date.now() + idx,
+        item_code: row.item_code || masterMatch?.code || '',
+        item_name: masterMatch?.name || row.item_name || '',
+        vendor_code: row.vendor_code || fields.vendor_code || '',
+        vendor_name: row.vendor_name || matchedVendor?.name || fields.vendor_name || '',
+        recd_qty: row.recd_qty ?? '',
+        // Keep accepted quantity blank unless the receipt explicitly provides it:
+        // received quantity is not proof that every unit passed inspection.
+        accepted_qty: row.accepted_qty ?? '',
+        rate: row.rate ?? masterMatch?.rate ?? 0,
+      }
+    })
     // Replace existing rows even when no items were detected, so rows from an
     // earlier PO or receipt can never leak into this document's draft.
     setLineItems(suggestedRows.length ? suggestedRows : [emptyRow()])
