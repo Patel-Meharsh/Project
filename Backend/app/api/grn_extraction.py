@@ -72,10 +72,26 @@ def _ocr_quality_score(text: str) -> float:
     # outweighs a candidate that reads the header beautifully but loses the table.
     unit = r"(?:BTL|PKT|NOS?\.?|PCS?\.?|KGS?|GMS?|LTRS?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?)"
     row_like = 0
-    for line in text.splitlines():
-        if re.search(r"[A-Za-z]{2,}", line) and re.search(rf"\d[\d,.]*\s*{unit}\b", line, re.I):
-            if len(re.findall(r"\d[\d,.]*", line)) >= 3:
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        # Tesseract often confuses 5 with S in quantity/UOM tokens ("SBTL").
+        normalized_line = re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", line, flags=re.I)
+        if re.search(r"[A-Za-z]{2,}", normalized_line) and re.search(rf"\d[\d,.]*\s*{unit}\b", normalized_line, re.I):
+            values = [_number(value) for value in re.findall(r"\d[\d,.]*", normalized_line)]
+            if len(values) >= 3:
                 row_like += 1
+                # Reward rows whose quantity x rate agrees with line amount.
+                # This helps choose between OCR variants, e.g. 1 PKT vs 4 PKT.
+                pair = re.search(rf"(?<![A-Za-z])(\d[\d,.]*)\s*{unit}\b", normalized_line, re.I)
+                if pair:
+                    qty_value = _number(pair.group(1))
+                    after = normalized_line[pair.end():]
+                    after_values = [_number(value) for value in re.findall(r"\d[\d,.]*", after)]
+                    if qty_value is not None and len(after_values) >= 2:
+                        rate_value, amount_value = after_values[0], after_values[-1]
+                        if rate_value is not None and amount_value is not None:
+                            delta = abs(qty_value * rate_value - amount_value)
+                            score += 12 if delta <= max(2.0, amount_value * 0.03) else -10
     noise = len(re.findall(r"[^A-Za-z0-9\s.,:/()%'₹&+-]", text))
     score = (len(words) * 2.0) + (len(numbers) * 1.2) + (len(invoice_terms) * 2.5)
     score += readable_ratio * 8.0 + row_like * 35.0
@@ -121,6 +137,8 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
             config = f"--oem 3 --psm {mode}"
             candidate = pytesseract.image_to_string(variant, config=config).strip()
             if candidate:
+                # Correct high-confidence, common OCR confusion in quantities.
+                candidate = re.sub(r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", candidate, flags=re.I)
                 candidates.append(candidate)
 
             # Reconstruct rows from word bounding boxes as a second candidate.
