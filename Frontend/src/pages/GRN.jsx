@@ -105,7 +105,6 @@ export default function GRN() {
   const [viewGrn, setViewGrn] = useState(null)
   const [extractingDocument, setExtractingDocument] = useState(false)
   const [extractionResult, setExtractionResult] = useState(null)
-  const [selectedDocumentName, setSelectedDocumentName] = useState('')
 
   const { user } = useAuth()
   const isAdmin = canDo(user?.role, 'admin')
@@ -278,7 +277,9 @@ const extractGRNDocument = async (file) => {
         recd_qty: row.recd_qty ?? '',
         // Keep accepted quantity blank unless the receipt explicitly provides it:
         // received quantity is not proof that every unit passed inspection.
-        accepted_qty: row.accepted_qty ?? '',
+        // For this workflow, prefill accepted quantity from received quantity;
+        // the user can reduce it after inspection if some units are rejected.
+        accepted_qty: row.accepted_qty ?? row.recd_qty ?? '',
         // The invoice's rate must not be replaced by a catalog default.
         // Leave it blank when OCR could not reliably extract it.
         rate: row.rate ?? '',
@@ -496,10 +497,7 @@ const createGRN = async () => {
               <div style={{ fontSize:12, color:'#64748b', marginBottom:10 }}>Upload a receipt as JPG, JPEG, PNG, or PDF. Extracted values are suggestions only; nothing is saved until you review and click Save GRN.</div>
               <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
                 <input type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" disabled={extractingDocument}
-                  onChange={e => { const file = e.target.files?.[0]; if (file) { setSelectedDocumentName(file.name); extractGRNDocument(file) } }} />
-                <span title={selectedDocumentName} style={{ fontSize:12, color:selectedDocumentName ? '#334155' : '#94a3b8', maxWidth:230, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                  {selectedDocumentName || 'No file selected'}
-                </span>
+                  onChange={e => { const file = e.target.files?.[0]; if (file) extractGRNDocument(file) }} />
               </div>
               {extractingDocument && <div style={{ marginTop:8, fontSize:12, color:'#2563eb' }}>Reading document…</div>}
               {extractionResult && <div style={{ marginTop:10, fontSize:12 }}>
