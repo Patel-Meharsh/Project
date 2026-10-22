@@ -460,35 +460,10 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
         if code:
             seen_codes.add(code)
 
-    # Recovery pass: do this even when some rows parsed successfully.
-    # Previously it ran only when found was empty, so a partially parsed invoice
-    # could permanently lose known item names that were visible in OCR text.
-    # This pass only proposes exact normalized master-name occurrences; quantities
-    # and rates remain blank because the row parser did not reliably locate them.
-    normalized_text = _norm(text)
-    already_represented = {
-        _norm(str(row.get("item_name") or ""))
-        for row in found
-        if row.get("item_name")
-    }
-    for item in masters:
-        code, name = (item.code or "").strip(), (item.name or "").strip()
-        nn = _norm(name)
-        if (
-            code and nn and len(nn) >= 4
-            and nn in normalized_text
-            and code not in seen_codes
-            and not any(nn in existing or existing in nn for existing in already_represented if existing)
-        ):
-            found.append({
-                "item_code": code, "item_name": name,
-                "vendor_code": item.vendor_code or "", "vendor_name": "",
-                "recd_qty": None, "accepted_qty": None, "rate": None,
-                "unit": "", "line_amount": None,
-                "match_status": "matched", "source": "item_master_text_fallback",
-            })
-            seen_codes.add(code)
-            already_represented.add(nn)
+    # Do not append item-master records merely because their names appear anywhere
+    # on the page. Header/footer text (for example a software licence in the
+    # company footer) is not an invoice line item. Only rows with parsed
+    # quantity/rate evidence are returned by this parser.
     return found
 
 
