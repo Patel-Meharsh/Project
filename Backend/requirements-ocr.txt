@@ -1,0 +1,5 @@
+# Optional local OCR engine comparison/fallback.
+# Install only if the deployment environment can support PaddlePaddle's larger runtime.
+-r requirements.txt
+paddleocr>=2.7.0,<3.0
+paddlepaddle
