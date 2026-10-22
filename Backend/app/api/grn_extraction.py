@@ -811,6 +811,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
 
     best_rows: list[dict[str, Any]] = []
     best_score = float("-inf")
+    all_candidate_rows: list[dict[str, Any]] = []
     # Evaluate multiple segmentation modes and image variants. Selecting the
     # candidate with the largest raw row count alone is unsafe: a noisy pass can
     # create extra rows by splitting descriptions from their numeric columns.
@@ -1011,8 +1012,26 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
             ):
                 best_score = candidate_score
                 best_rows = current_rows
+            all_candidate_rows.extend(current_rows)
 
-    return best_rows
+    # OCR variants can disagree on a description while detecting the same billed row.
+    # Merge exact numeric signatures and keep the clearest description instead of
+    # trusting one image preprocessing pass that may have dropped the first item.
+    merged: dict[tuple, dict[str, Any]] = {}
+    for row in all_candidate_rows:
+        qty, rate, amount = row.get("recd_qty"), row.get("rate"), row.get("line_amount")
+        if qty is None or rate is None:
+            continue
+        key = (round(float(qty), 4), round(float(rate), 4), round(float(amount), 2) if amount is not None else None)
+        previous = merged.get(key)
+        name = str(row.get("item_name") or "")
+        previous_name = str(previous.get("item_name") or "") if previous else ""
+        quality = len(re.findall(r"[A-Za-z]{2,}", name)) + sum(map(len, re.findall(r"[A-Za-z]{2,}", name)))
+        previous_quality = len(re.findall(r"[A-Za-z]{2,}", previous_name)) + sum(map(len, re.findall(r"[A-Za-z]{2,}", previous_name)))
+        if previous is None or quality > previous_quality:
+            merged[key] = row
+    merged_rows = list(merged.values())
+    return merged_rows if len(merged_rows) >= len(best_rows) else best_rows
 
 
 def _extract_fields(text: str, db: Session) -> dict[str, Any]:
