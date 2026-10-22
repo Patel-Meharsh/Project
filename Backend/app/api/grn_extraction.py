@@ -49,7 +49,7 @@ def _norm(value: str) -> str:
 
 
 def _ocr_quality_score(text: str) -> float:
-    """Rank OCR candidates by readable invoice-like content, not raw text length."""
+    """Prefer readable OCR that preserves invoice line rows, not just header text."""
     if not text or not text.strip():
         return 0.0
 
@@ -67,12 +67,19 @@ def _ocr_quality_score(text: str) -> float:
         text,
         re.IGNORECASE,
     )
-    # Penalize OCR noise such as long runs of punctuation or replacement symbols.
+    # A good invoice OCR candidate should retain one product row per line, with
+    # a description, quantity/UOM and numeric rate/amount. This deliberately
+    # outweighs a candidate that reads the header beautifully but loses the table.
+    unit = r"(?:BTL|PKT|NOS?\.?|PCS?\.?|KGS?|GMS?|LTRS?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?)"
+    row_like = 0
+    for line in text.splitlines():
+        if re.search(r"[A-Za-z]{2,}", line) and re.search(rf"\d[\d,.]*\s*{unit}\b", line, re.I):
+            if len(re.findall(r"\d[\d,.]*", line)) >= 3:
+                row_like += 1
     noise = len(re.findall(r"[^A-Za-z0-9\s.,:/()%'₹&+-]", text))
     score = (len(words) * 2.0) + (len(numbers) * 1.2) + (len(invoice_terms) * 2.5)
-    score += readable_ratio * 8.0
+    score += readable_ratio * 8.0 + row_like * 35.0
     score -= noise * 1.5
-    # Very short fragments are rarely enough to recover an invoice table.
     if len(compact) < 20:
         score *= 0.5
     return score
