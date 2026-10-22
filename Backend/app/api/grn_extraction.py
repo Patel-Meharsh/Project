@@ -71,6 +71,10 @@ def _ocr_quality_score(text: str) -> float:
     # a description, quantity/UOM and numeric rate/amount. This deliberately
     # outweighs a candidate that reads the header beautifully but loses the table.
     unit = r"(?:BTL|PKT|NOS?\.?|PCS?\.?|KGS?|GMS?|LTRS?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?)"
+    noise = len(re.findall(r"[^A-Za-z0-9\s.,:/()%'₹&+-]", text))
+    score = (len(words) * 2.0) + (len(numbers) * 1.2) + (len(invoice_terms) * 2.5)
+    score += readable_ratio * 8.0
+    score -= noise * 1.5
     row_like = 0
     lines = text.splitlines()
     for index, line in enumerate(lines):
@@ -92,10 +96,7 @@ def _ocr_quality_score(text: str) -> float:
                         if rate_value is not None and amount_value is not None:
                             delta = abs(qty_value * rate_value - amount_value)
                             score += 12 if delta <= max(2.0, amount_value * 0.03) else -10
-    noise = len(re.findall(r"[^A-Za-z0-9\s.,:/()%'₹&+-]", text))
-    score = (len(words) * 2.0) + (len(numbers) * 1.2) + (len(invoice_terms) * 2.5)
-    score += readable_ratio * 8.0 + row_like * 35.0
-    score -= noise * 1.5
+    score += row_like * 35.0
     if len(compact) < 20:
         score *= 0.5
     return score
@@ -138,7 +139,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
             candidate = pytesseract.image_to_string(variant, config=config).strip()
             if candidate:
                 # Correct high-confidence, common OCR confusion in quantities.
-                candidate = re.sub(r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", candidate, flags=re.I)
+                candidate = re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", candidate, flags=re.I)
                 candidates.append(candidate)
 
             # Reconstruct rows from word bounding boxes as a second candidate.
