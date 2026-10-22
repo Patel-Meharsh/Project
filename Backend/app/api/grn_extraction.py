@@ -565,11 +565,22 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 continue
 
             # Cluster words by their vertical centre, then read each row by x position.
+            # Stop before the invoice's lower tax-summary table, which also has
+            # numeric columns and must not be mistaken for goods rows.
+            total_y_values = [
+                (float(w[1]) + float(w[3])) / 2
+                for w in words
+                if str(w[4]).strip().lower() == "total"
+                and float(w[0]) < 220
+                and (float(w[1]) + float(w[3])) / 2 > header_y + 8
+            ]
+            table_end_y = min(total_y_values) if total_y_values else header_y + 220
             table_words = [
                 {"text": str(w[4]).strip(), "x0": float(w[0]), "x1": float(w[2]),
                  "y": (float(w[1]) + float(w[3])) / 2}
                 for w in words
-                if str(w[4]).strip() and (float(w[1]) + float(w[3])) / 2 > header_y + 8
+                if str(w[4]).strip()
+                and header_y + 8 < (float(w[1]) + float(w[3])) / 2 < table_end_y
             ]
             table_words.sort(key=lambda item: (item["y"], item["x0"]))
             rows: list[list[dict[str, Any]]] = []
