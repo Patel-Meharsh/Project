@@ -173,13 +173,27 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
     """Extract invoice rows even when OCR breaks a table into uneven text lines."""
     from difflib import SequenceMatcher
 
-    lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
+    raw_lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
     masters = db.query(models.ItemModel).all()
-    found: list[dict[str, Any]] = []
-    seen_codes: set[str] = set()
     unit_re = r"(?:BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MTR|MET(?:RE|ER)|KGS?|GMS?|LTRS?|LIT(?:RE|ER)S?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?)"
     number_re = r"\d[\d,]*(?:\.\d{1,2})?"
 
+    # OCR frequently places a product description on one line and its HSN,
+    # quantity, rate, and amount on the next. Rejoin likely continuation lines
+    # before parsing, while leaving headings and totals untouched.
+    lines: list[str] = []
+    for raw_line in raw_lines:
+        has_qty_unit = re.search(rf"(?<![A-Za-z]){number_re}\s*{unit_re}\b", raw_line, re.I)
+        if lines and has_qty_unit and not re.search(rf"{number_re}\s*{unit_re}\b", lines[-1], re.I):
+            previous = lines[-1]
+            if (re.search(r"[A-Za-z]", previous)
+                    and not re.search(r"\b(?:invoice|gstin|cgst|sgst|igst|total|round off|description|quantity|amount)\b", previous, re.I)
+                    and not re.search(r"\b(?:dated|vendor|supplier|party|tax invoice)\b", previous, re.I)):
+                lines[-1] = previous + " " + raw_line
+                continue
+        lines.append(raw_line)
+    found: list[dict[str, Any]] = []
+    seen_codes: set[str] = set()
     def match_master(description: str):
         dn = _norm(description)
         if not dn:
