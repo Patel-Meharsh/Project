@@ -419,11 +419,11 @@ async def extract_grn_document(
                         rows = []
                         for table in (page.extract_tables() or []):
                             for row in table:
-                                cells = [re.sub(r"\\s+", " ", (cell or "")).strip() for cell in row]
+                                cells = [re.sub(r"\s+", " ", (cell or "")).strip() for cell in row]
                                 if any(cells):
                                     rows.append(" | ".join(cells))
                         if rows:
-                            table_text_by_page[index] = "\\n".join(rows)
+                            table_text_by_page[index] = "\n".join(rows)
             except ImportError:
                 # Table extraction is an enhancement; embedded text and OCR still work.
                 pass
@@ -435,9 +435,9 @@ async def extract_grn_document(
             # into plausible item rows. Render via PyMuPDF (no Poppler dependency).
             pages_needing_ocr = []
             for index, page_text in enumerate(page_texts):
-                combined_page = "\\n".join(part for part in (page_text, table_text_by_page[index]) if part)
+                combined_page = "\n".join(part for part in (page_text, table_text_by_page[index]) if part)
                 if (
-                    len(re.sub(r"\\s+", "", page_text)) < 40
+                    len(re.sub(r"\s+", "", page_text)) < 40
                     or not _extract_item_rows(combined_page, db)
                 ):
                     pages_needing_ocr.append(index)
@@ -455,7 +455,7 @@ async def extract_grn_document(
                             image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
                             ocr_text = _run_ocr_candidates(image, modes=(6, 4, 11))
                             if ocr_text:
-                                page_texts[index] = "\\n".join(
+                                page_texts[index] = "\n".join(
                                     part for part in (page_texts[index], ocr_text) if part
                                 )
                 except HTTPException:
@@ -473,8 +473,8 @@ async def extract_grn_document(
 
             # Keep digital text, extracted table rows, and OCR candidates together.
             # The parser then sees both ordinary invoice text and row-shaped table data.
-            text = "\\n".join(
-                "\\n".join(part for part in (page_texts[index], table_text_by_page[index]) if part)
+            text = "\n".join(
+                "\n".join(part for part in (page_texts[index], table_text_by_page[index]) if part)
                 for index in range(len(page_texts))
             )
         except HTTPException:
