@@ -583,19 +583,26 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 and header_y + 8 < (float(w[1]) + float(w[3])) / 2 < table_end_y
             ]
             table_words.sort(key=lambda item: (item["y"], item["x0"]))
-            rows: list[list[dict[str, Any]]] = []
-            for word in table_words:
-                # Invoice row text is usually on a shared baseline; a small tolerance
-                # accommodates slightly different font sizes in the same row.
-                target = next(
-                    (row for row in reversed(rows[-3:])
-                     if abs(word["y"] - sum(w["y"] for w in row) / len(row)) <= 3.2),
-                    None,
-                )
-                if target is None:
-                    rows.append([word])
+
+            # Use description-column baselines as row anchors. PDF generators often
+            # assign different vertical coordinates to the description, quantity,
+            # rate, and amount cells, so clustering every word by y alone can split
+            # the amount away from its product row.
+            description_words = [word for word in table_words if word["x0"] < 190]
+            anchors: list[float] = []
+            for word in description_words:
+                if not anchors or abs(word["y"] - anchors[-1]) > 3.2:
+                    anchors.append(word["y"])
                 else:
-                    target.append(word)
+                    anchors[-1] = (anchors[-1] + word["y"]) / 2
+
+            rows: list[list[dict[str, Any]]] = [[] for _ in anchors]
+            for word in table_words:
+                if not anchors:
+                    break
+                nearest_index = min(range(len(anchors)), key=lambda index: abs(word["y"] - anchors[index]))
+                if abs(word["y"] - anchors[nearest_index]) <= 8.5:
+                    rows[nearest_index].append(word)
 
             for row in rows:
                 row.sort(key=lambda item: item["x0"])
