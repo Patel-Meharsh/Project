@@ -245,6 +245,14 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             trailing_numbers = re.findall(number_re, body[qm.end():])
             rate = _number(trailing_numbers[0]) if trailing_numbers else None
             amount = _number(trailing_numbers[-1]) if len(trailing_numbers) >= 2 else None
+            # Do not trust a rate inferred from OCR column order unless it is
+            # arithmetically consistent with quantity and line amount. Incorrect
+            # values are worse than blanks in an inventory record.
+            if qty is not None and rate is not None and amount is not None:
+                expected_amount = qty * rate
+                if abs(expected_amount - amount) > max(2.0, expected_amount * 0.03):
+                    rate = None
+                    amount = None
         else:
             # Many invoices omit UOM from the printed row. The previous parser
             # discarded those rows entirely. Try description + quantity + rate +
@@ -298,7 +306,9 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             "vendor_name": "",
             "recd_qty": qty,
             "accepted_qty": None,
-            "rate": rate if rate is not None else ((matched.rate or 0) if matched else 0),
+            # Never substitute the catalog's default rate for a missing invoice
+            # rate; the catalog price may differ from the supplier's billed rate.
+            "rate": rate,
             "unit": unit,
             "line_amount": amount,
             "match_status": "matched" if matched else "unmatched",
