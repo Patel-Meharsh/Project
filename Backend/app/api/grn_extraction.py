@@ -719,6 +719,197 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
             deduped.append(row)
     return deduped
 
+def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
+    """Read invoice line items from image OCR boxes, using the invoice's own columns.
+
+    Only rows below a detected item/description + quantity + rate header are
+    considered. Text elsewhere on the page cannot become a line item.
+    """
+    try:
+        import pytesseract
+        from pytesseract import Output
+    except ImportError:
+        return []
+
+    from difflib import SequenceMatcher
+
+    masters = db.query(models.ItemModel).all()
+    number_re = re.compile(r"(?<![A-Za-z])\d[\d,]*(?:\.\d{1,4})?")
+    unit_re = re.compile(
+        r"\b(BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MTR|MET(?:RE|ER)S?|"
+        r"KGS?|GMS?|LTRS?|LIT(?:RE|ER)S?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?|"
+        r"DOZ(?:EN)?|BAGS?|REAMS?|TUBES?|CANS?|JARS?|UNITS?|MM|CM|FT|FEET|"
+        r"INCH(?:ES)?|SQ\.?\s*FT|SQ\.?\s*M)\b", re.I
+    )
+
+    def normalize_label(value: str) -> str:
+        return re.sub(r"[^a-z]", "", value.lower())
+
+    def label_kind(value: str) -> str | None:
+        value = normalize_label(value)
+        if value in {"description", "particulars", "item", "items", "product", "products", "goods", "details", "itemdescription"}:
+            return "description"
+        if value in {"qty", "quantity", "qnty", "qtys"}:
+            return "qty"
+        if value in {"rate", "price", "unitprice", "unitrate", "basicrate", "mrp"}:
+            return "rate"
+        if value in {"amount", "amt", "value", "lineamount", "totalamount"}:
+            return "amount"
+        if value in {"unit", "uom", "units"}:
+            return "unit"
+        return None
+
+    def match_master(description: str):
+        normalized = _norm(description)
+        tokens = set(re.findall(r"[a-z0-9]+", description.lower()))
+        ranked = []
+        for item in masters:
+            name, code = (item.name or "").strip(), (item.code or "").strip()
+            if not name or not code:
+                continue
+            norm_name = _norm(name)
+            name_tokens = set(re.findall(r"[a-z0-9]+", name.lower()))
+            overlap = len(tokens & name_tokens) / max(1, len(tokens | name_tokens))
+            ratio = SequenceMatcher(None, normalized, norm_name).ratio()
+            score = max(ratio, overlap, 1.0 if norm_name and norm_name in normalized else 0.0)
+            if score >= 0.58:
+                ranked.append((score, item))
+        ranked.sort(key=lambda pair: pair[0], reverse=True)
+        if ranked and (len(ranked) == 1 or ranked[0][0] - ranked[1][0] >= 0.10):
+            return ranked[0][1]
+        return None
+
+    best_rows: list[dict[str, Any]] = []
+    # Grayscale/sharpened versions usually preserve table alignment better than
+    # threshold-only images. Compare candidates by the number of complete rows.
+    for variant in _prepare_ocr_variants(image)[:2]:
+        try:
+            data = pytesseract.image_to_data(
+                variant, config="--oem 3 --psm 6", output_type=Output.DICT
+            )
+        except Exception:
+            continue
+        words = []
+        for i, raw_text in enumerate(data.get("text", [])):
+            token = (raw_text or "").strip()
+            try:
+                confidence = float(data["conf"][i])
+            except (ValueError, TypeError, IndexError):
+                confidence = -1
+            if not token or confidence < 20:
+                continue
+            x, y = int(data["left"][i]), int(data["top"][i])
+            width, height = int(data["width"][i]), int(data["height"][i])
+            words.append({
+                "text": token, "x0": x, "x1": x + width,
+                "y": y + height / 2, "height": max(1, height),
+                "block": data.get("block_num", [0] * len(data["text"]))[i],
+                "par": data.get("par_num", [0] * len(data["text"]))[i],
+                "line": data.get("line_num", [0] * len(data["text"]))[i],
+            })
+        if not words:
+            continue
+        median_height = sorted(w["height"] for w in words)[len(words) // 2]
+        tolerance = max(7, min(18, median_height * 0.9))
+        visual_rows: list[list[dict[str, Any]]] = []
+        for word in sorted(words, key=lambda w: (w["y"], w["x0"])):
+            possible = [(abs(sum(item["y"] for item in row) / len(row) - word["y"]), row)
+                        for row in visual_rows[-5:]]
+            possible = [entry for entry in possible if entry[0] <= tolerance]
+            if possible:
+                min(possible, key=lambda entry: entry[0])[1].append(word)
+            else:
+                visual_rows.append([word])
+        for row in visual_rows:
+            row.sort(key=lambda w: w["x0"])
+
+        header_index = None
+        header_centers: dict[str, float] = {}
+        for idx, row in enumerate(visual_rows):
+            labels: dict[str, list[dict[str, Any]]] = {}
+            for word in row:
+                kind = label_kind(word["text"])
+                if kind:
+                    labels.setdefault(kind, []).append(word)
+            if "description" in labels and "qty" in labels and "rate" in labels:
+                header_index = idx
+                header_centers = {
+                    kind: sum((w["x0"] + w["x1"]) / 2 for w in group) / len(group)
+                    for kind, group in labels.items()
+                }
+                break
+        if header_index is None:
+            continue
+
+        ordered_columns = sorted(
+            (x, name) for name, x in header_centers.items()
+            if name in {"description", "qty", "rate", "amount", "unit"}
+        )
+        if not any(name == "description" for _, name in ordered_columns):
+            continue
+        boundaries = [(ordered_columns[i][0] + ordered_columns[i + 1][0]) / 2
+                      for i in range(len(ordered_columns) - 1)]
+
+        def which_column(x: float) -> str | None:
+            index = 0
+            while index < len(boundaries) and x >= boundaries[index]:
+                index += 1
+            return ordered_columns[index][1] if ordered_columns else None
+
+        current_rows: list[dict[str, Any]] = []
+        for row in visual_rows[header_index + 1:]:
+            row_text = " ".join(w["text"] for w in row)
+            if re.search(r"\b(?:grand\s+total|sub\s*total|total\s+amount|amount\s+in\s+words|taxable\s+value|cgst|sgst|igst|round\s*off|terms\s+and\s+conditions|bank\s+details)\b", row_text, re.I):
+                break
+            cells: dict[str, list[dict[str, Any]]] = {}
+            for word in row:
+                kind = which_column((word["x0"] + word["x1"]) / 2)
+                if kind:
+                    cells.setdefault(kind, []).append(word)
+
+            def cell(kind: str) -> str:
+                return " ".join(w["text"] for w in sorted(cells.get(kind, []), key=lambda w: w["x0"]))
+
+            description = re.sub(r"\s+", " ", cell("description")).strip(" .:|-\t")
+            if not description or not re.search(r"[A-Za-z]{2,}", description):
+                continue
+            if re.search(r"\b(?:description|particulars|quantity|qty|rate|amount|subtotal|total|cgst|sgst|igst|taxable|invoice|page|gstin)\b", description, re.I):
+                continue
+            description = re.sub(r"^\s*\d{1,3}[.)]?\s+(?=[A-Za-z])", "", description).strip()
+            qty_text, rate_text = cell("qty"), cell("rate")
+            qty_match, rate_match = number_re.search(qty_text), number_re.search(rate_text)
+            qty = _number(qty_match.group(0)) if qty_match else None
+            rate = _number(rate_match.group(0)) if rate_match else None
+            amount_matches = list(number_re.finditer(cell("amount")))
+            amount = _number(amount_matches[-1].group(0)) if amount_matches else None
+            unit_match = unit_re.search(qty_text + " " + cell("unit"))
+            unit = unit_match.group(1).upper().rstrip(".") if unit_match else ""
+
+            # The user's required columns are item name, quantity and rate.
+            # Do not add a row when OCR could not find either numeric field.
+            if qty is None or rate is None or qty <= 0 or rate < 0:
+                continue
+            if re.fullmatch(r"[\d\s.,/-]+", description):
+                continue
+            matched = match_master(description)
+            current_rows.append({
+                "item_code": (matched.code or "") if matched else "",
+                "item_name": matched.name if matched else description,
+                "vendor_code": (matched.vendor_code or "") if matched else "",
+                "vendor_name": "",
+                "recd_qty": qty,
+                "accepted_qty": None,
+                "rate": rate,
+                "unit": unit,
+                "line_amount": amount,
+                "match_status": "matched" if matched else "unmatched",
+                "source": "receipt_text",
+            })
+        if len(current_rows) > len(best_rows):
+            best_rows = current_rows
+    return best_rows
+
+
 def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     # Invoice labels vary by supplier and OCR may turn punctuation into spaces.
     # Capture the value after an explicit invoice/bill number label, including
