@@ -862,6 +862,17 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 if kind:
                     labels.setdefault(kind, []).append(word)
             if "description" in labels and "qty" in labels and "rate" in labels:
+                # In Indian tax invoices, "GST Rate" is a separate tax column.
+                # Its word "Rate" must not be averaged with the actual item-rate
+                # header, or the inferred Qty/Rate boundaries drift into HSN/GST.
+                if "ignore_gst" in labels:
+                    qty_center = sum((w["x0"] + w["x1"]) / 2 for w in labels["qty"]) / len(labels["qty"])
+                    real_rate_words = [
+                        w for w in labels["rate"]
+                        if (w["x0"] + w["x1"]) / 2 > qty_center
+                    ]
+                    if real_rate_words:
+                        labels["rate"] = real_rate_words
                 header_index = idx
                 header_centers = {
                     kind: sum((w["x0"] + w["x1"]) / 2 for w in group) / len(group)
