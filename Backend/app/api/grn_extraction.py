@@ -1189,6 +1189,33 @@ async def extract_grn_document(
 
     result = _extract_fields(text, db)
 
+    # Photos/scans need the same column-aware strategy as digital PDFs. If the
+    # OCR bounding boxes identify a table, use only those rows rather than
+    # unrelated text matches elsewhere on the page.
+    if content_type != "application/pdf":
+        try:
+            from PIL import Image
+            with Image.open(io.BytesIO(raw)) as source_image:
+                image_items = _extract_image_table_line_items(source_image.convert("RGB"), db)
+            if image_items:
+                result["line_items"] = image_items
+                result["warnings"] = [
+                    warning for warning in result.get("warnings", [])
+                    if "Line items were detected from receipt text" not in warning
+                    and "One or more PO line items could not be matched" not in warning
+                ]
+                result["warnings"].append(
+                    "Line items were read from detected image-table columns. Verify item names, quantities, and rates before saving."
+                )
+                if any(row.get("match_status") == "unmatched" for row in image_items):
+                    result["warnings"].append(
+                        "One or more invoice descriptions could not be matched confidently to the item master."
+                    )
+        except Exception:
+            # Existing local OCR text extraction remains the fallback if
+            # bounding-box table detection cannot confidently find the headers.
+            pass
+
     # For PDFs with embedded text, use the table's actual word coordinates when
     # available. This avoids treating header fragments (e.g. "SHE/") as products
     # and keeps description, quantity, rate, and amount from separate columns
