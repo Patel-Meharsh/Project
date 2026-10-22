@@ -278,7 +278,9 @@ const extractGRNDocument = async (file) => {
         // Keep accepted quantity blank unless the receipt explicitly provides it:
         // received quantity is not proof that every unit passed inspection.
         accepted_qty: row.accepted_qty ?? '',
-        rate: row.rate ?? masterMatch?.rate ?? 0,
+        // The invoice's rate must not be replaced by a catalog default.
+        // Leave it blank when OCR could not reliably extract it.
+        rate: row.rate ?? '',
       }
     })
     // Replace existing rows even when no items were detected, so rows from an
