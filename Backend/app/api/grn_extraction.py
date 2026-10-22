@@ -541,7 +541,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
             return "unit"
         # These columns must retain their own spatial zones so their values are
         # never assigned to the nearest quantity/rate/amount column.
-        if token in {"hsn", "hsnsac", "sac", "gst", "gstpercent", "tax", "discount", "disc", "d"}:
+        if token in {"hsn", "hsnsac", "sac", "gst", "gstpercent", "tax", "discount", "disc", "d", "value", "supply"}:
             return "ignore"
         return None
 
