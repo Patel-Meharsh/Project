@@ -165,36 +165,65 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
         # number directly against the description. Do not require a serial number.
         body = re.sub(r"^\s*\d{1,3}\s*[.)]?\s*", "", line)
         qty_matches = list(re.finditer(rf"(?<![A-Za-z])({number_re})\s*({unit_re})\b", body, re.I))
-        if not qty_matches:
-            continue
-        # Prefer a quantity-unit pair in the middle/right of a row. Ignore pack
-        # sizes in names (e.g. "Lizol 2ltr") when a later pair exists.
-        qm = next((m for m in reversed(qty_matches)
-                   if len(_norm(body[:m.start()])) >= 3 and re.search(r"[A-Za-z]", body[:m.start()])), None)
-        if not qm:
-            continue
+        qty = rate = amount = None
+        unit = ""
 
-        prefix = body[:qm.start()].strip(" .:-")
-        # Remove trailing HSN and GST columns from the description if OCR placed
-        # those columns before quantity.
-        prefix = re.sub(r"\s+\d{4,8}\s*$", "", prefix).strip()
-        prefix = re.sub(r"\s+\d{1,2}\s*%?\s*$", "", prefix).strip()
-        # If OCR combines columns in an unusual order, keep the leading textual
-        # span only; numeric-only spans are not item descriptions.
-        description_match = re.match(r"([A-Za-z][A-Za-z0-9 &()/.,'_-]{2,}?)\s*(?=\s+\d{4,8}\b|$)", prefix)
-        description = (description_match.group(1) if description_match else prefix).strip(" .:-")
-        description = re.sub(r"\s+", " ", description)
+        if qty_matches:
+            # Prefer a quantity-unit pair near the right side of the description.
+            # Product pack sizes such as "2 LTR" can appear before the actual quantity.
+            qm = next((m for m in reversed(qty_matches)
+                       if len(_norm(body[:m.start()])) >= 3 and re.search(r"[A-Za-z]", body[:m.start()])), None)
+            if not qm:
+                continue
+            prefix = body[:qm.start()].strip(" .:-")
+            prefix = re.sub(r"\s+\d{4,8}\s*$", "", prefix).strip()
+            prefix = re.sub(r"\s+\d{1,2}\s*%?\s*$", "", prefix).strip()
+            description = prefix
+            qty = _number(qm.group(1))
+            unit = qm.group(2).upper().rstrip(".")
+            trailing_numbers = re.findall(number_re, body[qm.end():])
+            rate = _number(trailing_numbers[0]) if trailing_numbers else None
+            amount = _number(trailing_numbers[-1]) if len(trailing_numbers) >= 2 else None
+        else:
+            # Many invoices omit UOM from the printed row. The previous parser
+            # discarded those rows entirely. Try description + quantity + rate +
+            # amount, while excluding a likely HSN/SAC code before the quantity.
+            numeric_tokens = list(re.finditer(number_re, body))
+            if len(numeric_tokens) < 3:
+                continue
+            first_number = numeric_tokens[0]
+            description = body[:first_number.start()].strip(" .:-")
+            row_numbers = [m.group(0) for m in numeric_tokens]
+            first_value = row_numbers[0].replace(",", "")
+            # HSN/SAC codes commonly contain 4-8 digits and precede quantity.
+            if len(first_value.split(".")[0]) in range(4, 9) and len(row_numbers) >= 4:
+                row_numbers = row_numbers[1:]
+            if not re.search(r"[A-Za-z]", description) or len(_norm(description)) < 3:
+                continue
+            # Ignore explicitly printed percentage values such as GST columns.
+            if re.search(r"\d\s*%", body):
+                row_numbers = [
+                    value for value in row_numbers
+                    if not re.search(re.escape(value) + r"\s*%", body)
+                ]
+            if len(row_numbers) < 3:
+                continue
+            qty = _number(row_numbers[0])
+            rate = _number(row_numbers[1])
+            amount = _number(row_numbers[-1])
+            if qty is None or rate is None or amount is None or qty <= 0 or rate < 0 or amount < 0:
+                continue
+            # Validate the inferred amount against quantity × rate. If the
+            # arithmetic is inconsistent, leave amount blank for manual review.
+            expected_amount = qty * rate
+            if expected_amount > 0 and abs(expected_amount - amount) > max(2.0, expected_amount * 0.08):
+                amount = None
+
+        description = re.sub(r"\s+", " ", description).strip(" .:-")
         if len(_norm(description)) < 3 or not re.search(r"[A-Za-z]", description):
             continue
         if re.search(r"\b(?:cgst|sgst|igst|total|round off|tax|gstin|invoice|dated)\b", description, re.I):
             continue
-
-        qty = _number(qm.group(1))
-        unit = qm.group(2).upper().rstrip(".")
-        tail = body[qm.end():]
-        trailing_numbers = re.findall(number_re, tail)
-        rate = _number(trailing_numbers[0]) if trailing_numbers else None
-        amount = _number(trailing_numbers[-1]) if len(trailing_numbers) >= 2 else None
 
         matched = match_master(description)
         code = (matched.code or "") if matched else ""
