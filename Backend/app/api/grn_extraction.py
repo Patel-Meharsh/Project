@@ -767,10 +767,19 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
             return "qty"
         if value in {"rate", "price", "unitprice", "unitrate", "basicrate", "mrp"}:
             return "rate"
-        if value in {"amount", "amt", "value", "lineamount", "totalamount"}:
+        # Keep every non-item column in the spatial model. If HSN/GST
+        # headers are omitted here, their wide gap makes the description-to-qty
+        # boundary span across those columns and codes such as 38089400 become qty.
+        if value in {"amount", "amt", "lineamount", "totalamount"}:
             return "amount"
         if value in {"unit", "uom", "units"}:
             return "unit"
+        if value in {"hsn", "sac", "hsnsac"}:
+            return "ignore"
+        if value in {"gst", "tax", "gstpercent", "gstpercentage", "discount", "disc", "d"}:
+            return "ignore"
+        if value in {"value", "supply"}:
+            return "ignore"
         return None
 
     def match_master(description: str):
@@ -857,7 +866,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
 
         ordered_columns = sorted(
             (x, name) for name, x in header_centers.items()
-            if name in {"description", "qty", "rate", "amount", "unit"}
+            if name in {"description", "qty", "rate", "amount", "unit", "ignore"}
         )
         if not any(name == "description" for _, name in ordered_columns):
             continue
