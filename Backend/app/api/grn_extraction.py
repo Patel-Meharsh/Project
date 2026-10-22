@@ -252,6 +252,10 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
                     or re.search(r"\d\s*%", prefix_candidate)
                 )
                 score = min(len(suffix_numbers), 3) * 10 + (8 if has_hsn_or_gst else 0)
+                # A long HSN/SAC number immediately after a pair means that pair
+                # was probably a pack size inside the description, not billed qty.
+                if suffix_numbers and len(suffix_numbers[0].replace(",", "").split(".")[0]) in range(4, 9):
+                    score -= 20
                 if len(_norm(prefix_candidate)) >= 3 and re.search(r"[A-Za-z]", prefix_candidate):
                     ranked_pairs.append((score, candidate))
             if not ranked_pairs:
