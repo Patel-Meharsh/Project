@@ -933,6 +933,20 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 unit_match = unit_re.search(qty_text + " " + cell("unit"))
                 unit = unit_match.group(1).upper().rstrip(".") if unit_match else ""
 
+                # OCR frequently drops a faint decimal point (e.g. 76.00 -> 7600).
+                # Only repair a rate when the independently detected line amount
+                # supports it arithmetically; never scale a value on its own.
+                if qty is not None and qty > 0 and rate is not None and amount is not None:
+                    implied_rate = amount / qty
+                    if abs(rate - implied_rate) > max(2.0, abs(implied_rate) * 0.03):
+                        scaled_candidates = [rate / factor for factor in (10, 100, 1000)]
+                        supported = [
+                            value for value in scaled_candidates
+                            if abs(value - implied_rate) <= max(0.03, abs(implied_rate) * 0.015)
+                        ]
+                        if len(supported) == 1:
+                            rate = round(supported[0], 4)
+
                 # The user's required columns are item name, quantity and rate.
                 # Do not add a row when OCR could not find either numeric field.
                 if qty is None or rate is None or qty <= 0 or rate < 0:
