@@ -646,11 +646,11 @@ async def extract_grn_document(
                         rows = []
                         for table in (page.extract_tables() or []):
                             for row in table:
-                                cells = [re.sub(r"\\s+", " ", (cell or "")).strip() for cell in row]
+                                cells = [re.sub(r"\s+", " ", (cell or "")).strip() for cell in row]
                                 if any(cells):
                                     rows.append(" | ".join(cells))
                         if rows:
-                            table_text_by_page[index] = "\\n".join(rows)
+                            table_text_by_page[index] = "\n".join(rows)
             except Exception:
                 # Table extraction is optional; OCR/text extraction must still run.
                 pass
@@ -665,13 +665,13 @@ async def extract_grn_document(
                     for index in range(len(page_texts)):
                         embedded = page_texts[index]
                         table_text = table_text_by_page[index]
-                        digital_candidate = "\\n".join(part for part in (embedded, table_text) if part).strip()
+                        digital_candidate = "\n".join(part for part in (embedded, table_text) if part).strip()
                         parsed_rows = [
                             row for row in _extract_item_rows(digital_candidate, db)
                             if row.get("source") == "receipt_text"
                         ] if digital_candidate else []
                         needs_ocr = (
-                            len(re.sub(r"\\s+", "", embedded)) < 80
+                            len(re.sub(r"\s+", "", embedded)) < 80
                             or len(parsed_rows) == 0
                         )
                         if not needs_ocr:
@@ -719,8 +719,8 @@ async def extract_grn_document(
                     "The PDF could not be processed. Ensure it is a valid PDF and Tesseract OCR is installed for scanned pages.",
                 ) from exc
 
-            text = "\\n".join(
-                "\\n".join(part for part in (page_texts[index], table_text_by_page[index]) if part)
+            text = "\n".join(
+                "\n".join(part for part in (page_texts[index], table_text_by_page[index]) if part)
                 for index in range(len(page_texts))
             ).strip()
         except HTTPException:
