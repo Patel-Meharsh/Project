@@ -898,6 +898,9 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 continue
             if re.search(r"\b(?:description|particulars|quantity|qty|rate|amount|subtotal|total|cgst|sgst|igst|taxable|invoice|page|gstin)\b", description, re.I):
                 continue
+            # Freight/carting/packing are invoice charges, not stock items.
+            if re.search(r"\b(?:carting|freight|transport(?:ation)?|delivery\s+charges?|packing\s+charges?|handling\s+charges?|loading|unloading|round\s*off)\b", description, re.I):
+                continue
             description = re.sub(r"^\s*\d{1,3}[.)]?\s+(?=[A-Za-z])", "", description).strip()
             qty_text, rate_text = cell("qty"), cell("rate")
             qty_match, rate_match = number_re.search(qty_text), number_re.search(rate_text)
@@ -911,6 +914,12 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
             # The user's required columns are item name, quantity and rate.
             # Do not add a row when OCR could not find either numeric field.
             if qty is None or rate is None or qty <= 0 or rate < 0:
+                continue
+            # Fail closed on HSN/SAC codes shifted into Qty (e.g. 38089400).
+            # A suspicious row is omitted for manual review rather than allowing
+            # an eight-digit tax code to inflate received/accepted inventory.
+            qty_digits = str(int(qty)) if float(qty).is_integer() else ""
+            if qty >= 100000 or (4 <= len(qty_digits) <= 8 and qty == int(qty)):
                 continue
             if re.fullmatch(r"[\d\s.,/-]+", description):
                 continue
