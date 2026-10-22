@@ -577,10 +577,12 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
             table_end_y = min(total_y_values) if total_y_values else header_y + 220
             table_words = [
                 {"text": str(w[4]).strip(), "x0": float(w[0]), "x1": float(w[2]),
-                 "y": (float(w[1]) + float(w[3])) / 2}
+                 # Amount values in this PDF family sit a few points lower than
+                 # the description baseline; compensate before row assignment.
+                 "y": (float(w[1]) + float(w[3])) / 2 - (6.0 if float(w[0]) >= 400 else 0.0)}
                 for w in words
                 if str(w[4]).strip()
-                and header_y + 8 < (float(w[1]) + float(w[3])) / 2 < table_end_y
+                and header_y + 17 < (float(w[1]) + float(w[3])) / 2 < table_end_y
             ]
             table_words.sort(key=lambda item: (item["y"], item["x0"]))
 
