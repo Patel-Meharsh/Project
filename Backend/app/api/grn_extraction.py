@@ -761,16 +761,16 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
 
     def label_kind(value: str) -> str | None:
         value = normalize_label(value)
-        if value in {"description", "particulars", "item", "items", "product", "products", "goods", "details", "itemdescription"}:
+        if value in {"description", "particulars", "item", "items", "product", "products", "goods", "details", "itemdescription", "descriptionofgoods", "nameofitem", "itemname", "materialdescription", "productdescription"}:
             return "description"
-        if value in {"qty", "quantity", "qnty", "qtys"}:
+        if value in {"qty", "quantity", "qnty", "qtys", "billedqty", "billqty", "quantitynos", "quantityno", "receivedqty"}:
             return "qty"
-        if value in {"rate", "price", "unitprice", "unitrate", "basicrate", "mrp"}:
+        if value in {"rate", "price", "unitprice", "unitrate", "basicrate", "mrp", "rateperunit", "unitcost", "priceperunit"}:
             return "rate"
         # Keep every non-item column in the spatial model. If HSN/GST
         # headers are omitted here, their wide gap makes the description-to-qty
         # boundary span across those columns and codes such as 38089400 become qty.
-        if value in {"amount", "amt", "lineamount", "totalamount"}:
+        if value in {"amount", "amt", "lineamount", "totalamount", "netamount", "linetotal", "taxableamount", "extendedamount"}:
             return "amount"
         if value in {"unit", "uom", "units"}:
             return "unit"
@@ -1039,8 +1039,8 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     # Capture the value after an explicit invoice/bill number label, including
     # values such as GST/7518/26-27.
     invoice_no = _first([
-        r"(?:invoice|inv\.?|bill)\s*(?:no\.?|number|num\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
-        r"(?:invoice|inv\.?|bill)\s*(?:no\.?|number|num\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9\s/_.-]{2,}?)(?=\s+(?:dated?|date|ref(?:erence)?\.?|gstin|party)\b|$)",
+        r"(?:(?:tax\s+)?invoice|inv\.?|bill)\s*(?:no\.?|number|num\.?|#)\s*[:\-#]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
+        r"(?:(?:tax\s+)?invoice|inv\.?|bill)\s*(?:no\.?|number|num\.?|#)\s*[:\-#]?\s*([A-Z0-9][A-Z0-9\s/_.-]{2,}?)(?=\s+(?:dated?|date|ref(?:erence)?\.?|gstin|party)\b|$)",
     ], text)
     # Do not interpret generic prose containing "purchase order" as a PO number.
     po_no = _first([
@@ -1063,12 +1063,12 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
                 vendor_text = candidate
                 break
     date_raw = _first([
-        r"(?:invoice\s*)?(?:date|dated)\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}[-/ ]\w{3}[-/ ]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})",
+        r"(?:(?:tax\s+)?invoice\s*)?(?:date|dated|bill\s+date)\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}[-/ ]\w{3,9}[-/ ]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})",
         r"\b(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b",
     ], text)
     invoice_date = None
     if date_raw:
-        for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y", "%d-%m-%y", "%d.%m.%y", "%d-%b-%Y", "%d-%b-%y", "%d/%b/%Y", "%d/%b/%y", "%d %b %Y", "%d %b %y", "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%m/%d/%Y"):
+        for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y", "%d-%m-%y", "%d.%m.%y", "%d-%b-%Y", "%d-%b-%y", "%d/%b/%Y", "%d/%b/%y", "%d %b %Y", "%d %b %y", "%d-%B-%Y", "%d-%B-%y", "%d %B %Y", "%d %B %y", "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%m/%d/%Y"):
             try:
                 invoice_date = datetime.strptime(date_raw, fmt).date().isoformat()
                 break
@@ -1322,66 +1322,10 @@ async def extract_grn_document(
             with Image.open(io.BytesIO(raw)) as source_image:
                 image_items = _extract_image_table_line_items(source_image.convert("RGB"), db)
             if image_items:
-                # Keep the table-aware OCR as the primary source, but do not
-                # discard additional distinct rows found by the text-line parser.
-                # A photographed invoice can split descriptions and numeric cells
-                # across OCR lines; the two independent passes can recover different
-                # valid rows. Merge only rows with plausible quantities/rates and
-                # avoid duplicates by normalized description + quantity.
-                text_items = result.get("line_items") or []
-                merged_items = list(image_items)
-                # Image-table rows are the primary source. Text OCR is a fallback
-                # for genuinely missing rows, not a second list to append wholesale.
-                # Independent OCR passes often describe the same numeric row differently
-                # (for example, "Lemon" vs "Soft Broom") when the photo is skewed.
-                # Deduplicate by invoice numeric signature before adding text candidates.
-                def numeric_signature(row):
-                    qty = row.get("recd_qty")
-                    rate = row.get("rate")
-                    amount = row.get("line_amount")
-                    if qty is None or rate is None:
-                        return None
-                    return (
-                        round(float(qty), 4),
-                        round(float(rate), 4),
-                        round(float(amount), 2) if amount is not None else None,
-                    )
-
-                seen_item_keys = {
-                    (_norm(str(row.get("item_name") or "")), row.get("recd_qty"))
-                    for row in merged_items
-                }
-                seen_numeric_signatures = {
-                    signature for row in merged_items
-                    if (signature := numeric_signature(row)) is not None
-                }
-                for candidate in text_items:
-                    description = str(candidate.get("item_name") or "").strip()
-                    qty_value = candidate.get("recd_qty")
-                    rate_value = candidate.get("rate")
-                    if not description or not re.search(r"[A-Za-z]{2,}", description):
-                        continue
-                    meaningful_tokens = re.findall(r"[A-Za-z]{2,}", description)
-                    if not meaningful_tokens or sum(len(token) for token in meaningful_tokens) < 4:
-                        continue
-                    if qty_value is None or rate_value is None or qty_value <= 0 or rate_value < 0:
-                        continue
-                    if qty_value >= 100000 or (float(qty_value).is_integer() and 1000 <= qty_value < 100000):
-                        continue
-                    key = (_norm(description), qty_value)
-                    signature = numeric_signature(candidate)
-                    if key in seen_item_keys or (signature is not None and signature in seen_numeric_signatures):
-                        continue
-                    # Reject obvious non-stock charges even if the text parser found them.
-                    if re.search(r"\b(?:carting|freight|transport(?:ation)?|delivery\s+charges?|packing\s+charges?|handling\s+charges?|loading|unloading|round\s*off)\b", description, re.I):
-                        continue
-                    merged_items.append(candidate)
-                    seen_item_keys.add(key)
-                    if signature is not None:
-                        seen_numeric_signatures.add(signature)
-                # Prefer the merged result only when it adds independently parsed rows;
-                # never let an empty/noisy text pass replace table rows.
-                result["line_items"] = merged_items
+                # Header/coordinate extraction is the source of truth when it
+                # yields rows: do not append line-oriented OCR guesses, which can
+                # duplicate a product or attach the next row's numbers to a fragment.
+                result["line_items"] = image_items
                 result["warnings"] = [
                     warning for warning in result.get("warnings", [])
                     if "Line items were detected from receipt text" not in warning
@@ -1405,6 +1349,41 @@ async def extract_grn_document(
     # attached to the same invoice row. Scanned PDFs still use the OCR parser.
     if content_type == "application/pdf":
         coordinate_items = _extract_pdf_table_line_items(raw, db)
+        if not coordinate_items:
+            # Scanned PDFs have no useful text-layer coordinates. Render pages
+            # and apply the same header-driven column parser used for JPG/PNG.
+            try:
+                import pymupdf
+                from PIL import Image
+                with pymupdf.open(stream=raw, filetype="pdf") as pdf_document:
+                    image_candidates = []
+                    for page_index in range(min(len(pdf_document), 30)):
+                        page = pdf_document.load_page(page_index)
+                        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2.5, 2.5), alpha=False)
+                        if pixmap.width * pixmap.height > 25_000_000:
+                            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5), alpha=False)
+                        if pixmap.width * pixmap.height > 25_000_000:
+                            continue
+                        page_image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
+                        candidate = _extract_image_table_line_items(page_image, db)
+                        if candidate:
+                            image_candidates.extend(candidate)
+                # Remove OCR duplicates while preserving distinct rows with
+                # different item/quantity/rate combinations.
+                seen = set()
+                for row in image_candidates:
+                    key = (
+                        _norm(str(row.get("item_name") or "")),
+                        row.get("recd_qty"),
+                        row.get("rate"),
+                        row.get("line_amount"),
+                    )
+                    if key not in seen:
+                        seen.add(key)
+                        coordinate_items.append(row)
+            except Exception:
+                # Existing PDF text/OCR extraction remains a safe fallback.
+                pass
         if coordinate_items:
             result["line_items"] = coordinate_items
             result["warnings"] = [
