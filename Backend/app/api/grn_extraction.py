@@ -1064,12 +1064,26 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 if not item.get("unit"):
                     candidate_score -= 0.5
             # Prefer a candidate with more valid rows only after evaluating integrity.
+            # Rows whose three numeric fields contradict qty × rate are not safe
+            # to prefill: a GRN changes stock, so uncertain numbers must be reviewed
+            # manually rather than presented as reliable extracted values.
+            validated_rows = []
+            for item in current_rows:
+                qty_value = item.get("recd_qty")
+                rate_value = item.get("rate")
+                amount_value = item.get("line_amount")
+                if qty_value is not None and rate_value is not None and amount_value is not None:
+                    expected = qty_value * rate_value
+                    if abs(expected - amount_value) > max(0.05, abs(amount_value) * 0.015):
+                        continue
+                validated_rows.append(item)
+
             if candidate_score > best_score or (
-                candidate_score == best_score and len(current_rows) > len(best_rows)
+                candidate_score == best_score and len(validated_rows) > len(best_rows)
             ):
                 best_score = candidate_score
-                best_rows = current_rows
-            all_candidate_rows.extend(current_rows)
+                best_rows = validated_rows
+            all_candidate_rows.extend(validated_rows)
 
     # Return one internally consistent OCR pass only. Merging numeric signatures
     # across preprocessing variants can combine unrelated rows (e.g. a qty/rate
