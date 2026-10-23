@@ -498,23 +498,31 @@ const createGRN = async () => {
             <div style={{ gridColumn:'1/-1', border:'1px dashed #93c5fd', background:'#f8fbff', borderRadius:10, padding:14 }}>
               <div style={{ fontWeight:700, fontSize:13.5, marginBottom:4 }}>Upload Receipt — auto-fill GRN</div>
               <div style={{ fontSize:12, color:'#64748b', marginBottom:10 }}>Upload a receipt as JPG, JPEG, PNG, or PDF. Extracted values are suggestions only; nothing is saved until you review and click Save GRN.</div>
-              <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
-                <input type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" disabled={extractingDocument}
-                  onChange={e => {
-                    const file = e.target.files?.[0]
-                    if (file) {
-                      setSelectedDocumentName(file.name)
-                      extractGRNDocument(file)
-                    }
-                    // Clear the native input so the same file can be selected again.
-                    // Keep its name in React state for display beside the button.
-                    e.target.value = ''
-                  }} />
-                {selectedDocumentName && (
-                  <span title={selectedDocumentName} style={{ fontSize:12, color:'#475569', overflowWrap:'anywhere' }}>
-                    {selectedDocumentName}
+              <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                <label style={{ display:'inline-flex', alignItems:'center', gap:6, cursor:extractingDocument ? 'not-allowed' : 'pointer', opacity:extractingDocument ? 0.6 : 1 }}>
+                  <span style={{ display:'inline-block', padding:'3px 8px', border:'1px solid #767676', borderRadius:2, background:'#efefef', color:'#111', fontSize:13, lineHeight:'20px' }}>
+                    Choose File
                   </span>
-                )}
+                  <span style={{ fontSize:13, color:'#202124' }}>
+                    {selectedDocumentName || 'No file chosen'}
+                  </span>
+                  <input
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
+                    disabled={extractingDocument}
+                    aria-label="Choose receipt file"
+                    style={{ position:'absolute', width:1, height:1, padding:0, margin:-1, overflow:'hidden', clip:'rect(0, 0, 0, 0)', whiteSpace:'nowrap', border:0 }}
+                    onChange={e => {
+                      const file = e.target.files?.[0]
+                      if (file) {
+                        setSelectedDocumentName(file.name)
+                        extractGRNDocument(file)
+                      }
+                      // Keep the selected filename in React state while allowing the same file to be reselected.
+                      e.target.value = ''
+                    }}
+                  />
+                </label>
               </div>
               {extractingDocument && <div style={{ marginTop:8, fontSize:12, color:'#2563eb' }}>Reading document…</div>}
               {extractionResult && <div style={{ marginTop:10, fontSize:12 }}>
