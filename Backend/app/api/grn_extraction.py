@@ -1385,19 +1385,40 @@ async def extract_grn_document(
             with Image.open(io.BytesIO(raw)) as source_image:
                 image_items = _extract_image_table_line_items(source_image.convert("RGB"), db)
             if image_items:
-                # Header/coordinate extraction is the source of truth when it
-                # yields rows: do not append line-oriented OCR guesses, which can
-                # duplicate a product or attach the next row's numbers to a fragment.
-                result["line_items"] = image_items
+                # Compare independent parsers rather than always trusting a
+                # coordinate pass that may split one description across rows.
+                # Keep the candidate with more complete invoice rows, with
+                # arithmetic consistency as the tie-breaker.
+                text_items = [
+                    row for row in _extract_item_rows(text, db)
+                    if row.get("source") == "receipt_text"
+                ]
+                def row_quality(rows):
+                    score = len(rows) * 10
+                    for row in rows:
+                        qty = row.get("recd_qty")
+                        rate = row.get("rate")
+                        amount = row.get("line_amount")
+                        if qty is not None and rate is not None and amount is not None:
+                            if abs(qty * rate - amount) <= max(0.05, abs(amount) * 0.015):
+                                score += 5
+                            else:
+                                score -= 8
+                        if not row.get("item_name") or len(_norm(row.get("item_name", ""))) < 4:
+                            score -= 4
+                    return score
+                chosen_items = text_items if text_items and row_quality(text_items) > row_quality(image_items) else image_items
+                result["line_items"] = chosen_items
                 result["warnings"] = [
                     warning for warning in result.get("warnings", [])
                     if "Line items were detected from receipt text" not in warning
                     and "One or more PO line items could not be matched" not in warning
+                    and "Line items were read from image-table" not in warning
                 ]
                 result["warnings"].append(
-                    "Line items were read from image-table and text OCR passes. Verify item names, quantities, and rates before saving."
+                    "Line items were extracted using the highest-scoring OCR parser. Verify item names, quantities, and rates before saving."
                 )
-                if any(row.get("match_status") == "unmatched" for row in image_items):
+                if any(row.get("match_status") == "unmatched" for row in chosen_items):
                     result["warnings"].append(
                         "One or more invoice descriptions could not be matched confidently to the item master."
                     )
