@@ -445,7 +445,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
         found.append({
             "item_code": code,
             "item_name": description,
-            "vendor_code": (matched.vendor_code or "") if matched else "",
+            "vendor_code": "",
             "vendor_name": "",
             "recd_qty": qty,
             "accepted_qty": None,
@@ -741,7 +741,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 extracted.append({
                     "item_code": (matched.code or "") if matched else "",
                     "item_name": description,
-                    "vendor_code": (matched.vendor_code or "") if matched else "",
+                    "vendor_code": "",
                     "vendor_name": "",
                     "recd_qty": qty,
                     "accepted_qty": None,
@@ -1027,7 +1027,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 current_rows.append({
                     "item_code": (matched.code or "") if matched else "",
                     "item_name": description,
-                    "vendor_code": (matched.vendor_code or "") if matched else "",
+                    "vendor_code": "",
                     "vendor_name": "",
                     "recd_qty": qty,
                     "accepted_qty": None,
@@ -1097,9 +1097,14 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     # Capture the value after an explicit invoice/bill number label, including
     # values such as GST/7518/26-27.
     invoice_no = _first([
+        # Standard invoice labels and IDs such as GST/7518/26-27.
         r"(?:(?:tax\s+)?invoice|inv\.?|bill)\s*(?:no\.?|number|num\.?|#)\s*[:\-#]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
         r"(?:(?:tax\s+)?invoice|inv\.?|bill)\s*(?:no\.?|number|num\.?|#)\s*[:\-#]?\s*([A-Z0-9][A-Z0-9\s/_.-]{2,}?)(?=\s+(?:dated?|date|ref(?:erence)?\.?|gstin|party)\b|$)",
+        # OCR may put the invoice ID on the line immediately after its label.
+        r"(?im)^\s*(?:invoice|inv\.?|bill)\s*(?:no\.?|number|num\.?|#)\s*[:\-#]?\s*\n?\s*([A-Z]{2,}[A-Z0-9]*(?:\s*/\s*[A-Z0-9.-]+){1,})\b",
     ], text)
+    if invoice_no:
+        invoice_no = re.sub(r"\s*/\s*", "/", invoice_no).replace(" ", "")
     # Do not interpret generic prose containing "purchase order" as a PO number.
     po_no = _first([
         r"(?:purchase\s*order|P\.?\s*O\.?)\s*(?:no\.?|number|ref(?:erence)?\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
