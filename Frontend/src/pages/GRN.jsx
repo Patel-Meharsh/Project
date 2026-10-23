@@ -105,6 +105,7 @@ export default function GRN() {
   const [viewGrn, setViewGrn] = useState(null)
   const [extractingDocument, setExtractingDocument] = useState(false)
   const [extractionResult, setExtractionResult] = useState(null)
+  const [selectedDocumentName, setSelectedDocumentName] = useState('')
 
   const { user } = useAuth()
   const isAdmin = canDo(user?.role, 'admin')
@@ -150,6 +151,7 @@ export default function GRN() {
     setRowError(false)
     setExtractionResult(null)
     setExtractingDocument(false)
+    setSelectedDocumentName('')
   }
 
   // Always start a new GRN with a clean draft. Never spread the previous form
@@ -168,6 +170,7 @@ export default function GRN() {
     setRowError(false)
     setExtractionResult(null)
     setExtractingDocument(false)
+    setSelectedDocumentName('')
     try {
       const code = await codeApi.next('grn')
       setForm(blank => ({ ...blank, grn_no: code }))
@@ -497,7 +500,21 @@ const createGRN = async () => {
               <div style={{ fontSize:12, color:'#64748b', marginBottom:10 }}>Upload a receipt as JPG, JPEG, PNG, or PDF. Extracted values are suggestions only; nothing is saved until you review and click Save GRN.</div>
               <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
                 <input type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" disabled={extractingDocument}
-                  onChange={e => { const file = e.target.files?.[0]; if (file) extractGRNDocument(file); e.target.value = '' }} />
+                  onChange={e => {
+                    const file = e.target.files?.[0]
+                    if (file) {
+                      setSelectedDocumentName(file.name)
+                      extractGRNDocument(file)
+                    }
+                    // Clear the native input so the same file can be selected again.
+                    // Keep its name in React state for display beside the button.
+                    e.target.value = ''
+                  }} />
+                {selectedDocumentName && (
+                  <span title={selectedDocumentName} style={{ fontSize:12, color:'#475569', overflowWrap:'anywhere' }}>
+                    {selectedDocumentName}
+                  </span>
+                )}
               </div>
               {extractingDocument && <div style={{ marginTop:8, fontSize:12, color:'#2563eb' }}>Reading document…</div>}
               {extractionResult && <div style={{ marginTop:10, fontSize:12 }}>
