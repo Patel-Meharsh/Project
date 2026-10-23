@@ -272,8 +272,8 @@ const extractGRNDocument = async (file) => {
         id: Date.now() + idx,
         item_code: row.item_code || masterMatch?.code || '',
         item_name: masterMatch?.name || row.item_name || '',
-        vendor_code: row.vendor_code || fields.vendor_code || '',
-        vendor_name: row.vendor_name || matchedVendor?.name || fields.vendor_name || '',
+        vendor_code: fields.vendor_code || '',
+        vendor_name: matchedVendor?.name || fields.vendor_name || '',
         recd_qty: row.recd_qty ?? '',
         // Keep accepted quantity blank unless the receipt explicitly provides it:
         // received quantity is not proof that every unit passed inspection.
@@ -497,7 +497,7 @@ const createGRN = async () => {
               <div style={{ fontSize:12, color:'#64748b', marginBottom:10 }}>Upload a receipt as JPG, JPEG, PNG, or PDF. Extracted values are suggestions only; nothing is saved until you review and click Save GRN.</div>
               <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
                 <input type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" disabled={extractingDocument}
-                  onChange={e => { const file = e.target.files?.[0]; if (file) extractGRNDocument(file) }} />
+                  onChange={e => { const file = e.target.files?.[0]; if (file) extractGRNDocument(file); e.target.value = '' }} />
               </div>
               {extractingDocument && <div style={{ marginTop:8, fontSize:12, color:'#2563eb' }}>Reading document…</div>}
               {extractionResult && <div style={{ marginTop:10, fontSize:12 }}>
@@ -519,7 +519,7 @@ const createGRN = async () => {
                 {pos.filter(p => !['Fully Received','Closed'].includes(p.status)).map(p => <option key={p.po_no} value={p.po_no}>{p.po_no} — {p.item_name} ({p.status})</option>)}
               </select>
             </FormRow>
-            <FormRow label="Invoice Number" half><input className="input" value={form.invoice_no} onChange={e => setForm({...form, invoice_no:e.target.value})} placeholder="INV-V8-2003" /></FormRow>
+            <FormRow label="Invoice Number" half><input className="input" value={form.invoice_no} onChange={e => setForm({...form, invoice_no:e.target.value})} placeholder="Enter invoice number" /></FormRow>
             <FormRow label="Store Location" half>
               <select className="select" value={form.store_location} onChange={e => setForm({...form, store_location:e.target.value})}>
                 <option value=''>— Select location —</option>
