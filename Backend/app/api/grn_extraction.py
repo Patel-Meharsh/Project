@@ -525,11 +525,26 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
 
     def token_kind(value: str) -> str | None:
         token = re.sub(r"[^a-z]", "", value.lower())
-        if token in {"description", "particulars", "item", "itemdescription", "product", "products", "goods", "details"}:
+        # Header aliases are normalized so punctuation, slashes and spacing do
+        # not matter (e.g. "Description of Product / Service").
+        if token in {
+            "description", "particulars", "item", "items", "itemdescription",
+            "descriptionofgoods", "descriptionofgoodsandservices",
+            "descriptionofproductservice", "descriptionofproducts",
+            "nameofitem", "itemname", "goodsname", "nameofgoods",
+            "nameofproducts", "productname", "productservice", "materialdescription",
+            "productdescription", "product", "products", "goods", "details",
+        }:
             return "description"
-        if token in {"qty", "quantity", "qnty", "qtys"}:
+        if token in {
+            "qty", "quantity", "qnty", "qtys", "billedqty", "billqty",
+            "quantitynos", "quantityno", "receivedqty", "orderedqty",
+        }:
             return "qty"
-        if token in {"rate", "price", "unitprice", "unitrate", "basicrate", "mrp"}:
+        if token in {
+            "rate", "price", "unitprice", "unitrate", "basicrate", "mrp",
+            "rateperunit", "unitcost", "priceperunit",
+        }:
             return "rate"
         # "Value of Supply" is a separate tax-inclusive column on many Indian
         # invoices. Treating its first word ("Value") as the line-amount header
@@ -761,11 +776,24 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
 
     def label_kind(value: str) -> str | None:
         value = normalize_label(value)
-        if value in {"description", "particulars", "item", "items", "product", "products", "goods", "details", "itemdescription", "descriptionofgoods", "nameofitem", "itemname", "materialdescription", "productdescription"}:
+        if value in {
+            "description", "particulars", "item", "items", "product", "products",
+            "goods", "details", "itemdescription", "descriptionofgoods",
+            "descriptionofgoodsandservices", "descriptionofproductservice",
+            "descriptionofproducts", "nameofitem", "itemname", "goodsname",
+            "nameofgoods", "nameofproducts", "productname", "productservice",
+            "materialdescription", "productdescription",
+        }:
             return "description"
-        if value in {"qty", "quantity", "qnty", "qtys", "billedqty", "billqty", "quantitynos", "quantityno", "receivedqty"}:
+        if value in {
+            "qty", "quantity", "qnty", "qtys", "billedqty", "billqty",
+            "quantitynos", "quantityno", "receivedqty", "orderedqty",
+        }:
             return "qty"
-        if value in {"rate", "price", "unitprice", "unitrate", "basicrate", "mrp", "rateperunit", "unitcost", "priceperunit"}:
+        if value in {
+            "rate", "price", "unitprice", "unitrate", "basicrate", "mrp",
+            "rateperunit", "unitcost", "priceperunit",
+        }:
             return "rate"
         # Keep every non-item column in the spatial model. If HSN/GST
         # headers are omitted here, their wide gap makes the description-to-qty
@@ -865,6 +893,14 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                     kind = label_kind(word["text"])
                     if kind:
                         labels.setdefault(kind, []).append(word)
+                # Multi-word descriptions such as "Description of Goods" can
+                # otherwise contribute both "Description" and "Goods" to the
+                # same column center. Anchor the description column to its
+                # left-most recognized header word.
+                if len(labels.get("description", [])) > 1:
+                    labels["description"] = [
+                        min(labels["description"], key=lambda w: w["x0"])
+                    ]
                 if "description" in labels and "qty" in labels and "rate" in labels:
                     # In Indian tax invoices, "GST Rate" is a separate tax column.
                     # Its word "Rate" must not be averaged with the actual item-rate
