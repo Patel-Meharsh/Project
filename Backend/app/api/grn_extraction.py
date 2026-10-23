@@ -889,7 +889,11 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
             if not words:
                 continue
             median_height = sorted(w["height"] for w in words)[len(words) // 2]
-            tolerance = max(7, min(18, median_height * 0.9))
+            # Invoice columns often use different font sizes: description,
+            # quantity and rate baselines can differ by 15-25 px even on the
+            # same printed row. Use a wider but capped tolerance so they stay
+            # associated, while adjacent item rows remain separate.
+            tolerance = max(12, min(28, median_height * 1.5))
             visual_rows: list[list[dict[str, Any]]] = []
             for word in sorted(words, key=lambda w: (w["y"], w["x0"])):
                 possible = [(abs(sum(item["y"] for item in row) / len(row) - word["y"]), row)
@@ -1067,24 +1071,11 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 best_rows = current_rows
             all_candidate_rows.extend(current_rows)
 
-    # OCR variants can disagree on a description while detecting the same billed row.
-    # Merge exact numeric signatures and keep the clearest description instead of
-    # trusting one image preprocessing pass that may have dropped the first item.
-    merged: dict[tuple, dict[str, Any]] = {}
-    for row in all_candidate_rows:
-        qty, rate, amount = row.get("recd_qty"), row.get("rate"), row.get("line_amount")
-        if qty is None or rate is None:
-            continue
-        key = (round(float(qty), 4), round(float(rate), 4), round(float(amount), 2) if amount is not None else None)
-        previous = merged.get(key)
-        name = str(row.get("item_name") or "")
-        previous_name = str(previous.get("item_name") or "") if previous else ""
-        quality = len(re.findall(r"[A-Za-z]{2,}", name)) + sum(map(len, re.findall(r"[A-Za-z]{2,}", name)))
-        previous_quality = len(re.findall(r"[A-Za-z]{2,}", previous_name)) + sum(map(len, re.findall(r"[A-Za-z]{2,}", previous_name)))
-        if previous is None or quality > previous_quality:
-            merged[key] = row
-    merged_rows = list(merged.values())
-    return merged_rows if len(merged_rows) >= len(best_rows) else best_rows
+    # Return one internally consistent OCR pass only. Merging numeric signatures
+    # across preprocessing variants can combine unrelated rows (e.g. a qty/rate
+    # pair from one pass with a misread description from another) and introduce
+    # duplicate products. The selected pass is scored using row arithmetic above.
+    return best_rows
 
 
 def _extract_fields(text: str, db: Session) -> dict[str, Any]:
@@ -1387,7 +1378,7 @@ async def extract_grn_document(
                 result["warnings"].append(
                     "Line items were read from image-table and text OCR passes. Verify item names, quantities, and rates before saving."
                 )
-                if any(row.get("match_status") == "unmatched" for row in merged_items):
+                if any(row.get("match_status") == "unmatched" for row in image_items):
                     result["warnings"].append(
                         "One or more invoice descriptions could not be matched confidently to the item master."
                     )
