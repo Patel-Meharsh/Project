@@ -616,6 +616,16 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                         kinds.setdefault(kind, []).append(word)
                 numeric_kinds = set(kinds) & {"qty", "rate", "amount"}
                 if "description" in kinds and len(numeric_kinds) >= 2:
+                    # For multi-word headers, anchor description at the first
+                    # recognized word instead of averaging "Description" and "Goods".
+                    if len(kinds["description"]) > 1:
+                        kinds["description"] = [min(kinds["description"], key=lambda w: w["x0"])]
+                    # "GST Rate" is not the item unit-rate column.
+                    if "gst" in kinds and "qty" in kinds and "rate" in kinds:
+                        qty_x = sum((w["x0"] + w["x1"]) / 2 for w in kinds["qty"]) / len(kinds["qty"])
+                        real_rates = [w for w in kinds["rate"] if (w["x0"] + w["x1"]) / 2 > qty_x]
+                        if real_rates:
+                            kinds["rate"] = real_rates
                     header = {kind: sum((w["x0"] + w["x1"]) / 2 for w in group) / len(group)
                               for kind, group in kinds.items()}
                     header_row_index = row_index
@@ -631,6 +641,13 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                         if kind:
                             labels.setdefault(kind, []).append(word)
                     if "description" in labels and {"qty", "amount"}.issubset(labels) and "rate" in labels:
+                        if len(labels["description"]) > 1:
+                            labels["description"] = [min(labels["description"], key=lambda w: w["x0"])]
+                        if "gst" in labels and "qty" in labels:
+                            qty_x = sum((w["x0"] + w["x1"]) / 2 for w in labels["qty"]) / len(labels["qty"])
+                            real_rates = [w for w in labels["rate"] if (w["x0"] + w["x1"]) / 2 > qty_x]
+                            if real_rates:
+                                labels["rate"] = real_rates
                         header = {kind: sum((w["x0"] + w["x1"]) / 2 for w in group) / len(group)
                                   for kind, group in labels.items()}
                         header_row_index = row_index
