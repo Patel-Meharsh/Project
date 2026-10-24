@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Treemap } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { dashboardApi, budgetCalcApi } from '../lib/api'
 import { fmtCurrency, fmtNum, CATEGORY_COLORS } from '../lib/utils'
 import { Spinner } from '../components/UI'
@@ -206,47 +206,40 @@ export default function Dashboard() {
             <div className="panel-body dashboard-treemap-body">
               {totalCategorySpend > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <Treemap
-                    data={categoryPieData.map(item => ({ name: item.name, size: item.value, value: item.value, fill: item.color }))}
-                    dataKey="size"
-                    nameKey="name"
-                    stroke="#ffffff"
-                    strokeWidth={3}
-                    aspectRatio={1.5}
-                    content={({ x = 0, y = 0, width = 0, height = 0, name = '', value, size, fill }) => {
-                      const safeName = typeof name === 'string' ? name : ''
-                      const amount = Number(value ?? size) || 0
-                      if (width <= 0 || height <= 0) return null
-                      const share = totalCategorySpend > 0 ? (amount / totalCategorySpend) * 100 : 0
-                      const showLabel = safeName.length > 0 && width > 75 && height > 42
-                      return (
-                        <g>
-                          <rect x={x} y={y} width={width} height={height} fill={fill || '#94a3b8'} stroke="#ffffff" strokeWidth={3} />
-                          {showLabel && (
-                            <>
-                              <text x={x + 10} y={y + 20} fill="#ffffff" fontSize={11.5} fontWeight={600}>
-                                {safeName.length > 22 ? `${safeName.slice(0, 19)}…` : safeName}
-                              </text>
-                              {height > 62 && (
-                                <text x={x + 10} y={y + 38} fill="#ffffff" fontSize={11}>
-                                  {fmtCurrency(amount)} · {share.toFixed(1)}%
-                                </text>
-                              )}
-                            </>
-                          )}
-                        </g>
-                      )
-                    }}
+                  <BarChart
+                    data={categoryPieData}
+                    layout="vertical"
+                    margin={{ top: 6, right: 18, left: 8, bottom: 6 }}
+                    barCategoryGap="22%"
                   >
+                    <XAxis
+                      type="number"
+                      tick={{ fontSize: 10, fill: '#94a3b8' }}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={value => fmtCurrency(value)}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      width={112}
+                      tick={{ fontSize: 11, fill: '#64748b' }}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={value => String(value).length > 18 ? `${String(value).slice(0, 16)}…` : value}
+                    />
                     <Tooltip
                       formatter={(value, name, props) => {
                         const amount = Number(value) || 0
                         const share = totalCategorySpend > 0 ? (amount / totalCategorySpend) * 100 : 0
                         return [`${fmtCurrency(amount)} (${share.toFixed(1)}%)`, props?.payload?.name || name || 'Category']
                       }}
-                      contentStyle={{ borderRadius:10, border:'1px solid #edf0f7', fontSize:12 }}
+                      contentStyle={{ borderRadius: 10, border: '1px solid #edf0f7', fontSize: 12 }}
                     />
-                  </Treemap>
+                    <Bar dataKey="value" name="Spend" radius={[0, 6, 6, 0]} maxBarSize={28}>
+                      {categoryPieData.map(item => <Cell key={item.name} fill={item.color} />)}
+                    </Bar>
+                  </BarChart>
                 </ResponsiveContainer>
               ) : (
                 <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'#94a3b8', fontSize:13 }}>
