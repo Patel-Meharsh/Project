@@ -1761,3 +1761,102 @@ button, input, select, textarea {
     gap: 10px;
   }
 }
+
+
+/* Compact responsive layout for the dashboard reorder alert. */
+.dashboard-reorder-alert {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.dashboard-reorder-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  line-height: 1.4;
+}
+
+.dashboard-reorder-heading strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-reorder-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dashboard-reorder-item,
+.dashboard-reorder-more {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  box-sizing: border-box;
+  border-radius: 5px;
+  padding: 5px 8px;
+  margin: 0 !important;
+  font-size: 12px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-reorder-item {
+  background: #fecaca;
+}
+
+.dashboard-reorder-more {
+  opacity: 0.75;
+}
+
+.dashboard-raise-pr {
+  justify-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  min-height: 40px;
+  margin: 0 !important;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .dashboard-reorder-alert {
+    padding: 12px !important;
+    gap: 9px;
+  }
+
+  .dashboard-reorder-items {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .dashboard-reorder-item,
+  .dashboard-reorder-more {
+    flex: 0 1 auto;
+  }
+
+  .dashboard-raise-pr {
+    margin-top: 1px !important;
+  }
+}
+
+@media (max-width: 360px) {
+  .dashboard-reorder-alert {
+    padding: 10px !important;
+  }
+
+  .dashboard-reorder-heading {
+    align-items: flex-start;
+  }
+
+  .dashboard-reorder-item,
+  .dashboard-reorder-more {
+    font-size: 11px;
+    padding: 4px 6px;
+  }
+}
