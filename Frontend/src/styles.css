@@ -1653,3 +1653,111 @@ button, input, select, textarea {
     max-width: 100%;
   }
 }
+
+
+/* Dashboard-only mobile polish: make reorder alerts readable and keep actions tappable. */
+@media (max-width: 768px) {
+  .dashboard-reorder-alert {
+    box-sizing: border-box;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    justify-items: stretch;
+    gap: 10px;
+    width: 100%;
+    min-width: 0;
+    padding: 14px !important;
+    margin-bottom: 14px !important;
+    overflow-wrap: anywhere;
+  }
+
+  .dashboard-reorder-alert > strong {
+    display: block;
+    min-width: 0;
+    line-height: 1.45;
+  }
+
+  .dashboard-reorder-alert > span {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    line-height: 1.4;
+    margin: 0 !important;
+    padding: 5px 8px !important;
+    justify-self: start;
+  }
+
+  .dashboard-reorder-alert > button {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    max-width: 100%;
+    min-height: 40px;
+    margin: 2px 0 0 !important;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .dashboard-four-card-layout,
+  .dashboard-card-column,
+  .dashboard-card-column-left,
+  .dashboard-card-column-right {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .dashboard-quick-actions .panel-body > div {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .dashboard-quick-actions .dash-nav-card {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding: 12px;
+  }
+
+  .dashboard-quick-actions .dash-nav-card > div:last-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .dashboard-reorder-panel .panel-header,
+  .dashboard-annual-budget .panel-header {
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .dashboard-reorder-panel .panel-header .btn,
+  .dashboard-annual-budget .panel-header .btn {
+    flex: 0 0 auto;
+    white-space: normal;
+  }
+
+  .dashboard-reorder-panel .panel-body > div[style*="display:flex"] {
+    gap: 8px !important;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+}
+
+@media (max-width: 390px) {
+  .dashboard-reorder-alert {
+    padding: 12px !important;
+  }
+
+  .dashboard-reorder-alert > span {
+    font-size: 11px !important;
+  }
+
+  .dashboard-reorder-alert > button {
+    min-height: 42px;
+  }
+
+  .dashboard-quick-actions .dash-nav-card {
+    gap: 10px;
+  }
+}
