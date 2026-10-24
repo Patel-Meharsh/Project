@@ -1763,12 +1763,26 @@ button, input, select, textarea {
 }
 
 
-/* Compact responsive layout for the dashboard reorder alert. */
+/* Responsive reorder alert: keep the action beside the items when space allows. */
 .dashboard-reorder-alert {
-  display: grid !important;
-  grid-template-columns: minmax(0, 1fr);
+  display: flex !important;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
   min-width: 0;
+}
+.dashboard-reorder-heading {
+  flex: 0 0 auto;
+}
+.dashboard-reorder-items {
+  flex: 1 1 260px;
+}
+.dashboard-raise-pr {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 110px;
+  margin-left: auto !important;
 }
 
 .dashboard-reorder-heading {
@@ -1858,5 +1872,49 @@ button, input, select, textarea {
   .dashboard-reorder-more {
     font-size: 11px;
     padding: 4px 6px;
+  }
+}
+
+
+/* Keep the Raise PR action inline on wider screens, but let it wrap cleanly on phones. */
+@media (min-width: 769px) {
+  .dashboard-reorder-alert {
+    display: flex !important;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .dashboard-reorder-items {
+    flex: 1 1 260px;
+  }
+
+  .dashboard-raise-pr {
+    width: auto !important;
+    flex: 0 0 auto;
+    margin-left: auto !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard-reorder-alert {
+    display: flex !important;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .dashboard-reorder-heading {
+    flex: 1 1 100%;
+  }
+
+  .dashboard-reorder-items {
+    flex: 1 1 100%;
+  }
+
+  .dashboard-raise-pr {
+    flex: 1 1 100%;
+    width: 100% !important;
+    margin-left: 0 !important;
   }
 }
