@@ -88,10 +88,17 @@ export default function Dashboard() {
         {/* Reorder alert banner */}
         {reorders.length > 0 && (
           <div className="alert-strip danger dashboard-reorder-alert" style={{ marginBottom:20 }}>
-            ⚠️ <strong>{reorders.length} item{reorders.length>1?'s':''} below reorder level:</strong>{' '}
-            {reorders.slice(0,3).map(r=><span key={r.code} style={{ background:'#fecaca', borderRadius:4, padding:'1px 6px', margin:'0 3px', fontSize:12 }}>{r.name} ({r.closing} left)</span>)}
-            {reorders.length > 3 && <span style={{ fontSize:12, opacity:0.7 }}>+{reorders.length-3} more</span>}
-            <button className="btn btn-sm btn-danger" style={{ marginLeft:'auto' }} onClick={()=>navigate('/procurement/pr')}>Raise PR →</button>
+            <div className="dashboard-reorder-heading">
+              <span aria-hidden="true">⚠️</span>
+              <strong>{reorders.length} item{reorders.length>1?'s':''} below reorder level:</strong>
+            </div>
+            <div className="dashboard-reorder-items">
+              {reorders.slice(0,3).map(r=>(
+                <span key={r.code} className="dashboard-reorder-item">{r.name} ({r.closing} left)</span>
+              ))}
+              {reorders.length > 3 && <span className="dashboard-reorder-more">+{reorders.length-3} more</span>}
+            </div>
+            <button className="btn btn-sm btn-danger dashboard-raise-pr" onClick={()=>navigate('/procurement/pr')}>Raise PR →</button>
           </div>
         )}
 
