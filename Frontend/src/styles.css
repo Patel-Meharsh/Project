@@ -1128,21 +1128,21 @@ thead th { transition: background 0.12s, color 0.12s; }
 
   /* Budget page's KPI grids are inline-styled, so explicitly override their
      column templates on small screens without changing the desktop layout. */
-  .page-content > div[style*="grid-template-columns: repeat(5,1fr)"],
-  .page-content > div[style*="grid-template-columns: repeat(4,1fr) 180px"] {
+  .page-content > div[style*="repeat(5"],
+  .page-content > div[style*="180px"] {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     gap: 8px !important;
     margin-bottom: 16px !important;
   }
 
-  .page-content > div[style*="grid-template-columns: repeat(5,1fr)"] > div,
-  .page-content > div[style*="grid-template-columns: repeat(4,1fr) 180px"] > div {
+  .page-content > div[style*="repeat(5"] > div,
+  .page-content > div[style*="180px"] > div {
     min-width: 0;
     padding: 12px !important;
     overflow-wrap: anywhere;
   }
 
-  .page-content > div[style*="grid-template-columns: repeat(4,1fr) 180px"] > div:last-child {
+  .page-content > div[style*="180px"] > div:last-child {
     grid-column: 1 / -1;
   }
 
