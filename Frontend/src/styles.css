@@ -1160,3 +1160,255 @@ thead th { transition: background 0.12s, color 0.12s; }
     min-width: 0;
   }
 }
+
+
+/* ── Site-wide mobile layout hardening ───────────────────────────────────────
+   Keep the shared header and common page components usable on every route.
+   These overrides intentionally affect only tablet/mobile breakpoints. */
+@media (max-width: 768px) {
+  .app-layout {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    padding-top: 0 !important;
+    margin-left: 0 !important;
+  }
+
+  .topbar {
+    box-sizing: border-box;
+    height: auto !important;
+    min-height: 0;
+    width: 100%;
+    padding: 12px 12px 12px 58px !important;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 10px;
+  }
+
+  .topbar-left {
+    flex: 0 1 auto;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .topbar-left h1 {
+    display: block;
+    max-width: 100%;
+    margin: 0;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    overflow-wrap: anywhere;
+    font-size: clamp(16px, 4.5vw, 19px);
+    line-height: 1.25;
+  }
+
+  .topbar-left p {
+    display: block !important;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.4;
+  }
+
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .topbar-right > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .header-search-wrap {
+    flex: 1 1 150px;
+    width: auto;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .topbar-search {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0 !important;
+    max-width: 100%;
+  }
+
+  .topbar-search input {
+    flex: 1 1 auto;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .topbar-search > span {
+    display: none;
+  }
+
+  .topbar-right .avatar {
+    flex: 0 0 32px;
+  }
+
+  .header-search-wrap > div[style*="position: absolute"] {
+    position: fixed !important;
+    top: 112px !important;
+    left: 10px !important;
+    right: 10px !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: calc(100dvh - 130px);
+    overflow-y: auto !important;
+  }
+
+  .page-content {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    padding: 16px 14px 28px;
+  }
+
+  .page-content > *,
+  .panel,
+  .panel-header,
+  .panel-body,
+  .table-wrap,
+  .filter-bar,
+  .form-grid,
+  .form-grid-3,
+  .info-grid,
+  .chart-grid,
+  .chart-grid-3,
+  .kpi-grid {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .chart-grid,
+  .chart-grid-3,
+  .form-grid,
+  .form-grid-3,
+  .info-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .chart-grid-3 .panel {
+    grid-column: auto !important;
+  }
+
+  .tabs-line,
+  .tabs {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tabs-line > *,
+  .tabs > * {
+    flex-shrink: 0;
+  }
+
+  .table-wrap {
+    width: 100%;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table-wrap table {
+    min-width: 680px;
+  }
+
+  .modal,
+  .modal-lg,
+  .slideover {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  img,
+  svg,
+  canvas,
+  video {
+    max-width: 100%;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    max-width: 100%;
+  }
+
+  .page-content [style*="display: flex"],
+  .page-content [style*="display:flex"] {
+    min-width: 0;
+  }
+
+  .page-content [style*="grid-template-columns"] {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar {
+    padding-right: 10px !important;
+    gap: 8px;
+  }
+
+  .topbar-left h1 {
+    font-size: 17px;
+  }
+
+  .topbar-left p {
+    font-size: 11px;
+  }
+
+  .topbar-right {
+    gap: 6px;
+  }
+
+  .topbar-right .btn,
+  .topbar-right button {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .page-content {
+    padding: 12px 10px 24px;
+  }
+
+  .panel-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .panel-header > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .table-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .table-header > * {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .modal-footer,
+  .slideover-footer {
+    gap: 8px;
+  }
+}
