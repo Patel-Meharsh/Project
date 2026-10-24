@@ -87,7 +87,7 @@ export default function Dashboard() {
 
         {/* Reorder alert banner */}
         {reorders.length > 0 && (
-          <div className="alert-strip danger" style={{ marginBottom:20 }}>
+          <div className="alert-strip danger dashboard-reorder-alert" style={{ marginBottom:20 }}>
             ⚠️ <strong>{reorders.length} item{reorders.length>1?'s':''} below reorder level:</strong>{' '}
             {reorders.slice(0,3).map(r=><span key={r.code} style={{ background:'#fecaca', borderRadius:4, padding:'1px 6px', margin:'0 3px', fontSize:12 }}>{r.name} ({r.closing} left)</span>)}
             {reorders.length > 3 && <span style={{ fontSize:12, opacity:0.7 }}>+{reorders.length-3} more</span>}
