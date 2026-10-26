@@ -1171,8 +1171,15 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
             if 4 <= len(candidate) <= 90 and re.search(r"[A-Za-z]{3,}", candidate) and not ignored_header.search(candidate):
                 vendor_text = candidate
                 break
+    # Accept common invoice date labels, including "Dated" on Indian invoices.
+    date_pattern = (
+        r"(\d{1,2}(?:st|nd|rd|th)?[./-]\d{1,2}[./-]\d{2,4}"
+        r"|\d{1,2}(?:st|nd|rd|th)?[-/ ]\w{3,9}[-/ ,]+\d{2,4}"
+        r"|\d{4}[./-]\d{1,2}[./-]\d{1,2})"
+    )
     date_raw = _first([
-        r"(?:(?:tax\s+)?invoice\s*)?(?:date|dated|bill\s+date)\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}[-/ ]\w{3,9}[-/ ]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})",
+        rf"\b(?:invoice\s+date|bill\s+date|date\s+of\s+invoice|dated|date)\b\s*[:\-]?\s*{date_pattern}",
+        rf"\b(?:invoice\s+date|bill\s+date|date\s+of\s+invoice|dated|date)\b[^\n]{{0,12}}\n\s*{date_pattern}",
         r"\b(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b",
     ], text)
     invoice_date = _parse_invoice_date(text)
@@ -1181,12 +1188,31 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     vendor_match = None
     normalized_text = _norm(text)
 
-    # GSTIN is a stronger identifier than OCR'd supplier names.
-    compact_text = re.sub(r"[^A-Z0-9]", "", text.upper())
+    # GSTIN is the strongest supplier identifier when present. Normalize OCR
+    # punctuation/spacing and inspect both labelled GSTIN/UIN values and
+    # standalone GSTIN-shaped tokens before falling back to supplier-name matching.
+    def normalize_gstin(value: str | None) -> str:
+        return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
+
+    gstin_pattern = r"[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]"
+    labelled_gstins = re.findall(
+        rf"(?i)\b(?:GSTIN(?:/UIN)?|GST\s*IN|UIN)\b\s*[:#\-]?\s*({gstin_pattern})",
+        text,
+    )
+    all_gstins = re.findall(gstin_pattern, text, re.I)
+    ocr_gstins = {normalize_gstin(value) for value in labelled_gstins + all_gstins}
+    master_gstins: dict[str, list[Any]] = {}
+    for vendor in vendors:
+        gstin = normalize_gstin(vendor.gst_no)
+        if gstin:
+            master_gstins.setdefault(gstin, []).append(vendor)
+
+    # Assign automatically only if exactly one vendor record matches. Duplicate
+    # GSTINs in the directory remain ambiguous and use the safe name fallback.
     gst_matches = [
-        vendor for vendor in vendors
-        if _norm(vendor.gst_no or "")
-        and _norm(vendor.gst_no or "").upper() in compact_text
+        vendor
+        for gstin in ocr_gstins
+        for vendor in master_gstins.get(gstin, [])
     ]
     if len(gst_matches) == 1:
         vendor_match = gst_matches[0]
