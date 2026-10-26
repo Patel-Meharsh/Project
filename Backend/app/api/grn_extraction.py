@@ -1391,6 +1391,9 @@ async def extract_grn_document(
         raise HTTPException(415, "Upload a receipt in JPG, JPEG, PNG, or PDF format.")
 
     text = ""
+    # Keep alternative header text separately from the candidate chosen for item parsing.
+    # A candidate that reads table rows well can still miss supplier/date header text.
+    supplemental_field_text = ""
     if content_type == "application/pdf":
         try:
             from pypdf import PdfReader
@@ -1402,6 +1405,7 @@ async def extract_grn_document(
 
             # Read embedded text first; scanned pages commonly return empty text.
             page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
+            supplemental_page_texts = list(page_texts)
             table_text_by_page: list[str] = ["" for _ in page_texts]
 
             # Extract table cells as row-shaped text where possible.
@@ -1417,6 +1421,12 @@ async def extract_grn_document(
                                     rows.append(" | ".join(cells))
                         if rows:
                             table_text_by_page[index] = "\n".join(rows)
+                supplemental_field_text = "\n".join(
+                    part for part in (
+                        "\n".join(supplemental_page_texts),
+                        "\n".join(value for value in table_text_by_page if value),
+                    ) if part
+                ).strip()
             except Exception:
                 # Table extraction is optional; OCR/text extraction must still run.
                 pass
@@ -1454,6 +1464,11 @@ async def extract_grn_document(
                         image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
                         ocr_text = _run_ocr_candidates(image, modes=(6, 4, 11))
                         if ocr_text:
+                            # Preserve OCR text for shared field extraction even when embedded
+                            # text wins item-row selection (or vice versa).
+                            supplemental_field_text = "\n".join(
+                                part for part in (supplemental_field_text, ocr_text) if part
+                            ).strip()
                             ocr_rows = [
                                 row for row in _extract_item_rows(ocr_text, db)
                                 if row.get("source") == "receipt_text"
@@ -1503,7 +1518,31 @@ async def extract_grn_document(
         except Exception as exc:
             raise HTTPException(400, "The image could not be processed. Try a clear PNG or JPG scan.") from exc
 
+    # Use the selected text for item parsing, but let the common field extractor
+    # inspect every available text source. This prevents choosing a table-focused
+    # candidate from accidentally discarding a better-read supplier/date header.
     result = _extract_fields(text, db)
+    if supplemental_field_text:
+        supplemental_result = _extract_fields(
+            "\n".join(part for part in (text, supplemental_field_text) if part), db
+        )
+        fields = result.get("fields", {})
+        supplemental_fields = supplemental_result.get("fields", {})
+        # Only replace missing header fields; never overwrite a populated field
+        # with a blank or an unmatched supplier candidate.
+        if not fields.get("grn_date") and supplemental_fields.get("grn_date"):
+            fields["grn_date"] = supplemental_fields["grn_date"]
+        if not fields.get("vendor_code") and supplemental_fields.get("vendor_code"):
+            fields["vendor_code"] = supplemental_fields["vendor_code"]
+            fields["vendor_name"] = supplemental_fields.get("vendor_name", fields.get("vendor_name", ""))
+        if not fields.get("invoice_no") and supplemental_fields.get("invoice_no"):
+            fields["invoice_no"] = supplemental_fields["invoice_no"]
+        if not fields.get("po_no") and supplemental_fields.get("po_no"):
+            fields["po_no"] = supplemental_fields["po_no"]
+        result["fields"] = fields
+        result["warnings"] = list(dict.fromkeys(
+            result.get("warnings", []) + supplemental_result.get("warnings", [])
+        ))
 
     # Photos/scans need the same column-aware strategy as digital PDFs. If the
     # OCR bounding boxes identify a table, use only those rows rather than
