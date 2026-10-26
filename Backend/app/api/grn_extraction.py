@@ -1535,7 +1535,7 @@ async def extract_grn_document(
     # candidate from accidentally discarding a better-read supplier/date header.
     # Shared keyword parser receives the same combined text regardless of PDF/image input.
     from app.api.grn_keyword_parser import extract_header_fields
-    combined_header_text = "\\n".join(part for part in (text, supplemental_field_text) if part)
+    combined_header_text = "\n".join(part for part in (text, supplemental_field_text) if part)
     keyword_fields = extract_header_fields(combined_header_text, db)
     result = _extract_fields(text, db)
     fields = result.get("fields", {})
