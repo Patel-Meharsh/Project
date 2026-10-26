@@ -1533,7 +1533,20 @@ async def extract_grn_document(
     # Use the selected text for item parsing, but let the common field extractor
     # inspect every available text source. This prevents choosing a table-focused
     # candidate from accidentally discarding a better-read supplier/date header.
+    # Shared keyword parser receives the same combined text regardless of PDF/image input.
+    from app.api.grn_keyword_parser import extract_header_fields
+    combined_header_text = "\\n".join(part for part in (text, supplemental_field_text) if part)
+    keyword_fields = extract_header_fields(combined_header_text, db)
     result = _extract_fields(text, db)
+    fields = result.get("fields", {})
+    for key in ("invoice_no", "po_no", "grn_date"):
+        if keyword_fields.get(key):
+            fields[key] = keyword_fields[key]
+    if keyword_fields.get("vendor_code"):
+        fields["vendor_code"] = keyword_fields["vendor_code"]
+        fields["vendor_name"] = keyword_fields.get("vendor_name") or fields.get("vendor_name", "")
+    elif keyword_fields.get("vendor_name") and not fields.get("vendor_name"):
+        fields["vendor_name"] = keyword_fields["vendor_name"]
     if supplemental_field_text:
         supplemental_result = _extract_fields(
             "\n".join(part for part in (text, supplemental_field_text) if part), db
