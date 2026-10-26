@@ -1105,17 +1105,29 @@ def _parse_invoice_date(text: str):
         rf"|\d{{1,2}}(?:st|nd|rd|th)?[\-/ ](?:{months})[\-/ ,]+\d{{2,4}}"
         rf"|\d{{4}}[./\- ]\d{{1,2}}[./\- ]\d{{1,2}})"
     )
+    date_label = r"(?:invoice\s+date|bill\s+date|date\s+of\s+invoice|dated|date)"
+    # Invoice layouts commonly print the label and value on separate lines:
+    #     Dated
+    #     5-Aug-26
+    # OCR may also insert spaces around hyphens or turn them into en/em dashes.
+    # Normalize those OCR variants before applying the date patterns.
+    normalized_text = text.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")
+    normalized_text = re.sub(r"(?<=\d)\s*-\s*(?=[A-Za-z])", "-", normalized_text)
+    normalized_text = re.sub(r"(?<=[A-Za-z])\s*-\s*(?=\d)", "-", normalized_text)
+
     label = re.compile(
-        rf"\b(?:invoice\s+date|bill\s+date|date\s+of\s+invoice|dated|date)\b\s*[:\-]?\s*({token})",
+        rf"\b{date_label}\b\s*[:#\-]?\s*({token})",
         re.I,
     )
-    candidates = [m.group(1) for m in label.finditer(text)]
+    candidates = [m.group(1) for m in label.finditer(normalized_text)]
     if not candidates:
+        # Allow a label on its own line, or short OCR punctuation/spacing,
+        # before the date on the next line.
         next_line = re.compile(
-            rf"\b(?:invoice\s+date|bill\s+date|date\s+of\s+invoice|dated|date)\b[^\n]{{0,12}}\n\s*({token})",
+            rf"\b{date_label}\b[^\S\n]*[:#\-]?[^\n]{{0,24}}\n\s*({token})",
             re.I,
         )
-        candidates = [m.group(1) for m in next_line.finditer(text)]
+        candidates = [m.group(1) for m in next_line.finditer(normalized_text)]
     if not candidates:
         candidates = re.findall(token, text, re.I)
 
