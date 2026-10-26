@@ -75,6 +75,18 @@ def _ocr_quality_score(text: str) -> float:
     score = (len(words) * 2.0) + (len(numbers) * 1.2) + (len(invoice_terms) * 2.5)
     score += readable_ratio * 8.0
     score -= noise * 1.5
+    # Balance table-heavy OCR against header-heavy OCR so the selected text
+    # retains supplier/date/GSTIN details as well as item rows.
+    header_terms = re.findall(
+        r"\\b(?:dated|invoice\\s*date|bill\\s*date|supplier|vendor|gstin|gst\\s*in|"
+        r"invoice\\s*(?:no|number)|purchase\\s*order|p\\.?\\s*o\\.?)\\b",
+        text, re.IGNORECASE,
+    )
+    score += len(header_terms) * 5.0
+    if re.search(r"\\b\\d{1,2}[-/ ](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-/ ,]+\\d{2,4}\\b", text, re.I):
+        score += 8.0
+    if re.search(r"\\b\\d{2}[A-Z]{5}\\d{4}[A-Z][0-9A-Z]Z[0-9A-Z]\\b", text, re.I):
+        score += 10.0
     row_like = 0
     lines = text.splitlines()
     for index, line in enumerate(lines):
