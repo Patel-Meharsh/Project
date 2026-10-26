@@ -1092,6 +1092,52 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
     return best_rows
 
 
+def _parse_invoice_date(text: str):
+    """Parse common invoice date formats, prioritizing explicitly labelled dates."""
+    import calendar
+
+    months = "|".join(
+        [calendar.month_name[i] for i in range(1, 13)] +
+        [calendar.month_abbr[i] for i in range(1, 13)]
+    )
+    token = (
+        rf"(?:\d{{1,2}}(?:st|nd|rd|th)?[./\- ]\d{{1,2}}[./\- ]\d{{2,4}}"
+        rf"|\d{{1,2}}(?:st|nd|rd|th)?[\-/ ](?:{months})[\-/ ,]+\d{{2,4}}"
+        rf"|\d{{4}}[./\- ]\d{{1,2}}[./\- ]\d{{1,2}})"
+    )
+    label = re.compile(
+        rf"\b(?:invoice\s+date|bill\s+date|date\s+of\s+invoice|dated|date)\b\s*[:\-]?\s*({token})",
+        re.I,
+    )
+    candidates = [m.group(1) for m in label.finditer(text)]
+    if not candidates:
+        next_line = re.compile(
+            rf"\b(?:invoice\s+date|bill\s+date|date\s+of\s+invoice|dated|date)\b[^\n]{{0,12}}\n\s*({token})",
+            re.I,
+        )
+        candidates = [m.group(1) for m in next_line.finditer(text)]
+    if not candidates:
+        candidates = re.findall(token, text, re.I)
+
+    formats = (
+        "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y", "%d-%m-%y", "%d.%m.%y",
+        "%d-%b-%Y", "%d-%b-%y", "%d/%b/%Y", "%d/%b/%y", "%d %b %Y", "%d %b %y",
+        "%d-%B-%Y", "%d-%B-%y", "%d %B %Y", "%d %B %y",
+        "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%m/%d/%Y",
+    )
+    for raw in candidates:
+        value = re.sub(r"(?i)(\d)(st|nd|rd|th)\b", r"\1", raw.strip())
+        value = re.sub(r"\s+", " ", value.replace(",", " ")).strip()
+        for fmt in formats:
+            try:
+                parsed = datetime.strptime(value, fmt).date()
+                if 1990 <= parsed.year <= datetime.now().year + 2:
+                    return parsed.isoformat()
+            except ValueError:
+                continue
+    return None
+
+
 def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     # Invoice labels vary by supplier and OCR may turn punctuation into spaces.
     # Capture the value after an explicit invoice/bill number label, including
@@ -1129,31 +1175,76 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
         r"(?:(?:tax\s+)?invoice\s*)?(?:date|dated|bill\s+date)\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}[-/ ]\w{3,9}[-/ ]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})",
         r"\b(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b",
     ], text)
-    invoice_date = None
-    if date_raw:
-        for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y", "%d-%m-%y", "%d.%m.%y", "%d-%b-%Y", "%d-%b-%y", "%d/%b/%Y", "%d/%b/%y", "%d %b %Y", "%d %b %y", "%d-%B-%Y", "%d-%B-%y", "%d %B %Y", "%d %B %y", "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%m/%d/%Y"):
-            try:
-                invoice_date = datetime.strptime(date_raw, fmt).date().isoformat()
-                break
-            except ValueError:
-                pass
+    invoice_date = _parse_invoice_date(text)
 
     vendors = db.query(models.VendorModel).all()
     vendor_match = None
-    if vendor_text:
-        norm = re.sub(r"[^a-z0-9]", "", vendor_text.lower())
-        matches = [v for v in vendors if re.sub(r"[^a-z0-9]", "", (v.name or "").lower()) in norm
-                   or norm in re.sub(r"[^a-z0-9]", "", (v.name or "").lower())]
+    normalized_text = _norm(text)
+
+    # GSTIN is a stronger identifier than OCR'd supplier names.
+    compact_text = re.sub(r"[^A-Z0-9]", "", text.upper())
+    gst_matches = [
+        vendor for vendor in vendors
+        if _norm(vendor.gst_no or "")
+        and _norm(vendor.gst_no or "").upper() in compact_text
+    ]
+    if len(gst_matches) == 1:
+        vendor_match = gst_matches[0]
+
+    # Try the explicit supplier field first.
+    if not vendor_match and vendor_text:
+        norm = _norm(vendor_text)
+        matches = [
+            vendor for vendor in vendors
+            if len(_norm(vendor.name or "")) >= 5
+            and (_norm(vendor.name or "") in norm or norm in _norm(vendor.name or ""))
+        ]
         if len(matches) == 1:
             vendor_match = matches[0]
-    # Many Indian tax invoices show the supplier name as a heading rather than
-    # using a literal "Vendor:" or "Supplier:" label. Match known vendor names
-    # anywhere in the document, but only accept a unique, meaningful match.
+
+    # Compare header lines to vendor-directory names to tolerate minor OCR errors.
     if not vendor_match:
-        normalized_text = _norm(text)
+        from difflib import SequenceMatcher
+
+        lines = [re.sub(r"\s+", " ", line).strip(" :|\t") for line in text.splitlines()]
+        candidates = [
+            line for line in lines[:25]
+            if 4 <= len(line) <= 100
+            and re.search(r"[A-Za-z]{3,}", line)
+            and not re.search(
+                r"invoice|tax invoice|bill no|invoice no|gstin|state code|date|dated|"
+                r"phone|mobile|email|www|page|amount|buyer|consignee|ship to|bill to|"
+                r"purchase order|description|quantity|rate|total", line, re.I,
+            )
+        ]
+        if vendor_text:
+            candidates.insert(0, vendor_text)
+
+        ranked = []
+        for vendor in vendors:
+            name = (vendor.name or "").strip()
+            normalized_name = _norm(name)
+            if len(normalized_name) < 5:
+                continue
+            tokens = {t for t in re.findall(r"[a-z0-9]+", name.lower()) if len(t) > 2}
+            best = 0.0
+            for candidate in candidates:
+                score = SequenceMatcher(None, normalized_name, _norm(candidate)).ratio()
+                candidate_tokens = {t for t in re.findall(r"[a-z0-9]+", candidate.lower()) if len(t) > 2}
+                if tokens:
+                    score = max(score, (len(tokens & candidate_tokens) / len(tokens)) * 0.92)
+                best = max(best, score)
+            if best >= 0.78:
+                ranked.append((best, vendor))
+        ranked.sort(key=lambda pair: pair[0], reverse=True)
+        if ranked and (len(ranked) == 1 or ranked[0][0] - ranked[1][0] >= 0.08):
+            vendor_match = ranked[0][1]
+
+    # Last fallback: exact normalized vendor name anywhere in OCR text.
+    if not vendor_match:
         named_matches = [
-            v for v in vendors
-            if len(_norm(v.name or "")) >= 5 and _norm(v.name or "") in normalized_text
+            vendor for vendor in vendors
+            if len(_norm(vendor.name or "")) >= 5 and _norm(vendor.name or "") in normalized_text
         ]
         if len(named_matches) == 1:
             vendor_match = named_matches[0]
