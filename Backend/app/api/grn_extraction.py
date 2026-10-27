@@ -295,7 +295,17 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
     lines: list[str] = []
     for raw_line in raw_lines:
         has_qty_unit = re.search(rf"(?<![A-Za-z]){number_re}\s*{unit_re}\b", raw_line, re.I)
-        if lines and has_qty_unit and not re.search(rf"{number_re}\s*{unit_re}\b", lines[-1], re.I):
+        # Never join two separately numbered invoice lines. OCR/text extraction
+        # can place the description and numeric cells in unusual orders, but a new
+        # row serial (e.g. 9 PVC WALL PLUGS) is a hard row boundary, not a continuation.
+        starts_numbered_row = bool(re.match(r"^\s*\d{1,3}[.)]?\s+(?=[A-Za-z])", raw_line))
+        previous_starts_numbered_row = bool(
+            lines and re.match(r"^\s*\d{1,3}[.)]?\s+(?=[A-Za-z])", lines[-1])
+        )
+        if (lines and has_qty_unit
+                and not starts_numbered_row
+                and not previous_starts_numbered_row
+                and not re.search(rf"{number_re}\s*{unit_re}\b", lines[-1], re.I)):
             previous = lines[-1]
             if (re.search(r"[A-Za-z]", previous)
                     and not re.search(r"\b(?:invoice|gstin|cgst|sgst|igst|total|round off|description|quantity|amount)\b", previous, re.I)
