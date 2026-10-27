@@ -677,7 +677,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
             # number from a neighboring column.
             column_centers = sorted(
                 (x, kind) for kind, x in header.items()
-                if kind in {"serial", "description", "qty", "rate", "amount", "unit", "hsn", "gst", "discount", "value_supply"}
+                if kind in {"description", "qty", "rate", "amount", "unit", "hsn", "gst", "discount", "value_supply"}
             )
             boundaries = [
                 (column_centers[i][0] + column_centers[i + 1][0]) / 2
