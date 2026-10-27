@@ -384,9 +384,9 @@ const createGRN = async () => {
 
   // validation
   if (!form.store_location) return alert('Store Location is required — stock cannot be updated without it.')
-  if (lineItems.some(r => !r.item_code.trim() && !r.item_name.trim())) {
+  if (lineItems.some(r => !String(r.item_name || '').trim() || !String(r.item_code || '').trim())) {
     setRowError(true)
-    return alert('Enter an item name for every line item. Missing items can be created in the Item Master when the GRN is saved.')
+    return alert('Every invoice line must be linked to an Item Master record. For unmatched items, complete the Add item to Item Master popup and click Save Item before saving the GRN.')
   }
   if (lineItems.some(r => !(Number(r.accepted_qty) > 0))) {
     return alert('Accepted Qty must be greater than 0 for all line items.')
@@ -597,7 +597,7 @@ const createGRN = async () => {
               </label>
             </div>
             <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:20 }}>
-              <button className="btn btn-outline" disabled={savingMasterItem} onClick={()=>{setItemMasterDraft(null);setPendingMasterIndexes([])}}>Skip item</button>
+              <button className="btn btn-outline" disabled={savingMasterItem} onClick={()=>{setItemMasterDraft(null);setPendingMasterIndexes([]);toast.error('Item setup cancelled. Each invoice line must be linked to an Item Master record before the GRN can be saved.')}}>Cancel item setup</button>
               <button className="btn btn-accent" disabled={savingMasterItem} onClick={saveNewMasterItem}>{savingMasterItem ? 'Saving…' : 'Save Item'}</button>
             </div>
           </div>
