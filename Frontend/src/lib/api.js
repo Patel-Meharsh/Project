@@ -112,8 +112,10 @@ export const grnApi = {
   getAll:  () => api.get('/grns').then(r => Array.isArray(r.data) ? r.data : []),
   create:  (data) => api.post('/grns', data).then(r => r.data),
   update:  (no, data) => api.put(`/grns/${no}`, data).then(r => r.data),
-  extractDocument: (file) => { const fd = new FormData(); fd.append('file', file); return api.post('/grns/extract-document', fd).then(r => r.data) },
-  discardExtraction: (id) => api.delete(`/grns/extractions/${id}`).then(r => r.data),
+  extractDocument: (file) => {
+    const fd = new FormData(); fd.append('file', file)
+    return api.post('/grns/extract-document', fd, { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
+  },
 }
 
 // ── ISSUANCE ──────────────────────────────────────────────────────────────────
