@@ -108,10 +108,16 @@ def parse_lines(rows):
     result=[]
     for row in rows[header+1:]:
         full=" ".join(w["text"] for w in row)
-        if re.search(r"\b(subtotal|grand total|invoice total|amount payable|round off)\b",full,re.I): break
+        # Stop at invoice summaries, amount-in-words, banking details and footer/terms.
+        if re.search(r"\\b(sub\\s*total|grand\\s*total|invoice\\s*total|amount\\s*payable|round\\s*off|amount\\s*in\\s*words|bank|terms\\s*(?:&|and)?\\s*conditions|authori[sz]ed\\s*signatory|total\\s*(?:tax|gst|amount))\\b",full,re.I):
+            break
         cells={f:" ".join(w["text"] for w in row if left <= (float(w["x0"])+float(w["x1"]))/2 < right).strip() for f,left,right in bounds}
         name=cells.get("item_name","").strip(" -:.")
+        # Strip the invoice's serial number from the description field.
+        name=re.sub(r"^\\s*\\d{1,3}\\s*[.)-]?\\s+", "", name)
         if not name: continue
+        if re.search(r"\\b(rs|rupees|only|hundred|thousand|lakh|lakhs|crore|bank|account|ifsc|branch)\\b",name,re.I):
+            break
         vals={}
         for f in ("qty","rate","amount"):
             m=NUM.search(cells.get(f,""))
