@@ -106,6 +106,9 @@ export default function GRN() {
   const [extractingDocument, setExtractingDocument] = useState(false)
   const [extractionResult, setExtractionResult] = useState(null)
   const [selectedDocumentName, setSelectedDocumentName] = useState('')
+  const [itemMasterDraft, setItemMasterDraft] = useState(null)
+  const [savingMasterItem, setSavingMasterItem] = useState(false)
+  const [pendingMasterIndexes, setPendingMasterIndexes] = useState([])
 
   const { user } = useAuth()
   const isAdmin = canDo(user?.role, 'admin')
@@ -291,11 +294,67 @@ const extractGRNDocument = async (file) => {
     // Replace existing rows even when no items were detected, so rows from an
     // earlier PO or receipt can never leak into this document's draft.
     setLineItems(suggestedRows.length ? suggestedRows : [emptyRow()])
+    // Queue each unmatched invoice row for explicit user-confirmed Item Master creation.
+    const unmatched = suggestedRows
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) => !row.item_code && row.item_name.trim())
+      .map(({ index }) => index)
+    setPendingMasterIndexes(unmatched)
+    if (unmatched.length) {
+      const first = suggestedRows[unmatched[0]]
+      setItemMasterDraft({ index: unmatched[0], name: first.item_name, category: '', uom: '', sub_category: '', gst_pct: 18 })
+    }
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
     toast.error(err.response?.data?.detail || 'Could not extract document details.')
   } finally {
     setExtractingDocument(false)
+  }
+}
+
+
+const saveNewMasterItem = async () => {
+  if (!itemMasterDraft) return
+  const name = (itemMasterDraft.name || '').trim()
+  if (!name) return toast.error('Enter an item name before saving.')
+  if (!itemMasterDraft.category) return toast.error('Select a category to generate the category-based item code.')
+  if (!itemMasterDraft.uom.trim()) return toast.error('Enter the unit of measurement (UOM).')
+  setSavingMasterItem(true)
+  try {
+    // Category-derived prefix keeps the generated code grouped by item category.
+    const prefix = itemMasterDraft.category
+      .split(/[^A-Za-z0-9]+/).filter(Boolean).map(part => part[0]).join('').toUpperCase().slice(0, 3) || 'ITM'
+    const code = await codeApi.next('item', prefix)
+    const created = await itemApi.create({
+      code, name, category: itemMasterDraft.category,
+      sub_category: itemMasterDraft.sub_category || null,
+      uom: itemMasterDraft.uom.trim(),
+      rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
+      gst_pct: Number(itemMasterDraft.gst_pct || 0),
+      status: 'Active',
+    })
+    const updated = [...lineItems]
+    updated[itemMasterDraft.index] = {
+      ...updated[itemMasterDraft.index],
+      item_code: created.code,
+      item_name: created.name,
+    }
+    setLineItems(updated)
+    await refetch()
+    toast.success(`Item ${created.code} added to Item Master.`)
+    const remaining = pendingMasterIndexes.filter(index => index !== itemMasterDraft.index)
+    setPendingMasterIndexes(remaining)
+    if (remaining.length) {
+      const nextIndex = remaining[0]
+      const nextRow = updated[nextIndex]
+      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, category: '', uom: '', sub_category: '', gst_pct: 18 })
+    } else {
+      setItemMasterDraft(null)
+    }
+  } catch (err) {
+    toast.error(err.response?.data?.detail || 'Could not create the item. Check your permissions and try again.')
+  } finally {
+    setSavingMasterItem(false)
   }
 }
 
@@ -487,7 +546,42 @@ const createGRN = async () => {
         </div>
 
         {/* Create GRN SlideOver */}
-        <SlideOver
+  
+      {itemMasterDraft && (
+        <div role="presentation" style={{ position:'fixed', inset:0, zIndex:1200, background:'rgba(15,23,42,.55)', display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="new-item-master-title" style={{ width:'min(560px, 100%)', maxHeight:'90vh', overflowY:'auto', background:'#fff', borderRadius:14, padding:22, boxShadow:'0 20px 60px rgba(0,0,0,.25)' }}>
+            <div style={{ fontSize:11, color:'#64748b', fontWeight:700, letterSpacing:'.06em', textTransform:'uppercase' }}>Invoice item {itemMasterDraft.index + 1} of {lineItems.length}</div>
+            <h2 id="new-item-master-title" style={{ margin:'5px 0 6px', fontSize:20 }}>Add item to Item Master</h2>
+            <p style={{ margin:'0 0 16px', color:'#64748b', fontSize:13 }}>No existing Item Master match was found. Review the details and click Save Item; the generated code will then fill this invoice row.</p>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+              <label style={{ gridColumn:'1 / -1', fontSize:12, color:'#475569' }}>Item name *
+                <input className="input" value={itemMasterDraft.name} onChange={e=>setItemMasterDraft(d=>({...d,name:e.target.value}))} style={{ marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Category *
+                <select className="input" value={itemMasterDraft.category} onChange={e=>setItemMasterDraft(d=>({...d,category:e.target.value}))} style={{ marginTop:4 }}>
+                  <option value="">Select category</option>
+                  {[...new Set(items.map(i=>i.category).filter(Boolean))].sort().map(category=><option key={category} value={category}>{category}</option>)}
+                  {['Cleaning','Electrical','Stationery','Washroom','Waste Management','General'].filter(category=>!items.some(i=>(i.category||'').toLowerCase()===category.toLowerCase())).map(category=><option key={category} value={category}>{category}</option>)}
+                </select>
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Unit of measurement *
+                <input className="input" placeholder="e.g. Nos, Pcs, Ltr, Kg" value={itemMasterDraft.uom} onChange={e=>setItemMasterDraft(d=>({...d,uom:e.target.value}))} style={{ marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Sub-category
+                <input className="input" value={itemMasterDraft.sub_category} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>GST %
+                <input className="input" type="number" min="0" max="100" value={itemMasterDraft.gst_pct} onChange={e=>setItemMasterDraft(d=>({...d,gst_pct:e.target.value}))} style={{ marginTop:4 }} />
+              </label>
+            </div>
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:20 }}>
+              <button className="btn btn-outline" disabled={savingMasterItem} onClick={()=>{setItemMasterDraft(null);setPendingMasterIndexes([])}}>Skip item</button>
+              <button className="btn btn-accent" disabled={savingMasterItem} onClick={saveNewMasterItem}>{savingMasterItem ? 'Saving…' : 'Save Item'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      <SlideOver
           open={showCreate || !!editTarget}
           onClose={closeSlideOver}
           title={editTarget ? `Edit Goods Receipt — ${editTarget.grn_no}` : 'Record Goods Receipt'}
