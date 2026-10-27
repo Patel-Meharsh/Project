@@ -68,11 +68,14 @@ export default function Items() {
   // Filters
   const groupFilterOptions = ['All', ...new Set(items.map(i => i.master_group_name || mgMap[i.master_group_id] || '').filter(Boolean))]
   const cats = ['All', ...new Set(items.map(i => i.category).filter(Boolean))]
+  // Natural item-code order: alphabetic prefixes first, with embedded numbers compared numerically (e.g. IT-2 before IT-10).
   const filtered = items.filter(i => {
-    const ms = !search || i.code.toLowerCase().includes(search.toLowerCase()) || i.name.toLowerCase().includes(search.toLowerCase())
+    const code = String(i.code || '')
+    const name = String(i.name || '')
+    const ms = !search || code.toLowerCase().includes(search.toLowerCase()) || name.toLowerCase().includes(search.toLowerCase())
     const gName = i.master_group_name || mgMap[i.master_group_id] || ''
     return ms && (catFilter === 'All' || i.category === catFilter) && (groupFilter === 'All' || gName === groupFilter)
-  })
+  }).sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), undefined, { numeric: true, sensitivity: 'base' }))
 
   const openCreate = async () => {
     const code = await codeApi.next('item')
