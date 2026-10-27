@@ -321,10 +321,32 @@ const saveNewMasterItem = async () => {
   if (!itemMasterDraft.uom.trim()) return toast.error('Enter the unit of measurement (UOM).')
   setSavingMasterItem(true)
   try {
-    // Category-derived prefix keeps the generated code grouped by item category.
-    const prefix = itemMasterDraft.category
-      .split(/[^A-Za-z0-9]+/).filter(Boolean).map(part => part[0]).join('').toUpperCase().slice(0, 3) || 'ITM'
-    const code = await codeApi.next('item', prefix)
+    // Reuse the established code prefix for this category (for example,
+    // an existing Electrical item EM-001 means the next item should be EM-002).
+    // Only derive a new prefix when this category has no coded items yet.
+    const categoryKey = itemMasterDraft.category.trim().toLowerCase()
+    const categoryItems = items.filter(item =>
+      (item.category || '').trim().toLowerCase() === categoryKey &&
+      /^([A-Z][A-Z0-9]*)-(\\d+)$/i.test(item.code || '')
+    )
+    const existingPrefixes = [...new Set(categoryItems.map(item =>
+      (item.code.match(/^([A-Z][A-Z0-9]*)-\\d+$/i) || [])[1]?.toUpperCase()
+    ).filter(Boolean))]
+    if (existingPrefixes.length > 1) {
+      return toast.error('This category uses multiple item-code prefixes. Please ask an admin to standardize the category code before creating another item.')
+    }
+    const categoryPrefix = existingPrefixes[0] || ({
+      electrical: 'EM',
+      'electrical & maintenance': 'EM',
+      'electrical and maintenance': 'EM',
+      cleaning: 'CL',
+      stationery: 'ST',
+      washroom: 'WS',
+      'waste management': 'WM',
+      general: 'GN',
+    }[categoryKey] || itemMasterDraft.category
+      .split(/[^A-Za-z0-9]+/).filter(Boolean).map(part => part[0]).join('').toUpperCase().slice(0, 3) || 'ITM')
+    const code = await codeApi.next('item', categoryPrefix)
     const created = await itemApi.create({
       code, name, category: itemMasterDraft.category,
       sub_category: itemMasterDraft.sub_category || null,
