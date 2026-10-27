@@ -96,7 +96,7 @@ def parse_lines(rows):
         found={}
         for w in row:
             n=norm(w["text"])
-            for field, names in aliases.items():
+            for field,names in aliases.items():
                 if n in names or any(n.startswith(a+" ") for a in names):
                     found.setdefault(field,(float(w["x0"])+float(w["x1"]))/2)
         if "item_name" in found and len(found)>=3:
@@ -104,29 +104,34 @@ def parse_lines(rows):
     if header is None: return []
     bounds=[]
     for i,(field,x) in enumerate(cols):
-        bounds.append((field, -1e9 if i==0 else (cols[i-1][1]+x)/2, 1e9 if i==len(cols)-1 else (x+cols[i+1][1])/2))
+        bounds.append((field,-1e9 if i==0 else (cols[i-1][1]+x)/2,1e9 if i==len(cols)-1 else (x+cols[i+1][1])/2))
     result=[]
     for row in rows[header+1:]:
         full=" ".join(w["text"] for w in row)
-        # Stop at invoice summaries, amount-in-words, banking details and footer/terms.
-        if re.search(r"\\b(sub\\s*total|grand\\s*total|invoice\\s*total|amount\\s*payable|round\\s*off|amount\\s*in\\s*words|bank|terms\\s*(?:&|and)?\\s*conditions|authori[sz]ed\\s*signatory|total\\s*(?:tax|gst|amount))\\b",full,re.I):
+        if re.search(r"\b(sub\s*total|grand\s*total|invoice\s*total|amount\s*payable|round\s*off|amount\s*in\s*words|bank|terms\s*(?:&|and)?\s*conditions|authori[sz]ed\s*signatory|total\s*(?:tax|gst|amount))\b",full,re.I):
             break
-        cells={f:" ".join(w["text"] for w in row if left <= (float(w["x0"])+float(w["x1"]))/2 < right).strip() for f,left,right in bounds}
+        cells={field:" ".join(w["text"] for w in row if left <= (float(w["x0"])+float(w["x1"]))/2 < right).strip() for field,left,right in bounds}
         name=cells.get("item_name","").strip(" -:.")
-        # Strip the invoice's serial number from the description field.
-        name=re.sub(r"^\\s*\\d{1,3}\\s*[.)-]?\\s+", "", name)
+        name=re.sub(r"^\s*\d{1,3}\s*[.)-]?\s+","",name)
         if not name: continue
-        if re.search(r"\\b(rs|rupees|only|hundred|thousand|lakh|lakhs|crore|bank|account|ifsc|branch)\\b",name,re.I):
+        if re.search(r"\b(rs|rupees|only|hundred|thousand|lakh|lakhs|crore|bank|account|ifsc|branch)\b",name,re.I):
             break
         vals={}
-        for f in ("qty","rate","amount"):
-            m=NUM.search(cells.get(f,""))
-            vals[f]=float(m.group(0).replace(",","")) if m else None
-        if not vals["qty"] or vals["qty"]<=0:
-            # Preserve wrapped descriptions rather than treating them as separate items.
-            if result and len(name)>1 and not NUM.search(full): result[-1]["item_name"] += " "+name
+        for field in ("qty","rate","amount"):
+            match=NUM.search(cells.get(field,""))
+            vals[field]=float(match.group(0).replace(",","")) if match else None
+        confidence=round(sum(w.get("confidence",.8) for w in row)/max(1,len(row)),3)
+        if vals["qty"] is None or vals["qty"]<=0:
+            # Keep plausible item rows for manual review instead of silently dropping them.
+            # Avoid treating standalone wrapped description lines as separate products.
+            has_numeric=bool(NUM.search(full))
+            looks_like_footer=bool(re.search(r"\b(page|phone|email|website|gstin|pan|cin|invoice|date)\b",name,re.I))
+            if result and not has_numeric and len(name)>1:
+                result[-1]["item_name"]=(result[-1]["item_name"]+" "+name).strip()
+            elif has_numeric and not looks_like_footer and len(name)>1:
+                result.append(dict(item_name=name,qty=None,unit=cells.get("unit",""),gst=cells.get("gst",""),rate=vals["rate"],amount=vals["amount"],confidence=min(confidence,0.45),needs_review=True))
             continue
-        result.append(dict(item_name=name,qty=vals["qty"],unit=cells.get("unit",""),gst=cells.get("gst",""),rate=vals["rate"],amount=vals["amount"],confidence=round(sum(w.get("confidence",.8) for w in row)/len(row),3)))
+        result.append(dict(item_name=name,qty=vals["qty"],unit=cells.get("unit",""),gst=cells.get("gst",""),rate=vals["rate"],amount=vals["amount"],confidence=confidence))
     return result
 
 def metadata(text):
