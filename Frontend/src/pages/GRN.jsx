@@ -302,7 +302,7 @@ const extractGRNDocument = async (file) => {
     setPendingMasterIndexes(unmatched)
     if (unmatched.length) {
       const first = suggestedRows[unmatched[0]]
-      setItemMasterDraft({ index: unmatched[0], name: first.item_name, category: '', uom: '', sub_category: '', gst_pct: 18 })
+      setItemMasterDraft({ index: unmatched[0], name: first.item_name, category: '', uom: '', vendor_name: fields.vendor_name || '', gst_pct: 18 })
     }
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
@@ -319,6 +319,8 @@ const saveNewMasterItem = async () => {
   if (!name) return toast.error('Enter an item name before saving.')
   if (!itemMasterDraft.category) return toast.error('Select a category to generate the category-based item code.')
   if (!itemMasterDraft.uom.trim()) return toast.error('Enter the unit of measurement (UOM).')
+  const vendorName = (itemMasterDraft.vendor_name || '').trim()
+  if (!vendorName) return toast.error('Enter the vendor name for this item.')
   setSavingMasterItem(true)
   try {
     // Reuse the established code prefix for this category (for example,
@@ -346,11 +348,27 @@ const saveNewMasterItem = async () => {
       general: 'GN',
     }[categoryKey] || itemMasterDraft.category
       .split(/[^A-Za-z0-9]+/).filter(Boolean).map(part => part[0]).join('').toUpperCase().slice(0, 3) || 'ITM')
+    // Reuse a vendor by normalized name. If it is new, create it only after
+    // the user explicitly clicks Save Item in this review popup.
+    const normalizeVendorName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    let linkedVendor = vendors.find(v =>
+      normalizeVendorName(v.name) === normalizeVendorName(vendorName)
+    )
+    if (!linkedVendor) {
+      const vendorCode = await codeApi.next('vendor')
+      linkedVendor = await vendorApi.create({
+        code: vendorCode,
+        name: vendorName,
+        category: itemMasterDraft.category,
+        status: 'Active',
+      })
+    }
+
     const code = await codeApi.next('item', categoryPrefix)
     const created = await itemApi.create({
       code, name, category: itemMasterDraft.category,
-      sub_category: itemMasterDraft.sub_category || null,
       uom: itemMasterDraft.uom.trim(),
+      vendor_code: linkedVendor.code,
       rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
       gst_pct: Number(itemMasterDraft.gst_pct || 0),
       status: 'Active',
@@ -360,6 +378,8 @@ const saveNewMasterItem = async () => {
       ...updated[itemMasterDraft.index],
       item_code: created.code,
       item_name: created.name,
+      vendor_code: linkedVendor.code,
+      vendor_name: linkedVendor.name,
     }
     setLineItems(updated)
     await refetch()
@@ -369,7 +389,7 @@ const saveNewMasterItem = async () => {
     if (remaining.length) {
       const nextIndex = remaining[0]
       const nextRow = updated[nextIndex]
-      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, category: '', uom: '', sub_category: '', gst_pct: 18 })
+      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, category: '', uom: '', vendor_name: nextRow.vendor_name || '', gst_pct: 18 })
     } else {
       setItemMasterDraft(null)
     }
@@ -589,8 +609,11 @@ const createGRN = async () => {
               <label style={{ fontSize:12, color:'#475569' }}>Unit of measurement *
                 <input className="input" placeholder="e.g. Nos, Pcs, Ltr, Kg" value={itemMasterDraft.uom} onChange={e=>setItemMasterDraft(d=>({...d,uom:e.target.value}))} style={{ marginTop:4 }} />
               </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Sub-category
-                <input className="input" value={itemMasterDraft.sub_category} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} />
+              <label style={{ fontSize:12, color:'#475569' }}>Vendor name *
+                <input className="input" placeholder="Enter supplier/vendor name" value={itemMasterDraft.vendor_name} onChange={e=>setItemMasterDraft(d=>({...d,vendor_name:e.target.value}))} style={{ marginTop:4 }} list="grn-item-vendor-options" />
+                <datalist id="grn-item-vendor-options">
+                  {vendors.map(v => <option key={v.code} value={v.name} />)}
+                </datalist>
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>GST %
                 <input className="input" type="number" min="0" max="100" value={itemMasterDraft.gst_pct} onChange={e=>setItemMasterDraft(d=>({...d,gst_pct:e.target.value}))} style={{ marginTop:4 }} />
