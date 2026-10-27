@@ -303,9 +303,9 @@ const createGRN = async () => {
 
   // validation
   if (!form.store_location) return alert('Store Location is required — stock cannot be updated without it.')
-  if (lineItems.some(r => !r.item_code.trim())) {
+  if (lineItems.some(r => !r.item_code.trim() && !r.item_name.trim())) {
     setRowError(true)
-    return alert('Item Code is required for all line items.')
+    return alert('Enter an item name for every line item. Missing items can be created in the Item Master when the GRN is saved.')
   }
   if (lineItems.some(r => !(Number(r.accepted_qty) > 0))) {
     return alert('Accepted Qty must be greater than 0 for all line items.')
