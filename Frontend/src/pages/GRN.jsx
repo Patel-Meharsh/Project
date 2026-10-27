@@ -103,6 +103,9 @@ export default function GRN() {
   const [editMode, setEditMode] = useState(false)
   const [editTarget, setEditTarget] = useState(null)
   const [viewGrn, setViewGrn] = useState(null)
+  const [extractionId, setExtractionId] = useState('')
+  const [extracting, setExtracting] = useState(false)
+  const [extractionWarnings, setExtractionWarnings] = useState([])
 
   const { user } = useAuth()
   const isAdmin = canDo(user?.role, 'admin')
@@ -161,6 +164,8 @@ export default function GRN() {
     setEditTarget(null)
     setForm(blankGRNForm())
     setLineItems([emptyRow()])
+    setExtractionId('')
+    setExtractionWarnings([])
     setRowError(false)
     try {
       const code = await codeApi.next('grn')
@@ -248,6 +253,7 @@ const createGRN = async () => {
   // NEW payload (this is what you were missing)
   const payload = {
     ...form,
+    extraction_id: extractionId || undefined,
     line_items: lineItems.map(r => ({
       item_code: r.item_code.trim(),
       item_name: r.item_name.trim(),
@@ -266,6 +272,10 @@ const createGRN = async () => {
     } else {
       await grnApi.create(payload)
       toast.success('GRN created')
+    }
+    if (extractionId) {
+      try { await grnApi.discardExtraction(extractionId) } catch (cleanupErr) { console.warn('Staged extraction will expire automatically', cleanupErr) }
+      setExtractionId('')
     }
   } catch (err) {
     toast.error(editTarget ? 'Failed to update GRN' : 'Failed to create GRN')
@@ -429,6 +439,15 @@ const createGRN = async () => {
           footer={<><button className="btn btn-outline" onClick={closeSlideOver}>Cancel</button><button className="btn btn-accent" onClick={createGRN}>{editTarget ? 'Update GRN' : 'Save GRN'}</button></>}
           wide>
           <FormGrid>
+            {/* Local-only OCR suggestions: nothing is saved until Save GRN. */}
+            {!editTarget && <div style={{ gridColumn:'1/-1', border:'1px solid #dbeafe', background:'#f8fbff', borderRadius:10, padding:14 }}>
+              <div style={{ fontWeight:600, fontSize:13.5, marginBottom:6 }}>Auto-fill from invoice (optional)</div>
+              <div style={{ fontSize:12, color:'#64748b', marginBottom:10 }}>PDF, JPG, JPEG or PNG · local OCR · review every suggested value before saving.</div>
+              <input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" disabled={extracting} onChange={e => { const file=e.target.files?.[0]; if(file) extractDocument(file); e.target.value='' }} />
+              {extracting && <div style={{ fontSize:12, marginTop:8 }}>Reading document and detecting table columns…</div>}
+              {extractionWarnings.map((warning,i) => <div key={i} style={{ color:'#b45309', fontSize:12, marginTop:8 }}>{warning}</div>)}
+              {extractionId && <div style={{ color:'#166534', fontSize:12, marginTop:8 }}>Suggestions staged temporarily. They are not saved to the GRN until you click Save GRN.</div>}
+            </div>}
             {/* ── Top fields ── */}
             <FormRow label="GRN Number" half><input className="input" value={form.grn_no} readOnly style={{ background:'#f8f9fc', color:'#64748b' }} /></FormRow>
             <FormRow label="GRN Date" half><input className="input" type="date" value={form.grn_date} onChange={e => setForm({...form, grn_date:e.target.value})} /></FormRow>
