@@ -749,9 +749,9 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 if len(_norm(description)) < 4:
                     continue
                 if re.search(
-                    r"\\b(?:software\\s+licen[cs]e|license\\s+key|product\\s+key|"
-                    r"terms\\s+and\\s+conditions|authori[sz]ed\\s+signatory|"
-                    r"computer\\s+generated|page\\s+\\d+\\s+of\\s+\\d+)\\b",
+                    r"\b(?:software\s+licen[cs]e|license\s+key|product\s+key|"
+                    r"terms\s+and\s+conditions|authori[sz]ed\s+signatory|"
+                    r"computer\s+generated|page\s+\d+\s+of\s+\d+)\\b",
                     description, re.I,
                 ):
                     continue
