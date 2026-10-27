@@ -539,6 +539,8 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
         token = re.sub(r"[^a-z]", "", value.lower())
         # Header aliases are normalized so punctuation, slashes and spacing do
         # not matter (e.g. "Description of Product / Service").
+        if token in {"no", "sr", "srno", "serial", "serialno", "sno", "itemno", "linenumber"}:
+            return "serial"
         if token in {
             "description", "particulars", "item", "items", "itemdescription",
             "descriptionofgoods", "descriptionofgoodsandservices",
@@ -675,7 +677,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
             # number from a neighboring column.
             column_centers = sorted(
                 (x, kind) for kind, x in header.items()
-                if kind in {"description", "qty", "rate", "amount", "unit", "hsn", "gst", "discount", "value_supply"}
+                if kind in {"serial", "description", "qty", "rate", "amount", "unit", "hsn", "gst", "discount", "value_supply"}
             )
             boundaries = [
                 (column_centers[i][0] + column_centers[i + 1][0]) / 2
@@ -711,6 +713,10 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                     kind = column_for((word["x0"] + word["x1"]) / 2)
                     if kind:
                         cells.setdefault(kind, []).append(word)
+                # The invoice serial-number column is often immediately to the
+                # left of the description column. If it is not excluded explicitly,
+                # adjacent serials (e.g. 8 and 9) can be prepended to the product text
+                # or pull words across the description boundary.
                 description_words = sorted(cells.get("description", []), key=lambda w: w["x0"])
                 description = " ".join(w["text"] for w in description_words).strip(" .:|-\t")
                 if not description or not re.search(r"[A-Za-z]{2,}", description):
