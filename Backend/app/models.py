@@ -345,3 +345,36 @@ class MasterGroupModel(Base):
     status      = Column(String, default="Active")
     created_at  = Column(String)      # ISO timestamp
     updated_at  = Column(String)      # ISO timestamp
+
+
+class GRNExtractionSessionModel(Base):
+    """Private staging session for reviewed GRN document suggestions; expires after 24 hours."""
+    __tablename__ = "grn_extraction_sessions"
+    id = Column(String, primary_key=True)
+    filename = Column(String, nullable=False)
+    created_at = Column(String, nullable=False, index=True)
+    invoice_no = Column(String)
+    invoice_date = Column(String)
+    po_no = Column(String)
+    gstin = Column(String)
+    vendor_code = Column(String)
+    vendor_name = Column(String)
+    vendor_confidence = Column(Float, default=0)
+    raw_text = Column(Text)
+    status = Column(String, default="pending")
+
+
+class GRNExtractionLineModel(Base):
+    """One staged row per invoice line; never shown in the normal inventory UI."""
+    __tablename__ = "grn_extraction_lines"
+    id = Column(String, primary_key=True)
+    extraction_id = Column(String, nullable=False, index=True)
+    line_no = Column(Integer, nullable=False)
+    item_name = Column(Text, nullable=False)
+    item_code = Column(String)
+    qty = Column(Float)
+    unit = Column(String)
+    gst = Column(String)
+    rate = Column(Float)
+    amount = Column(Float)
+    confidence = Column(Float, default=0)
