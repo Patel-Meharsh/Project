@@ -389,7 +389,7 @@ const saveNewMasterItem = async () => {
     if (remaining.length) {
       const nextIndex = remaining[0]
       const nextRow = updated[nextIndex]
-      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, category: '', uom: '', vendor_name: nextRow.vendor_name || '', gst_pct: 18 })
+      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, category: '', uom: '', vendor_name: nextRow.vendor_name || '', sub_category: '' })
     } else {
       setItemMasterDraft(null)
     }
