@@ -762,18 +762,8 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 gst_match = re.search(r"\d{1,2}(?:\.\d{1,2})?\s*%?", gst_text)
                 gst = _number(gst_match.group(0).replace("%", "")) if gst_match else None
 
-                # Materialize the temporary table row explicitly. This makes the
-                # selected invoice columns inspectable as a coherent record and
-                # prevents later form mapping from re-parsing joined page text.
-                temporary_table.append({
-                    "item_name": description,
-                    "qty": qty,
-                    "unit": unit,
-                    "gst": gst,
-                    "amt": amount,
-                    "rate": rate,
-                })
-
+                # Validate the row before it enters staging. The staging table is
+                # the single source of truth used below to build the GRN suggestions.
                 # A row must have a real quantity and unit rate in their own
                 # detected columns. Footer text, page headers, and unrelated numeric
                 # text must never become a GRN item merely because it is below the header.
@@ -792,26 +782,35 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                     description, re.I,
                 ):
                     continue
-                if amount is not None:
-                    expected = qty * rate
-                    # A mismatch is strong evidence that one of the detected
-                    # numeric columns is wrong. Keep the row only when it is
-                    # plausible; never repair a rate from unrelated text.
-                    if abs(expected - amount) > max(3.0, abs(amount) * 0.12):
-                        amount = None
-                matched = match_master(description)
-                extracted.append({
-                    "item_code": (matched.code or "") if matched else "",
+                # Do not discard the invoice amount merely because it differs from
+                # qty * rate: the printed amount may include GST or a line discount.
+                # Keep all extracted columns together in one staging row so that a
+                # later mapping step cannot accidentally pair values from adjacent rows.
+                temporary_table.append({
                     "item_name": description,
-                    "vendor_code": "",
-                    "vendor_name": "",
-                    "recd_qty": qty,
-                    "accepted_qty": None,
-                    "rate": rate,
+                    "qty": qty,
                     "unit": unit,
                     "gst": gst,
+                    "rate": rate,
                     "amt": amount,
-                    "line_amount": amount,
+                })
+
+            # Convert validated staging rows to GRN suggestions in a separate pass.
+            # Nothing in the form mapping re-parses the flattened OCR/PDF text.
+            for staged in temporary_table:
+                matched = match_master(staged["item_name"])
+                extracted.append({
+                    "item_code": (matched.code or "") if matched else "",
+                    "item_name": staged["item_name"],
+                    "vendor_code": "",
+                    "vendor_name": "",
+                    "recd_qty": staged["qty"],
+                    "accepted_qty": None,
+                    "rate": staged["rate"],
+                    "unit": staged["unit"],
+                    "gst": staged["gst"],
+                    "amt": staged["amt"],
+                    "line_amount": staged["amt"],
                     "match_status": "matched" if matched else "unmatched",
                     "source": "receipt_text",
                 })
