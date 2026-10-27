@@ -1239,25 +1239,12 @@ def get_grns(db: Session = Depends(get_db), current_user: models.UserModel = Dep
 @router.post("/grns")
 def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
     _require_role(current_user, "analyst")
-    # Resolve or create vendor/item master records in the same transaction as the GRN.
-    # Names are matched conservatively (normalized exact match only); ambiguous/blank names
-    # are rejected rather than creating duplicates or guessing a record.
+    # GRN saving must not silently create master records. New items/vendors are
+    # created only through the explicit Item Master popup before this request.
     import re as _re
 
     def _master_key(value):
         return _re.sub(r"[^a-z0-9]", "", (value or "").strip().lower())
-
-    def _next_master_code(model, prefix):
-        existing = [str(row[0] or "") for row in db.query(model.code).all()]
-        numbers = []
-        for code in existing:
-            match = _re.fullmatch(_re.escape(prefix) + r"-(\d+)", code, _re.I)
-            if match:
-                numbers.append(int(match.group(1)))
-        candidate = max(numbers, default=0) + 1
-        while db.query(model).filter(model.code == f"{prefix}-{candidate:04d}").first():
-            candidate += 1
-        return f"{prefix}-{candidate:04d}"
 
     line_items = data.pop("line_items", []) or []
     top_vendor_name = (data.get("vendor_name") or "").strip()
@@ -1265,9 +1252,7 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
     supplied_vendor_code = (data.get("vendor_code") or "").strip()
     vendor_name = top_vendor_name or next((name for name in line_vendor_names if name), "")
 
-    vendor = None
-    if supplied_vendor_code:
-        vendor = db.query(models.VendorModel).filter_by(code=supplied_vendor_code).first()
+    vendor = db.query(models.VendorModel).filter_by(code=supplied_vendor_code).first() if supplied_vendor_code else None
     if not vendor and vendor_name:
         target = _master_key(vendor_name)
         vendor_matches = [v for v in db.query(models.VendorModel).all()
@@ -1277,18 +1262,12 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
         elif len(vendor_matches) > 1:
             raise HTTPException(409, f"Multiple vendors match '{vendor_name}'. Select a vendor manually.")
         else:
-            vendor = models.VendorModel(
-                code=_next_master_code(models.VendorModel, "VND"),
-                name=vendor_name,
-                status="Active",
-            )
-            db.add(vendor)
-            db.flush()
+            raise HTTPException(422, f"Vendor '{vendor_name}' is not in Vendor Master. Create it from the item setup popup first.")
     if vendor:
         data["vendor_code"] = vendor.code
 
-    # Resolve each invoice row by item code first, then exact normalized name.
-    # New records get safe defaults; the invoice's printed rate/GST is preserved.
+    # Every line must already point to a real Item Master record. This prevents
+    # unreviewed OCR text from becoming a permanent master item during GRN save.
     for li in line_items:
         item_code = (li.get("item_code") or "").strip()
         item_name = (li.get("item_name") or "").strip()
@@ -1301,27 +1280,12 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
                 item = matches[0]
             elif len(matches) > 1:
                 raise HTTPException(409, f"Multiple items match '{item_name}'. Select an item manually.")
-            else:
-                if len(_re.findall(r"[A-Za-z]{2,}", item_name)) < 1 or len(item_name) < 3:
-                    raise HTTPException(422, f"Item name '{item_name}' is not clear enough to create a master record.")
-                item = models.ItemModel(
-                    code=_next_master_code(models.ItemModel, "ITM"),
-                    name=item_name,
-                    category="Uncategorized",
-                    uom=(li.get("uom") or data.get("uom") or None),
-                    vendor_code=vendor.code if vendor else (li.get("vendor_code") or None),
-                    rate=float(li.get("rate") or 0),
-                    gst_pct=18,
-                    status="Active",
-                )
-                db.add(item)
-                db.flush()
-        if item:
-            li["item_code"] = item.code
-            if not li.get("item_name"):
-                li["item_name"] = item.name
-            if vendor and not li.get("vendor_code"):
-                li["vendor_code"] = vendor.code
+        if not item:
+            raise HTTPException(422, f"Item '{item_name or item_code or 'Unnamed item'}' is not in Item Master. Complete Save Item in the review popup first.")
+        li["item_code"] = item.code
+        li["item_name"] = item.name
+        if vendor and not li.get("vendor_code"):
+            li["vendor_code"] = vendor.code
 
     for li in line_items:
         recd = float(li.get("recd_qty") or 0)
