@@ -103,9 +103,9 @@ export default function GRN() {
   const [editMode, setEditMode] = useState(false)
   const [editTarget, setEditTarget] = useState(null)
   const [viewGrn, setViewGrn] = useState(null)
-  const [extractionId, setExtractionId] = useState('')
-  const [extracting, setExtracting] = useState(false)
-  const [extractionWarnings, setExtractionWarnings] = useState([])
+  const [extractingDocument, setExtractingDocument] = useState(false)
+  const [extractionResult, setExtractionResult] = useState(null)
+  const [selectedDocumentName, setSelectedDocumentName] = useState('')
 
   const { user } = useAuth()
   const isAdmin = canDo(user?.role, 'admin')
@@ -149,6 +149,9 @@ export default function GRN() {
     setShowCreate(false)
     setEditTarget(null)
     setRowError(false)
+    setExtractionResult(null)
+    setExtractingDocument(false)
+    setSelectedDocumentName('')
   }
 
   // Always start a new GRN with a clean draft. Never spread the previous form
@@ -164,9 +167,10 @@ export default function GRN() {
     setEditTarget(null)
     setForm(blankGRNForm())
     setLineItems([emptyRow()])
-    setExtractionId('')
-    setExtractionWarnings([])
     setRowError(false)
+    setExtractionResult(null)
+    setExtractingDocument(false)
+    setSelectedDocumentName('')
     try {
       const code = await codeApi.next('grn')
       setForm(blank => ({ ...blank, grn_no: code }))
@@ -238,27 +242,61 @@ export default function GRN() {
     }
   }
 
-const extractDocument = async (file) => {
+const extractGRNDocument = async (file) => {
   if (!file) return
-  setExtracting(true)
+  setExtractingDocument(true)
+  setExtractionResult(null)
   try {
     const result = await grnApi.extractDocument(file)
-    setExtractionId(result.extraction_id || '')
-    setExtractionWarnings(result.warnings || [])
-    const meta = result.metadata || {}
-    setForm(prev => ({ ...prev, invoice_no: meta.invoice_no || prev.invoice_no, po_no: meta.po_no || prev.po_no,
-      grn_date: /^\\d{4}-\\d{2}-\\d{2}$/.test(meta.invoice_date || '') ? meta.invoice_date : prev.grn_date }))
-    if (Array.isArray(result.line_items) && result.line_items.length) {
-      setLineItems(result.line_items.map((li, idx) => ({ id: Date.now() + idx,
-        item_code: li.item_code || '', item_name: li.matched_item_name || li.item_name || '',
-        vendor_code: result.vendor?.vendor_code || '', vendor_name: result.vendor?.vendor_name || '',
-        recd_qty: Number(li.qty || 0), accepted_qty: Number(li.qty || 0), rate: Number(li.rate || 0),
-        invoice_amount: li.amount, unit: li.unit || '', gst: li.gst || '', confidence: li.confidence })))
-    }
-    toast.success(`Document processed: ${result.line_count || 0} line items detected`)
+    setExtractionResult(result)
+    const fields = result.fields || {}
+    // This document is the source for the draft: clear missing extracted values
+    // instead of silently retaining values from a previously selected PO/document.
+    setForm(f => ({
+      ...f,
+      invoice_no: fields.invoice_no || '',
+      po_no: fields.po_no || '',
+      // If this upload has no readable date, use today's date rather than keeping
+      // a date extracted from a different receipt uploaded earlier in this draft.
+      grn_date: fields.grn_date || new Date().toISOString().split('T')[0],
+      store_location: fields.store_location || 'STORE-CH',
+    }))
+    const normalizeItemName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const matchedVendor = vendors.find(v => v.code === fields.vendor_code)
+    const suggestedRows = (result.line_items || []).map((row, idx) => {
+      // Backend OCR matching is primary. If OCR only returned the item name,
+      // use a conservative exact normalized-name match against the local item master.
+      const masterMatch = items.find(item =>
+        (row.item_code && item.code === row.item_code) ||
+        (normalizeItemName(row.item_name) &&
+          normalizeItemName(item.name) === normalizeItemName(row.item_name))
+      )
+      return {
+        id: Date.now() + idx,
+        item_code: row.item_code || masterMatch?.code || '',
+        item_name: masterMatch?.name || row.item_name || '',
+        vendor_code: fields.vendor_code || '',
+        vendor_name: matchedVendor?.name || fields.vendor_name || '',
+        recd_qty: row.recd_qty ?? '',
+        // Keep accepted quantity blank unless the receipt explicitly provides it:
+        // received quantity is not proof that every unit passed inspection.
+        // For this workflow, prefill accepted quantity from received quantity;
+        // the user can reduce it after inspection if some units are rejected.
+        accepted_qty: row.accepted_qty ?? row.recd_qty ?? '',
+        // The invoice's rate must not be replaced by a catalog default.
+        // Leave it blank when OCR could not reliably extract it.
+        rate: row.rate ?? '',
+      }
+    })
+    // Replace existing rows even when no items were detected, so rows from an
+    // earlier PO or receipt can never leak into this document's draft.
+    setLineItems(suggestedRows.length ? suggestedRows : [emptyRow()])
+    toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
-    toast.error('Document extraction failed: ' + (err.response?.data?.detail || err.message))
-  } finally { setExtracting(false) }
+    toast.error(err.response?.data?.detail || 'Could not extract document details.')
+  } finally {
+    setExtractingDocument(false)
+  }
 }
 
 const createGRN = async () => {
@@ -276,7 +314,6 @@ const createGRN = async () => {
   // NEW payload (this is what you were missing)
   const payload = {
     ...form,
-    extraction_id: extractionId || undefined,
     line_items: lineItems.map(r => ({
       item_code: r.item_code.trim(),
       item_name: r.item_name.trim(),
@@ -295,10 +332,6 @@ const createGRN = async () => {
     } else {
       await grnApi.create(payload)
       toast.success('GRN created')
-    }
-    if (extractionId) {
-      try { await grnApi.discardExtraction(extractionId) } catch (cleanupErr) { console.warn('Staged extraction will expire automatically', cleanupErr) }
-      setExtractionId('')
     }
   } catch (err) {
     toast.error(editTarget ? 'Failed to update GRN' : 'Failed to create GRN')
@@ -462,15 +495,46 @@ const createGRN = async () => {
           footer={<><button className="btn btn-outline" onClick={closeSlideOver}>Cancel</button><button className="btn btn-accent" onClick={createGRN}>{editTarget ? 'Update GRN' : 'Save GRN'}</button></>}
           wide>
           <FormGrid>
-            {/* Local-only OCR suggestions: nothing is saved until Save GRN. */}
-            {!editTarget && <div style={{ gridColumn:'1/-1', border:'1px solid #dbeafe', background:'#f8fbff', borderRadius:10, padding:14 }}>
-              <div style={{ fontWeight:600, fontSize:13.5, marginBottom:6 }}>Auto-fill from invoice (optional)</div>
-              <div style={{ fontSize:12, color:'#64748b', marginBottom:10 }}>PDF, JPG, JPEG or PNG · local OCR · review every suggested value before saving.</div>
-              <input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" disabled={extracting} onChange={e => { const file=e.target.files?.[0]; if(file) extractDocument(file); e.target.value='' }} />
-              {extracting && <div style={{ fontSize:12, marginTop:8 }}>Reading document and detecting table columns…</div>}
-              {extractionWarnings.map((warning,i) => <div key={i} style={{ color:'#b45309', fontSize:12, marginTop:8 }}>{warning}</div>)}
-              {extractionId && <div style={{ color:'#166534', fontSize:12, marginTop:8 }}>Suggestions staged temporarily. They are not saved to the GRN until you click Save GRN.</div>}
-            </div>}
+            <div style={{ gridColumn:'1/-1', border:'1px dashed #93c5fd', background:'#f8fbff', borderRadius:10, padding:14 }}>
+              <div style={{ fontWeight:700, fontSize:13.5, marginBottom:4 }}>Upload Receipt — auto-fill GRN</div>
+              <div style={{ fontSize:12, color:'#64748b', marginBottom:10 }}>Upload a receipt as JPG, JPEG, PNG, or PDF. Extracted values are suggestions only; nothing is saved until you review and click Save GRN.</div>
+              <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                <label style={{ display:'inline-flex', alignItems:'center', gap:6, cursor:extractingDocument ? 'not-allowed' : 'pointer', opacity:extractingDocument ? 0.6 : 1 }}>
+                  <span style={{ display:'inline-block', padding:'3px 8px', border:'1px solid #767676', borderRadius:2, background:'#efefef', color:'#111', fontSize:13, lineHeight:'20px' }}>
+                    Choose File
+                  </span>
+                  <span style={{ fontSize:13, color:'#202124' }}>
+                    {selectedDocumentName || 'No file chosen'}
+                  </span>
+                  <input
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
+                    disabled={extractingDocument}
+                    aria-label="Choose receipt file"
+                    style={{ position:'absolute', width:1, height:1, padding:0, margin:-1, overflow:'hidden', clip:'rect(0, 0, 0, 0)', whiteSpace:'nowrap', border:0 }}
+                    onChange={e => {
+                      const file = e.target.files?.[0]
+                      if (file) {
+                        setSelectedDocumentName(file.name)
+                        extractGRNDocument(file)
+                      }
+                      // Keep the selected filename in React state while allowing the same file to be reselected.
+                      e.target.value = ''
+                    }}
+                  />
+                </label>
+              </div>
+              {extractingDocument && <div style={{ marginTop:8, fontSize:12, color:'#2563eb' }}>Reading document…</div>}
+              {extractionResult && <div style={{ marginTop:10, fontSize:12 }}>
+                <div style={{ fontWeight:700, color:'#166534', marginBottom:4 }}>Document processed — manual review required</div>
+                {(extractionResult.warnings || []).length > 0 && <ul style={{ margin:'4px 0 0', paddingLeft:18, color:'#92400e' }}>
+                  {extractionResult.warnings.map((warning, i) => <li key={i}>{warning}</li>)}
+                </ul>}
+                <details style={{ marginTop:8 }}><summary style={{ cursor:'pointer', color:'#475569' }}>View extracted text preview</summary>
+                  <pre style={{ whiteSpace:'pre-wrap', maxHeight:180, overflow:'auto', fontSize:11, marginTop:6 }}>{extractionResult.extracted_text_preview || 'No readable text detected.'}</pre>
+                </details>
+              </div>}
+            </div>
             {/* ── Top fields ── */}
             <FormRow label="GRN Number" half><input className="input" value={form.grn_no} readOnly style={{ background:'#f8f9fc', color:'#64748b' }} /></FormRow>
             <FormRow label="GRN Date" half><input className="input" type="date" value={form.grn_date} onChange={e => setForm({...form, grn_date:e.target.value})} /></FormRow>
