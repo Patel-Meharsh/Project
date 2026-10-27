@@ -2,7 +2,6 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from .api.routes import router
-from .api.grn_extraction import router as grn_extraction_router
 from .database import engine
 from . import models
 from .config import settings
@@ -229,7 +228,6 @@ async def security_headers(request: Request, call_next):
     return response
 
 app.include_router(router, prefix="/api")
-app.include_router(grn_extraction_router, prefix="/api")
 
 @app.get("/")
 def root():
