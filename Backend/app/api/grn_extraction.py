@@ -716,6 +716,12 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 continue
             body_rows = close_row(body_words, max(y_tolerance, median_height * 0.8))
 
+            # Build a temporary, row-oriented table before mapping anything into
+            # the GRN form. Each source visual row becomes one record with explicit
+            # columns; later matching must never reconstruct rows from a flat text
+            # string. Keep GST and amount even when the current GRN form does not
+            # yet expose both fields.
+            temporary_table: list[dict[str, Any]] = []
             for row in body_rows:
                 # Build each cell according to dynamically inferred column boundaries.
                 cells: dict[str, list[dict[str, Any]]] = {}
@@ -744,6 +750,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 rate_text = cell_text("rate")
                 amount_text = cell_text("amount")
                 unit_text = cell_text("unit")
+                gst_text = cell_text("gst")
                 qty_match = number_re.search(qty_text)
                 rate_match = number_re.search(rate_text)
                 amount_matches = list(number_re.finditer(amount_text))
@@ -752,6 +759,20 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 amount = _number(amount_matches[-1].group(0)) if amount_matches else None
                 unit_match = unit_re.search((qty_text + " " + unit_text).strip())
                 unit = unit_match.group(1).upper().rstrip(".") if unit_match else ""
+                gst_match = re.search(r"\d{1,2}(?:\.\d{1,2})?\s*%?", gst_text)
+                gst = _number(gst_match.group(0).replace("%", "")) if gst_match else None
+
+                # Materialize the temporary table row explicitly. This makes the
+                # selected invoice columns inspectable as a coherent record and
+                # prevents later form mapping from re-parsing joined page text.
+                temporary_table.append({
+                    "item_name": description,
+                    "qty": qty,
+                    "unit": unit,
+                    "gst": gst,
+                    "amt": amount,
+                    "rate": rate,
+                })
 
                 # A row must have a real quantity and unit rate in their own
                 # detected columns. Footer text, page headers, and unrelated numeric
@@ -788,6 +809,8 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                     "accepted_qty": None,
                     "rate": rate,
                     "unit": unit,
+                    "gst": gst,
+                    "amt": amount,
                     "line_amount": amount,
                     "match_status": "matched" if matched else "unmatched",
                     "source": "receipt_text",
