@@ -737,18 +737,31 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 unit_match = unit_re.search((qty_text + " " + unit_text).strip())
                 unit = unit_match.group(1).upper().rstrip(".") if unit_match else ""
 
-                # Some tables print the UOM next to quantity; others put it in
-                # its own column. Never infer quantity/rate from description text.
-                if qty is None and rate is None and amount is None:
+                # A row must have a real quantity and unit rate in their own
+                # detected columns. Footer text, page headers, and unrelated numeric
+                # text must never become a GRN item merely because it is below the header.
+                # Fail closed when the row cannot be assigned to the required columns.
+                if qty is None or rate is None or qty <= 0 or rate < 0:
                     continue
-                if qty is not None and rate is not None and amount is not None:
+                qty_digits = str(int(qty)) if float(qty).is_integer() else ""
+                if qty >= 100000 or (4 <= len(qty_digits) <= 8 and qty == int(qty)):
+                    continue
+                if len(_norm(description)) < 4:
+                    continue
+                if re.search(
+                    r"\\b(?:software\\s+licen[cs]e|license\\s+key|product\\s+key|"
+                    r"terms\\s+and\\s+conditions|authori[sz]ed\\s+signatory|"
+                    r"computer\\s+generated|page\\s+\\d+\\s+of\\s+\\d+)\\b",
+                    description, re.I,
+                ):
+                    continue
+                if amount is not None:
                     expected = qty * rate
-                    # Tax-inclusive or rounded lines can differ slightly; only
-                    # clear values on a substantial mismatch, don't rewrite them.
-                    if abs(expected - amount) > max(3.0, abs(amount) * 0.08):
-                        # Preserve the source values for human review, and mark
-                        # uncertainty in the warning rather than silently blanking.
-                        pass
+                    # A mismatch is strong evidence that one of the detected
+                    # numeric columns is wrong. Keep the row only when it is
+                    # plausible; never repair a rate from unrelated text.
+                    if abs(expected - amount) > max(3.0, abs(amount) * 0.12):
+                        amount = None
                 matched = match_master(description)
                 extracted.append({
                     "item_code": (matched.code or "") if matched else "",
