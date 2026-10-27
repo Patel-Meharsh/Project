@@ -302,7 +302,7 @@ const extractGRNDocument = async (file) => {
     setPendingMasterIndexes(unmatched)
     if (unmatched.length) {
       const first = suggestedRows[unmatched[0]]
-      setItemMasterDraft({ index: unmatched[0], name: first.item_name, category: '', uom: '', vendor_name: fields.vendor_name || '', gst_pct: 18 })
+      setItemMasterDraft({ index: unmatched[0], name: first.item_name, category: '', uom: '', vendor_name: fields.vendor_name || '', sub_category: '' })
     }
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
@@ -370,7 +370,7 @@ const saveNewMasterItem = async () => {
       uom: itemMasterDraft.uom.trim(),
       vendor_code: linkedVendor.code,
       rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
-      gst_pct: Number(itemMasterDraft.gst_pct || 0),
+      sub_category: (itemMasterDraft.sub_category || '').trim() || null,
       status: 'Active',
     })
     const updated = [...lineItems]
@@ -615,8 +615,8 @@ const createGRN = async () => {
                   {vendors.map(v => <option key={v.code} value={v.name} />)}
                 </datalist>
               </label>
-              <label style={{ fontSize:12, color:'#475569' }}>GST %
-                <input className="input" type="number" min="0" max="100" value={itemMasterDraft.gst_pct} onChange={e=>setItemMasterDraft(d=>({...d,gst_pct:e.target.value}))} style={{ marginTop:4 }} />
+              <label style={{ fontSize:12, color:'#475569' }}>Sub-category
+                <input className="input" placeholder="Enter sub-category" value={itemMasterDraft.sub_category} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} />
               </label>
             </div>
             <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:20 }}>
