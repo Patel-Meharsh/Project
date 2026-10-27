@@ -238,6 +238,29 @@ export default function GRN() {
     }
   }
 
+const extractDocument = async (file) => {
+  if (!file) return
+  setExtracting(true)
+  try {
+    const result = await grnApi.extractDocument(file)
+    setExtractionId(result.extraction_id || '')
+    setExtractionWarnings(result.warnings || [])
+    const meta = result.metadata || {}
+    setForm(prev => ({ ...prev, invoice_no: meta.invoice_no || prev.invoice_no, po_no: meta.po_no || prev.po_no,
+      grn_date: /^\\d{4}-\\d{2}-\\d{2}$/.test(meta.invoice_date || '') ? meta.invoice_date : prev.grn_date }))
+    if (Array.isArray(result.line_items) && result.line_items.length) {
+      setLineItems(result.line_items.map((li, idx) => ({ id: Date.now() + idx,
+        item_code: li.item_code || '', item_name: li.matched_item_name || li.item_name || '',
+        vendor_code: result.vendor?.vendor_code || '', vendor_name: result.vendor?.vendor_name || '',
+        recd_qty: Number(li.qty || 0), accepted_qty: Number(li.qty || 0), rate: Number(li.rate || 0),
+        invoice_amount: li.amount, unit: li.unit || '', gst: li.gst || '', confidence: li.confidence })))
+    }
+    toast.success(`Document processed: ${result.line_count || 0} line items detected`)
+  } catch (err) {
+    toast.error('Document extraction failed: ' + (err.response?.data?.detail || err.message))
+  } finally { setExtracting(false) }
+}
+
 const createGRN = async () => {
 
   // validation
