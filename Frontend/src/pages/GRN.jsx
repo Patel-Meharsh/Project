@@ -327,10 +327,10 @@ const saveNewMasterItem = async () => {
     const categoryKey = itemMasterDraft.category.trim().toLowerCase()
     const categoryItems = items.filter(item =>
       (item.category || '').trim().toLowerCase() === categoryKey &&
-      /^([A-Z][A-Z0-9]*)-(\\d+)$/i.test(item.code || '')
+      /^([A-Z][A-Z0-9]*)-(\d+)$/i.test(item.code || '')
     )
     const existingPrefixes = [...new Set(categoryItems.map(item =>
-      (item.code.match(/^([A-Z][A-Z0-9]*)-\\d+$/i) || [])[1]?.toUpperCase()
+      (item.code.match(/^([A-Z][A-Z0-9]*)-\d+$/i) || [])[1]?.toUpperCase()
     ).filter(Boolean))]
     if (existingPrefixes.length > 1) {
       return toast.error('This category uses multiple item-code prefixes. Please ask an admin to standardize the category code before creating another item.')
