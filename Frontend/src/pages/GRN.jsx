@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import DeleteToolbar, { SelectTh, SelectTd } from '../components/DeleteToolbar'
 import { useDeleteMode } from '../hooks/useDeleteMode'
 import { deleteApi } from '../lib/api'
-import { grnApi, poApi, vendorApi, itemApi, codeApi, locationApi} from '../lib/api'
+import { grnApi, poApi, vendorApi, itemApi, codeApi, locationApi, categoryApi, masterGroupApi } from '../lib/api'
 import { fmtCurrency, fmtDate } from '../lib/utils'
 import { StatusBadge, Spinner, SearchInput, FormRow, FormGrid } from '../components/UI'
 import SlideOver from '../components/SlideOver'
@@ -245,6 +245,48 @@ export default function GRN() {
     }
   }
 
+// Conservative, local keyword classification for a new invoice item.
+const inferItemCategory = (name) => {
+  const value = String(name || '').toLowerCase()
+  const rules = [
+    ['Electrical', /\\b(cfl|led|bulb|light|wire|cable|switch|socket|mcb|fuse|fan|electrical)\\b/],
+    ['Hardware', /\\b(cement|screw|nut|bolt|nail|hinge|drill|hammer|spanner|wrench|pipe|fitting|hardware|lock|adhesive)\\b/],
+    ['Cleaning', /\\b(phenyl|phynil|lizol|harpic|detergent|bleach|cleaner|disinfectant)\\b/],
+    ['Washroom', /\\b(soap|tissue|napkin|urinal|toilet brush|sanitary|handwash)\\b/],
+    ['Stationery', /\\b(pen|pencil|paper|notebook|stapler|folder|marker)\\b/],
+    ['Waste Management', /\\b(garbage|dustbin|waste bag|bin liner|trash bag)\\b/],
+  ]
+  return rules.find(([, pattern]) => pattern.test(value))?.[0] || 'General'
+}
+
+const ensureInvoiceCategory = async (categoryName) => {
+  const norm = value => String(value || '').trim().toLowerCase()
+  let categories = await categoryApi.getAll()
+  let category = categories.find(entry => norm(entry.name) === norm(categoryName))
+  if (!category) {
+    try {
+      category = await categoryApi.create({ name: categoryName, master_group: categoryName, status: 'Active' })
+    } catch (error) {
+      categories = await categoryApi.getAll()
+      category = categories.find(entry => norm(entry.name) === norm(categoryName))
+      if (!category) throw error
+    }
+  }
+  let groups = await masterGroupApi.getAll()
+  if (!groups.some(entry => norm(entry.name) === norm(categoryName))) {
+    try {
+      await masterGroupApi.create({ name: categoryName, description: 'Created from GRN invoice item category', status: 'Active' })
+    } catch (error) {
+      groups = await masterGroupApi.getAll()
+      if (!groups.some(entry => norm(entry.name) === norm(categoryName))) throw error
+    }
+  }
+  if (category && norm(category.master_group) !== norm(categoryName)) {
+    try { await categoryApi.patch(category.id, { master_group: categoryName }) } catch { /* legacy category */ }
+  }
+  return categoryName
+}
+
 const extractGRNDocument = async (file) => {
   if (!file) return
   setExtractingDocument(true)
@@ -265,7 +307,15 @@ const extractGRNDocument = async (file) => {
       store_location: fields.store_location || 'STORE-CH',
     }))
     const normalizeItemName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-    const matchedVendor = vendors.find(v => v.code === fields.vendor_code)
+    let matchedVendor = vendors.find(v => v.code === fields.vendor_code)
+      || vendors.find(v => normalizeItemName(v.name) && normalizeItemName(v.name) === normalizeItemName(fields.vendor_name))
+    // Create a genuinely new supplier from a readable invoice header before
+    // item review. Never create a vendor when OCR did not identify a name.
+    if (!matchedVendor && String(fields.vendor_name || '').trim()) {
+      const vendorCode = await codeApi.next('vendor')
+      matchedVendor = await vendorApi.create({ code: vendorCode, name: String(fields.vendor_name).trim(), category: 'Invoice supplier', status: 'Active' })
+      await refetch()
+    }
     const suggestedRows = (result.line_items || []).map((row, idx) => {
       // Backend OCR matching is primary. If OCR only returned the item name,
       // use a conservative exact normalized-name match against the local item master.
@@ -278,7 +328,7 @@ const extractGRNDocument = async (file) => {
         id: Date.now() + idx,
         item_code: row.item_code || masterMatch?.code || '',
         item_name: masterMatch?.name || row.item_name || '',
-        vendor_code: fields.vendor_code || '',
+        vendor_code: matchedVendor?.code || fields.vendor_code || '',
         vendor_name: matchedVendor?.name || fields.vendor_name || '',
         recd_qty: row.recd_qty ?? '',
         // Keep accepted quantity blank unless the receipt explicitly provides it:
@@ -299,10 +349,16 @@ const extractGRNDocument = async (file) => {
       .map((row, index) => ({ row, index }))
       .filter(({ row }) => !row.item_code && row.item_name.trim())
       .map(({ index }) => index)
+    const inferredCategories = {}
+    for (const index of unmatched) {
+      inferredCategories[index] = await ensureInvoiceCategory(inferItemCategory(suggestedRows[index].item_name))
+    }
     setPendingMasterIndexes(unmatched)
     if (unmatched.length) {
-      const first = suggestedRows[unmatched[0]]
-      setItemMasterDraft({ index: unmatched[0], name: first.item_name, category: '', uom: '', vendor_name: fields.vendor_name || '', sub_category: '' })
+      const firstIndex = unmatched[0]
+      const first = suggestedRows[firstIndex]
+      setItemMasterDraft({ index: firstIndex, name: first.item_name, category: inferredCategories[firstIndex] || 'General', uom: '', vendor_name: matchedVendor?.name || fields.vendor_name || '', sub_category: '' })
+      await refetch()
     }
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
@@ -389,7 +445,7 @@ const saveNewMasterItem = async () => {
     if (remaining.length) {
       const nextIndex = remaining[0]
       const nextRow = updated[nextIndex]
-      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, category: '', uom: '', vendor_name: nextRow.vendor_name || '', sub_category: '' })
+      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, category: inferItemCategory(nextRow.item_name), uom: '', vendor_name: nextRow.vendor_name || '', sub_category: '' })
     } else {
       setItemMasterDraft(null)
     }
