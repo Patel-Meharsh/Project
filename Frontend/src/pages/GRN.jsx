@@ -344,8 +344,9 @@ const saveNewMasterItem = async () => {
   const name = (itemMasterDraft.name || '').trim()
   if (!name) return toast.error('Enter an item name before saving.')
   if (!itemMasterDraft.category) return toast.error('Select a category to generate the category-based item code.')
+  // Unit of measurement is optional: use the invoice unit when detected,
+  // otherwise allow the user to create the master item without blocking.
   const invoiceUnit = String(lineItems[itemMasterDraft.index]?.uom || itemMasterDraft.uom || '').trim()
-  if (!invoiceUnit) return toast.error('A unit could not be read from this invoice line. Correct the invoice extraction before creating this item; UOM is not entered manually.')
   const vendorName = (itemMasterDraft.vendor_name || '').trim()
   if (!vendorName) return toast.error('Enter the vendor name for this item.')
   setSavingMasterItem(true)
@@ -395,7 +396,6 @@ const saveNewMasterItem = async () => {
     const created = await itemApi.create({
       code, name, category: itemMasterDraft.category,
       uom: invoiceUnit,
-      sub_category: (itemMasterDraft.sub_category || '').trim() || null,
       vendor_code: linkedVendor.code,
       rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
       status: 'Active',
@@ -416,7 +416,7 @@ const saveNewMasterItem = async () => {
     if (remaining.length) {
       const nextIndex = remaining[0]
       const nextRow = updated[nextIndex]
-      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, ...suggestItemMasterDefaults(nextRow.item_name, items), uom: nextRow.uom || '', vendor_name: nextRow.vendor_name || '', sub_category: '' })
+      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, ...suggestItemMasterDefaults(nextRow.item_name, items), uom: nextRow.uom || '', vendor_name: nextRow.vendor_name || '' })
     } else {
       setItemMasterDraft(null)
     }
@@ -635,10 +635,7 @@ const createGRN = async () => {
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Unit of measurement (from invoice)
                 <input className="input" value={itemMasterDraft.uom || ''} readOnly aria-readonly="true" placeholder="Unit not detected in invoice" style={{ marginTop:4, background:'#f8fafc' }} />
-                {!itemMasterDraft.uom && <span style={{ display:'block', marginTop:4, color:'#b45309' }}>Unit was not detected. Item creation is blocked until the invoice extraction provides it.</span>}
-              </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Sub-category
-                <input className="input" value={itemMasterDraft.sub_category || ''} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} placeholder="Optional sub-category" />
+                {!itemMasterDraft.uom && <span style={{ display:'block', marginTop:4, color:'#64748b' }}>No unit detected; you can still save this item.</span>}
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Vendor name *
                 <input className="input" placeholder="Enter supplier/vendor name" value={itemMasterDraft.vendor_name} onChange={e=>setItemMasterDraft(d=>({...d,vendor_name:e.target.value}))} style={{ marginTop:4 }} list="grn-item-vendor-options" />
