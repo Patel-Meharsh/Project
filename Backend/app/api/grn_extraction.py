@@ -286,7 +286,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
 
     raw_lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
     masters = db.query(models.ItemModel).all()
-    unit_re = r"(?:BOTTLES?|BTL|PACKETS?|PKT|PIECES?|PCS?\.?|NOS?\.?|MTRS?|MET(?:RE|ER)S?|KILOGRAMS?|KGS?|GRAMS?|GMS?|LIT(?:RE|ER)S?|LTRS?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?|WATTS?|VOLTS?|W|V|M|G)"
+    unit_re = r"(?:BOTTLES?|BTL|PACKETS?|PKT|PIECES?|PCS?\.?|NOS?\.?|MILLIMETERS?|MILLIMETRES?|MM|CENTIMETERS?|CENTIMETRES?|CM|METERS?|METRES?|MTRS?|MTR|KILOGRAMS?|KGS?|KG|GRAMS?|GMS?|MILLILITERS?|MILLILITRES?|ML|LIT(?:RE|ER)S?|LTRS?|LTR|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?|WATTS?|VOLTS?|W|V|M|G)"
     number_re = r"\d[\d,]*(?:\.\d{1,2})?"
 
     # OCR frequently places a product description on one line and its HSN,
@@ -501,10 +501,10 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
     extracted: list[dict[str, Any]] = []
     number_re = re.compile(r"(?<![A-Za-z])[-+]?\d[\d,]*(?:\.\d{1,4})?")
     unit_re = re.compile(
-        r"\b(BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MTR|MET(?:RE|ER)S?|"
-        r"KGS?|GMS?|LTRS?|LIT(?:RE|ER)S?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?|"
+        r"\b(BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MILLIMETERS?|MILLIMETRES?|MM|CENTIMETERS?|CENTIMETRES?|CM|METERS?|METRES?|MTRS?|MTR|"
+        r"KILOGRAMS?|KGS?|KG|GRAMS?|GMS?|MILLILITERS?|MILLILITRES?|ML|LIT(?:RE|ER)S?|LTRS?|LTR|L|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?|"
         r"DOZ(?:EN)?|BAGS?|REAMS?|TUBES?|CANS?|JARS?|UNITS?|SQ\.?\s*FT|"
-        r"SQ\.?\s*M|FT|FEET|INCH(?:ES)?|MM|CM|LBS?|TONS?)\b",
+        r"SQ\.?\s*M|FT|FEET|INCH(?:ES)?|IN|MM|CM|LBS?|TONS?)\b",
         re.I,
     )
 
@@ -794,8 +794,8 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
     masters = db.query(models.ItemModel).all()
     number_re = re.compile(r"(?<![A-Za-z])\d[\d,]*(?:\.\d{1,4})?")
     unit_re = re.compile(
-        r"\b(BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MTR|MET(?:RE|ER)S?|"
-        r"KGS?|GMS?|LTRS?|LIT(?:RE|ER)S?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?|"
+        r"\b(BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MILLIMETERS?|MILLIMETRES?|MM|CENTIMETERS?|CENTIMETRES?|CM|METERS?|METRES?|MTRS?|MTR|"
+        r"KILOGRAMS?|KGS?|KG|GRAMS?|GMS?|MILLILITERS?|MILLILITRES?|ML|LIT(?:RE|ER)S?|LTRS?|LTR|L|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?|"
         r"DOZ(?:EN)?|BAGS?|REAMS?|TUBES?|CANS?|JARS?|UNITS?|MM|CM|FT|FEET|"
         r"INCH(?:ES)?|SQ\.?\s*FT|SQ\.?\s*M)\b", re.I
     )
