@@ -249,12 +249,12 @@ export default function GRN() {
 const inferItemCategory = (name) => {
   const value = String(name || '').toLowerCase()
   const rules = [
-    ['Electrical', /\\b(cfl|led|bulb|light|wire|cable|switch|socket|mcb|fuse|fan|electrical)\\b/],
-    ['Hardware', /\\b(cement|screw|nut|bolt|nail|hinge|drill|hammer|spanner|wrench|pipe|fitting|hardware|lock|adhesive)\\b/],
-    ['Cleaning', /\\b(phenyl|phynil|lizol|harpic|detergent|bleach|cleaner|disinfectant)\\b/],
-    ['Washroom', /\\b(soap|tissue|napkin|urinal|toilet brush|sanitary|handwash)\\b/],
-    ['Stationery', /\\b(pen|pencil|paper|notebook|stapler|folder|marker)\\b/],
-    ['Waste Management', /\\b(garbage|dustbin|waste bag|bin liner|trash bag)\\b/],
+    ['Electrical', /\b(cfl|led|bulb|light|wire|cable|switch|socket|mcb|fuse|fan|electrical)\b/],
+    ['Hardware', /\b(cement|white cement|screw|nut|bolt|nail|hinge|drill|hammer|spanner|wrench|pipe|fitting|hardware|lock|adhesive|phynil)\b/],
+    ['Cleaning', /\b(phenyl|phynil|lizol|harpic|detergent|bleach|cleaner|disinfectant)\b/],
+    ['Washroom', /\b(soap|tissue|napkin|urinal|toilet brush|sanitary|handwash)\b/],
+    ['Stationery', /\b(pen|pencil|paper|notebook|stapler|folder|marker)\b/],
+    ['Waste Management', /\b(garbage|dustbin|waste bag|bin liner|trash bag)\b/],
   ]
   return rules.find(([, pattern]) => pattern.test(value))?.[0] || 'General'
 }
