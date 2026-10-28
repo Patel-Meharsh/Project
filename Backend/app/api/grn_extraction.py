@@ -1207,11 +1207,17 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
             re.I,
         )
         candidates = []
-        for header_line in text.splitlines()[:15]:
+        # The supplier logo/name is commonly printed as the first prominent
+        # heading. Prefer early, compact heading lines over later buyer/consignee
+        # names; word-count-only ranking can incorrectly choose the customer.
+        for line_index, header_line in enumerate(text.splitlines()[:15]):
             candidate = _clean_vendor_candidate(header_line)
             if 4 <= len(candidate) <= 90 and re.search(r"[A-Za-z]{3,}", candidate) and not ignored_header.search(candidate):
-                # Prefer short, name-like headings rather than long address/legal lines.
-                score = len(re.findall(r"[A-Za-z]{2,}", candidate)) * 2 - len(candidate) / 40
+                letters = re.findall(r"[A-Za-z]", candidate)
+                uppercase_ratio = (sum(char.isupper() for char in letters) / len(letters)) if letters else 0
+                words = len(re.findall(r"[A-Za-z]{2,}", candidate))
+                compactness = 1.0 if len(candidate) <= 35 else max(0.0, 1 - (len(candidate) - 35) / 100)
+                score = 12 - line_index * 1.5 + uppercase_ratio * 2 + compactness + min(words, 4) * 0.25
                 candidates.append((score, candidate))
         vendor_text = max(candidates, default=(0, None), key=lambda pair: pair[0])[1]
     # Accept common invoice date labels, including "Dated" on Indian invoices.
