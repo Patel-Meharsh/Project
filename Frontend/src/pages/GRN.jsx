@@ -302,6 +302,7 @@ const extractGRNDocument = async (file) => {
       return {
         id: Date.now() + idx,
         item_code: row.item_code || masterMatch?.code || '',
+        uom: row.uom || row.unit || '',
         item_name: masterMatch?.name || row.item_name || '',
         vendor_code: fields.vendor_code || '',
         vendor_name: matchedVendor?.name || fields.vendor_name || '',
@@ -327,7 +328,7 @@ const extractGRNDocument = async (file) => {
     setPendingMasterIndexes(unmatched)
     if (unmatched.length) {
       const first = suggestedRows[unmatched[0]]
-      setItemMasterDraft({ index: unmatched[0], name: first.item_name, ...suggestItemMasterDefaults(first.item_name, items), vendor_name: fields.vendor_name || '', sub_category: '' })
+      setItemMasterDraft({ index: unmatched[0], name: first.item_name, ...suggestItemMasterDefaults(first.item_name, items), uom: first.uom || '', vendor_name: fields.vendor_name || '', sub_category: '' })
     }
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
@@ -343,7 +344,8 @@ const saveNewMasterItem = async () => {
   const name = (itemMasterDraft.name || '').trim()
   if (!name) return toast.error('Enter an item name before saving.')
   if (!itemMasterDraft.category) return toast.error('Select a category to generate the category-based item code.')
-  if (!itemMasterDraft.uom.trim()) return toast.error('Enter the unit of measurement (UOM).')
+  const invoiceUnit = String(lineItems[itemMasterDraft.index]?.uom || itemMasterDraft.uom || '').trim()
+  if (!invoiceUnit) return toast.error('A unit could not be read from this invoice line. Correct the invoice extraction before creating this item; UOM is not entered manually.')
   const vendorName = (itemMasterDraft.vendor_name || '').trim()
   if (!vendorName) return toast.error('Enter the vendor name for this item.')
   setSavingMasterItem(true)
@@ -392,7 +394,8 @@ const saveNewMasterItem = async () => {
     const code = await codeApi.next('item', categoryPrefix)
     const created = await itemApi.create({
       code, name, category: itemMasterDraft.category,
-      uom: itemMasterDraft.uom.trim(),
+      uom: invoiceUnit,
+      sub_category: (itemMasterDraft.sub_category || '').trim() || null,
       vendor_code: linkedVendor.code,
       rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
       status: 'Active',
@@ -413,7 +416,7 @@ const saveNewMasterItem = async () => {
     if (remaining.length) {
       const nextIndex = remaining[0]
       const nextRow = updated[nextIndex]
-      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, ...suggestItemMasterDefaults(nextRow.item_name, items), vendor_name: nextRow.vendor_name || '', sub_category: '' })
+      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, ...suggestItemMasterDefaults(nextRow.item_name, items), uom: nextRow.uom || '', vendor_name: nextRow.vendor_name || '', sub_category: '' })
     } else {
       setItemMasterDraft(null)
     }
@@ -630,8 +633,12 @@ const createGRN = async () => {
                   {['Cleaning','Electrical','Stationery','Washroom','Waste Management','General'].filter(category=>!items.some(i=>(i.category||'').toLowerCase()===category.toLowerCase())).map(category=><option key={category} value={category}>{category}</option>)}
                 </select>
               </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Unit of measurement *
-                <input className="input" placeholder="e.g. Nos, Pcs, Ltr, Kg" value={itemMasterDraft.uom} onChange={e=>setItemMasterDraft(d=>({...d,uom:e.target.value}))} style={{ marginTop:4 }} />
+              <label style={{ fontSize:12, color:'#475569' }}>Unit of measurement (from invoice)
+                <input className="input" value={itemMasterDraft.uom || ''} readOnly aria-readonly="true" placeholder="Unit not detected in invoice" style={{ marginTop:4, background:'#f8fafc' }} />
+                {!itemMasterDraft.uom && <span style={{ display:'block', marginTop:4, color:'#b45309' }}>Unit was not detected. Item creation is blocked until the invoice extraction provides it.</span>}
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Sub-category
+                <input className="input" value={itemMasterDraft.sub_category || ''} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} placeholder="Optional sub-category" />
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Vendor name *
                 <input className="input" placeholder="Enter supplier/vendor name" value={itemMasterDraft.vendor_name} onChange={e=>setItemMasterDraft(d=>({...d,vendor_name:e.target.value}))} style={{ marginTop:4 }} list="grn-item-vendor-options" />
