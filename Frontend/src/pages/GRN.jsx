@@ -379,6 +379,9 @@ const saveNewMasterItem = async () => {
   if (!vendorName) return toast.error('Enter the vendor name for this item.')
   setSavingMasterItem(true)
   try {
+    // Ensure a real Category record exists before creating the item. This prevents
+    // the item from falling back to a generic/General group when the category is new.
+    await ensureInvoiceCategory(itemMasterDraft.category.trim())
     // Reuse the established code prefix for this category (for example,
     // an existing Electrical item EM-001 means the next item should be EM-002).
     // Only derive a new prefix when this category has no coded items yet.
@@ -397,6 +400,7 @@ const saveNewMasterItem = async () => {
       electrical: 'EM',
       'electrical & maintenance': 'EM',
       'electrical and maintenance': 'EM',
+      hardware: 'HW',
       cleaning: 'CL',
       stationery: 'ST',
       washroom: 'WS',
@@ -660,7 +664,7 @@ const createGRN = async () => {
                 <select className="input" value={itemMasterDraft.category} onChange={e=>setItemMasterDraft(d=>({...d,category:e.target.value}))} style={{ marginTop:4 }}>
                   <option value="">Select category</option>
                   {[...new Set(items.map(i=>i.category).filter(Boolean))].sort().map(category=><option key={category} value={category}>{category}</option>)}
-                  {['Cleaning','Electrical','Stationery','Washroom','Waste Management','General'].filter(category=>!items.some(i=>(i.category||'').toLowerCase()===category.toLowerCase())).map(category=><option key={category} value={category}>{category}</option>)}
+                  {['Cleaning','Electrical','Electrical & Maintenance','Hardware','Stationery','Washroom','Waste Management','General'].filter(category=>!items.some(i=>(i.category||'').toLowerCase()===category.toLowerCase())).map(category=><option key={category} value={category}>{category}</option>)}
                 </select>
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Unit of measurement *
