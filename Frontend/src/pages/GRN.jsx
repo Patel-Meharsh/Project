@@ -615,9 +615,6 @@ const createGRN = async () => {
                   {vendors.map(v => <option key={v.code} value={v.name} />)}
                 </datalist>
               </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Sub-category
-                <input className="input" placeholder="Enter sub-category" value={itemMasterDraft.sub_category} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} />
-              </label>
             </div>
             <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:20 }}>
               <button className="btn btn-outline" disabled={savingMasterItem} onClick={()=>{setItemMasterDraft(null);setPendingMasterIndexes([]);toast.error('Item setup cancelled. Each invoice line must be linked to an Item Master record before the GRN can be saved.')}}>Cancel item setup</button>
