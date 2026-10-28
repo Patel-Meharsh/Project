@@ -422,6 +422,7 @@ const saveNewMasterItem = async () => {
     const code = await codeApi.next('item', categoryPrefix)
     const created = await itemApi.create({
       code, name, category: itemMasterDraft.category,
+      master_group: itemMasterDraft.category,
       uom: itemMasterDraft.uom.trim(),
       vendor_code: linkedVendor.code,
       rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
