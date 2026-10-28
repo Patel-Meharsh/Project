@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import DeleteToolbar, { SelectTh, SelectTd } from '../components/DeleteToolbar'
 import { useDeleteMode } from '../hooks/useDeleteMode'
 import { deleteApi } from '../lib/api'
-import { grnApi, poApi, vendorApi, itemApi, codeApi, locationApi, categoryApi, masterGroupApi } from '../lib/api'
+import { grnApi, poApi, vendorApi, itemApi, codeApi, locationApi} from '../lib/api'
 import { fmtCurrency, fmtDate } from '../lib/utils'
 import { StatusBadge, Spinner, SearchInput, FormRow, FormGrid } from '../components/UI'
 import SlideOver from '../components/SlideOver'
@@ -245,48 +245,6 @@ export default function GRN() {
     }
   }
 
-// Conservative, local keyword classification for a new invoice item.
-const inferItemCategory = (name) => {
-  const value = String(name || '').toLowerCase()
-  const rules = [
-    ['Electrical', /\b(cfl|led|bulb|light|wire|cable|switch|socket|mcb|fuse|fan|electrical)\b/],
-    ['Hardware', /\b(cement|white cement|screw|nut|bolt|nail|hinge|drill|hammer|spanner|wrench|pipe|fitting|hardware|lock|adhesive|phynil)\b/],
-    ['Cleaning', /\b(phenyl|phynil|lizol|harpic|detergent|bleach|cleaner|disinfectant)\b/],
-    ['Washroom', /\b(soap|tissue|napkin|urinal|toilet brush|sanitary|handwash)\b/],
-    ['Stationery', /\b(pen|pencil|paper|notebook|stapler|folder|marker)\b/],
-    ['Waste Management', /\b(garbage|dustbin|waste bag|bin liner|trash bag)\b/],
-  ]
-  return rules.find(([, pattern]) => pattern.test(value))?.[0] || 'General'
-}
-
-const ensureInvoiceCategory = async (categoryName) => {
-  const norm = value => String(value || '').trim().toLowerCase()
-  let categories = await categoryApi.getAll()
-  let category = categories.find(entry => norm(entry.name) === norm(categoryName))
-  if (!category) {
-    try {
-      category = await categoryApi.create({ name: categoryName, master_group: categoryName, status: 'Active' })
-    } catch (error) {
-      categories = await categoryApi.getAll()
-      category = categories.find(entry => norm(entry.name) === norm(categoryName))
-      if (!category) throw error
-    }
-  }
-  let groups = await masterGroupApi.getAll()
-  if (!groups.some(entry => norm(entry.name) === norm(categoryName))) {
-    try {
-      await masterGroupApi.create({ name: categoryName, description: 'Created from GRN invoice item category', status: 'Active' })
-    } catch (error) {
-      groups = await masterGroupApi.getAll()
-      if (!groups.some(entry => norm(entry.name) === norm(categoryName))) throw error
-    }
-  }
-  if (category && norm(category.master_group) !== norm(categoryName)) {
-    try { await categoryApi.patch(category.id, { master_group: categoryName }) } catch { /* legacy category */ }
-  }
-  return categoryName
-}
-
 const extractGRNDocument = async (file) => {
   if (!file) return
   setExtractingDocument(true)
@@ -307,9 +265,7 @@ const extractGRNDocument = async (file) => {
       store_location: fields.store_location || 'STORE-CH',
     }))
     const normalizeItemName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-    let matchedVendor = vendors.find(v => v.code === fields.vendor_code)
-      || vendors.find(v => normalizeItemName(v.name) && normalizeItemName(v.name) === normalizeItemName(fields.vendor_name))
-    // New vendors are created only after the user confirms Save Item in the review dialog.
+    const matchedVendor = vendors.find(v => v.code === fields.vendor_code)
     const suggestedRows = (result.line_items || []).map((row, idx) => {
       // Backend OCR matching is primary. If OCR only returned the item name,
       // use a conservative exact normalized-name match against the local item master.
@@ -322,7 +278,7 @@ const extractGRNDocument = async (file) => {
         id: Date.now() + idx,
         item_code: row.item_code || masterMatch?.code || '',
         item_name: masterMatch?.name || row.item_name || '',
-        vendor_code: matchedVendor?.code || fields.vendor_code || '',
+        vendor_code: fields.vendor_code || '',
         vendor_name: matchedVendor?.name || fields.vendor_name || '',
         recd_qty: row.recd_qty ?? '',
         // Keep accepted quantity blank unless the receipt explicitly provides it:
@@ -343,16 +299,10 @@ const extractGRNDocument = async (file) => {
       .map((row, index) => ({ row, index }))
       .filter(({ row }) => !row.item_code && row.item_name.trim())
       .map(({ index }) => index)
-    const inferredCategories = {}
-    for (const index of unmatched) {
-      inferredCategories[index] = inferItemCategory(suggestedRows[index].item_name)
-    }
     setPendingMasterIndexes(unmatched)
     if (unmatched.length) {
-      const firstIndex = unmatched[0]
-      const first = suggestedRows[firstIndex]
-      setItemMasterDraft({ index: firstIndex, name: first.item_name, category: inferredCategories[firstIndex] || '', uom: '', vendor_name: matchedVendor?.name || fields.vendor_name || '' })
-      await refetch()
+      const first = suggestedRows[unmatched[0]]
+      setItemMasterDraft({ index: unmatched[0], name: first.item_name, category: '', uom: '', vendor_name: fields.vendor_name || '', sub_category: '' })
     }
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
@@ -373,9 +323,6 @@ const saveNewMasterItem = async () => {
   if (!vendorName) return toast.error('Enter the vendor name for this item.')
   setSavingMasterItem(true)
   try {
-    // Ensure a real Category record exists before creating the item. This prevents
-    // the item from falling back to a generic/General group when the category is new.
-    await ensureInvoiceCategory(itemMasterDraft.category.trim())
     // Reuse the established code prefix for this category (for example,
     // an existing Electrical item EM-001 means the next item should be EM-002).
     // Only derive a new prefix when this category has no coded items yet.
@@ -394,7 +341,6 @@ const saveNewMasterItem = async () => {
       electrical: 'EM',
       'electrical & maintenance': 'EM',
       'electrical and maintenance': 'EM',
-      hardware: 'HW',
       cleaning: 'CL',
       stationery: 'ST',
       washroom: 'WS',
@@ -405,8 +351,7 @@ const saveNewMasterItem = async () => {
     // Reuse a vendor by normalized name. If it is new, create it only after
     // the user explicitly clicks Save Item in this review popup.
     const normalizeVendorName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-    const rowVendorCode = lineItems[itemMasterDraft.index]?.vendor_code
-    let linkedVendor = vendors.find(v => v.code === rowVendorCode) || vendors.find(v =>
+    let linkedVendor = vendors.find(v =>
       normalizeVendorName(v.name) === normalizeVendorName(vendorName)
     )
     if (!linkedVendor) {
@@ -422,10 +367,10 @@ const saveNewMasterItem = async () => {
     const code = await codeApi.next('item', categoryPrefix)
     const created = await itemApi.create({
       code, name, category: itemMasterDraft.category,
-      master_group: itemMasterDraft.category,
       uom: itemMasterDraft.uom.trim(),
       vendor_code: linkedVendor.code,
       rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
+      sub_category: (itemMasterDraft.sub_category || '').trim() || null,
       status: 'Active',
     })
     const updated = [...lineItems]
@@ -444,7 +389,7 @@ const saveNewMasterItem = async () => {
     if (remaining.length) {
       const nextIndex = remaining[0]
       const nextRow = updated[nextIndex]
-      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, category: inferItemCategory(nextRow.item_name), uom: '', vendor_name: nextRow.vendor_name || '' })
+      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, category: '', uom: '', vendor_name: nextRow.vendor_name || '', sub_category: '' })
     } else {
       setItemMasterDraft(null)
     }
@@ -658,7 +603,7 @@ const createGRN = async () => {
                 <select className="input" value={itemMasterDraft.category} onChange={e=>setItemMasterDraft(d=>({...d,category:e.target.value}))} style={{ marginTop:4 }}>
                   <option value="">Select category</option>
                   {[...new Set(items.map(i=>i.category).filter(Boolean))].sort().map(category=><option key={category} value={category}>{category}</option>)}
-                  {['Cleaning','Electrical','Electrical & Maintenance','Hardware','Stationery','Washroom','Waste Management','General'].filter(category=>!items.some(i=>(i.category||'').toLowerCase()===category.toLowerCase())).map(category=><option key={category} value={category}>{category}</option>)}
+                  {['Cleaning','Electrical','Stationery','Washroom','Waste Management','General'].filter(category=>!items.some(i=>(i.category||'').toLowerCase()===category.toLowerCase())).map(category=><option key={category} value={category}>{category}</option>)}
                 </select>
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Unit of measurement *
@@ -669,6 +614,9 @@ const createGRN = async () => {
                 <datalist id="grn-item-vendor-options">
                   {vendors.map(v => <option key={v.code} value={v.name} />)}
                 </datalist>
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Sub-category
+                <input className="input" placeholder="Enter sub-category" value={itemMasterDraft.sub_category} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} />
               </label>
             </div>
             <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:20 }}>
