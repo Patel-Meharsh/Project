@@ -1182,44 +1182,19 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     vendor_text = _first([
         r"(?:supplier|vendor)\s*(?:name)?\s*[:\-]\s*([^\n]{2,100})",
     ], text)
-    # OCR sometimes appends contact details to the supplier line, or mistakes a
-    # phone/email line for the supplier name. Strip contact fields before matching
-    # or returning a candidate for the manual vendor-creation dialog.
-    def _clean_vendor_candidate(value: str | None) -> str:
-        candidate = (value or "").strip()
-        candidate = re.sub(r"(?i)\b(?:email|e-mail)\s*[:：]?\s*[^\s,;]+@[^\s,;]+", " ", candidate)
-        candidate = re.sub(r"(?i)\b[^\s,;]+@[^\s,;]+\b", " ", candidate)
-        candidate = re.sub(r"(?i)\b(?:https?://|www\.)\S+", " ", candidate)
-        candidate = re.sub(r"(?i)\b(?:mobile|mob|phone|tel|contact|ph)\s*(?:no\.?|number)?\s*[:：-]?\s*[+()\d][+()\d\s.-]{5,}", " ", candidate)
-        candidate = re.sub(r"(?<!\w)(?:\+?\d[\d ()-]{8,}\d)(?!\w)", " ", candidate)
-        candidate = re.sub(r"(?i)\b(?:GSTIN(?:/UIN)?|PAN)\b\s*[:：-]?\s*[A-Z0-9]{8,}", " ", candidate)
-        candidate = re.sub(r"(?i)^\s*(?:supplier|vendor)(?:\s+name)?\s*[:：-]\s*", "", candidate)
-        return re.sub(r"\s+", " ", candidate).strip(" :|,;-")
-
-    vendor_text = _clean_vendor_candidate(vendor_text)
-    if not vendor_text or len(re.sub(r"[^A-Za-z]", "", vendor_text)) < 4:
-        # Prefer plausible supplier-heading lines; exclude contact, tax, invoice,
-        # shipping, and table content so a phone/email is never saved as the name.
+    if not vendor_text:
+        # Some invoices print the supplier as a heading without a "Vendor:" label.
+        # Use a short header line as a display fallback; master matching below still
+        # decides whether a vendor code can be assigned.
         ignored_header = re.compile(
-            r"(invoice|tax invoice|bill no|invoice no|gstin|state code|date|phone|mobile|email|www|page|amount|"
-            r"contact|e-mail|@|\b(?:ph|mob|tel)\b|buyer|consignee|ship to|bill to|purchase order|"
-            r"description|quantity|rate|total|website|address|pin code)",
+            r"(invoice|tax invoice|bill no|invoice no|gstin|state code|date|phone|mobile|email|www|page|amount)",
             re.I,
         )
-        candidates = []
-        # The supplier logo/name is commonly printed as the first prominent
-        # heading. Prefer early, compact heading lines over later buyer/consignee
-        # names; word-count-only ranking can incorrectly choose the customer.
-        for line_index, header_line in enumerate(text.splitlines()[:15]):
-            candidate = _clean_vendor_candidate(header_line)
+        for header_line in text.splitlines()[:10]:
+            candidate = re.sub(r"\s+", " ", header_line).strip(" :|-")
             if 4 <= len(candidate) <= 90 and re.search(r"[A-Za-z]{3,}", candidate) and not ignored_header.search(candidate):
-                letters = re.findall(r"[A-Za-z]", candidate)
-                uppercase_ratio = (sum(char.isupper() for char in letters) / len(letters)) if letters else 0
-                words = len(re.findall(r"[A-Za-z]{2,}", candidate))
-                compactness = 1.0 if len(candidate) <= 35 else max(0.0, 1 - (len(candidate) - 35) / 100)
-                score = 12 - line_index * 1.5 + uppercase_ratio * 2 + compactness + min(words, 4) * 0.25
-                candidates.append((score, candidate))
-        vendor_text = max(candidates, default=(0, None), key=lambda pair: pair[0])[1]
+                vendor_text = candidate
+                break
     # Accept common invoice date labels, including "Dated" on Indian invoices.
     date_pattern = (
         r"(\d{1,2}(?:st|nd|rd|th)?[./-]\d{1,2}[./-]\d{2,4}"
