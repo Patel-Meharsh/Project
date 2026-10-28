@@ -73,6 +73,31 @@ function ComboSearch({ query, onQueryChange, onSelect, options, placeholder, has
   )
 }
 
+
+// Suggest category/UOM from existing master items with similar descriptions.
+// Suggestions are only defaults; the user can review/change them before Save Item.
+function suggestItemMasterDefaults(name, items) {
+  const tokens = value => new Set(String(value || '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(token => token.length > 1))
+  const target = tokens(name)
+  if (!target.size) return { category: '', uom: '' }
+  const ranked = items.map(item => {
+    const candidate = tokens(item.name)
+    const overlap = [...target].filter(token => candidate.has(token)).length
+    const score = overlap / Math.max(target.size, candidate.size, 1)
+    return { item, score }
+  }).sort((a, b) => b.score - a.score)
+  const best = ranked[0]
+  // Only use a reasonably strong match; never infer from a weak/ambiguous name.
+  if (!best || best.score < 0.5 || (ranked[1] && best.score - ranked[1].score < 0.12)) {
+    return { category: '', uom: '' }
+  }
+  return {
+    category: best.item.category || '',
+    uom: best.item.uom || '',
+  }
+}
+
 export default function GRN() {
   const toast = useToast()
   const { data: fetchResult, loading, refetch } = useDataFetch(() =>
@@ -302,7 +327,7 @@ const extractGRNDocument = async (file) => {
     setPendingMasterIndexes(unmatched)
     if (unmatched.length) {
       const first = suggestedRows[unmatched[0]]
-      setItemMasterDraft({ index: unmatched[0], name: first.item_name, category: '', uom: '', vendor_name: fields.vendor_name || '', sub_category: '' })
+      setItemMasterDraft({ index: unmatched[0], name: first.item_name, ...suggestItemMasterDefaults(first.item_name, items), vendor_name: fields.vendor_name || '', sub_category: '' })
     }
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
@@ -370,7 +395,6 @@ const saveNewMasterItem = async () => {
       uom: itemMasterDraft.uom.trim(),
       vendor_code: linkedVendor.code,
       rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
-      sub_category: (itemMasterDraft.sub_category || '').trim() || null,
       status: 'Active',
     })
     const updated = [...lineItems]
@@ -389,7 +413,7 @@ const saveNewMasterItem = async () => {
     if (remaining.length) {
       const nextIndex = remaining[0]
       const nextRow = updated[nextIndex]
-      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, category: '', uom: '', vendor_name: nextRow.vendor_name || '', sub_category: '' })
+      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, ...suggestItemMasterDefaults(nextRow.item_name, items), vendor_name: nextRow.vendor_name || '', sub_category: '' })
     } else {
       setItemMasterDraft(null)
     }
@@ -608,9 +632,6 @@ const createGRN = async () => {
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Unit of measurement *
                 <input className="input" placeholder="e.g. Nos, Pcs, Ltr, Kg" value={itemMasterDraft.uom} onChange={e=>setItemMasterDraft(d=>({...d,uom:e.target.value}))} style={{ marginTop:4 }} />
-              </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Sub-category
-                <input className="input" placeholder="Enter sub-category (optional)" value={itemMasterDraft.sub_category || ''} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} />
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Vendor name *
                 <input className="input" placeholder="Enter supplier/vendor name" value={itemMasterDraft.vendor_name} onChange={e=>setItemMasterDraft(d=>({...d,vendor_name:e.target.value}))} style={{ marginTop:4 }} list="grn-item-vendor-options" />
