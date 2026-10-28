@@ -609,6 +609,9 @@ const createGRN = async () => {
               <label style={{ fontSize:12, color:'#475569' }}>Unit of measurement *
                 <input className="input" placeholder="e.g. Nos, Pcs, Ltr, Kg" value={itemMasterDraft.uom} onChange={e=>setItemMasterDraft(d=>({...d,uom:e.target.value}))} style={{ marginTop:4 }} />
               </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Sub-category
+                <input className="input" placeholder="Enter sub-category (optional)" value={itemMasterDraft.sub_category || ''} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} />
+              </label>
               <label style={{ fontSize:12, color:'#475569' }}>Vendor name *
                 <input className="input" placeholder="Enter supplier/vendor name" value={itemMasterDraft.vendor_name} onChange={e=>setItemMasterDraft(d=>({...d,vendor_name:e.target.value}))} style={{ marginTop:4 }} list="grn-item-vendor-options" />
                 <datalist id="grn-item-vendor-options">
