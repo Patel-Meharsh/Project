@@ -309,13 +309,7 @@ const extractGRNDocument = async (file) => {
     const normalizeItemName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
     let matchedVendor = vendors.find(v => v.code === fields.vendor_code)
       || vendors.find(v => normalizeItemName(v.name) && normalizeItemName(v.name) === normalizeItemName(fields.vendor_name))
-    // Create a genuinely new supplier from a readable invoice header before
-    // item review. Never create a vendor when OCR did not identify a name.
-    if (!matchedVendor && String(fields.vendor_name || '').trim()) {
-      const vendorCode = await codeApi.next('vendor')
-      matchedVendor = await vendorApi.create({ code: vendorCode, name: String(fields.vendor_name).trim(), category: 'Invoice supplier', status: 'Active' })
-      await refetch()
-    }
+    // New vendors are created only after the user confirms Save Item in the review dialog.
     const suggestedRows = (result.line_items || []).map((row, idx) => {
       // Backend OCR matching is primary. If OCR only returned the item name,
       // use a conservative exact normalized-name match against the local item master.
@@ -351,13 +345,13 @@ const extractGRNDocument = async (file) => {
       .map(({ index }) => index)
     const inferredCategories = {}
     for (const index of unmatched) {
-      inferredCategories[index] = await ensureInvoiceCategory(inferItemCategory(suggestedRows[index].item_name))
+      inferredCategories[index] = inferItemCategory(suggestedRows[index].item_name)
     }
     setPendingMasterIndexes(unmatched)
     if (unmatched.length) {
       const firstIndex = unmatched[0]
       const first = suggestedRows[firstIndex]
-      setItemMasterDraft({ index: firstIndex, name: first.item_name, category: inferredCategories[firstIndex] || 'General', uom: '', vendor_name: matchedVendor?.name || fields.vendor_name || '', sub_category: '' })
+      setItemMasterDraft({ index: firstIndex, name: first.item_name, category: inferredCategories[firstIndex] || '', uom: '', vendor_name: matchedVendor?.name || fields.vendor_name || '', sub_category: '' })
       await refetch()
     }
     toast.success('Document read. Review every extracted field before saving.')
