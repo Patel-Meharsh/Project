@@ -1187,14 +1187,14 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     # or returning a candidate for the manual vendor-creation dialog.
     def _clean_vendor_candidate(value: str | None) -> str:
         candidate = (value or "").strip()
-        candidate = re.sub(r"(?i)\\b(?:email|e-mail)\\s*[:：]?\\s*[^\\s,;]+@[^\\s,;]+", " ", candidate)
-        candidate = re.sub(r"(?i)\\b[^\\s,;]+@[^\\s,;]+\\b", " ", candidate)
-        candidate = re.sub(r"(?i)\\b(?:https?://|www\\.)\\S+", " ", candidate)
-        candidate = re.sub(r"(?i)\\b(?:mobile|mob|phone|tel|contact|ph)\\s*(?:no\\.?|number)?\\s*[:：-]?\\s*[+()\\d][+()\\d\\s.-]{5,}", " ", candidate)
-        candidate = re.sub(r"(?<!\\w)(?:\\+?\\d[\\d ()-]{8,}\\d)(?!\\w)", " ", candidate)
-        candidate = re.sub(r"(?i)\\b(?:GSTIN(?:/UIN)?|PAN)\\b\\s*[:：-]?\\s*[A-Z0-9]{8,}", " ", candidate)
-        candidate = re.sub(r"(?i)^\\s*(?:supplier|vendor)(?:\\s+name)?\\s*[:：-]\\s*", "", candidate)
-        return re.sub(r"\\s+", " ", candidate).strip(" :|,;-")
+        candidate = re.sub(r"(?i)\b(?:email|e-mail)\s*[:：]?\s*[^\s,;]+@[^\s,;]+", " ", candidate)
+        candidate = re.sub(r"(?i)\b[^\s,;]+@[^\s,;]+\b", " ", candidate)
+        candidate = re.sub(r"(?i)\b(?:https?://|www\.)\S+", " ", candidate)
+        candidate = re.sub(r"(?i)\b(?:mobile|mob|phone|tel|contact|ph)\s*(?:no\.?|number)?\s*[:：-]?\s*[+()\d][+()\d\s.-]{5,}", " ", candidate)
+        candidate = re.sub(r"(?<!\w)(?:\+?\d[\d ()-]{8,}\d)(?!\w)", " ", candidate)
+        candidate = re.sub(r"(?i)\b(?:GSTIN(?:/UIN)?|PAN)\b\s*[:：-]?\s*[A-Z0-9]{8,}", " ", candidate)
+        candidate = re.sub(r"(?i)^\s*(?:supplier|vendor)(?:\s+name)?\s*[:：-]\s*", "", candidate)
+        return re.sub(r"\s+", " ", candidate).strip(" :|,;-")
 
     vendor_text = _clean_vendor_candidate(vendor_text)
     if not vendor_text or len(re.sub(r"[^A-Za-z]", "", vendor_text)) < 4:
