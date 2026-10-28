@@ -286,7 +286,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
 
     raw_lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
     masters = db.query(models.ItemModel).all()
-    unit_re = r"(?:BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MTR|MET(?:RE|ER)|KGS?|GMS?|LTRS?|LIT(?:RE|ER)S?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?)"
+    unit_re = r"(?:BOTTLES?|BTL|PACKETS?|PKT|PIECES?|PCS?\\.?|NOS?\\.?|MTRS?|MET(?:RE|ER)S?|KILOGRAMS?|KGS?|GRAMS?|GMS?|LIT(?:RE|ER)S?|LTRS?|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?|WATTS?|VOLTS?|W|V|M|G)"
     number_re = r"\d[\d,]*(?:\.\d{1,2})?"
 
     # OCR frequently places a product description on one line and its HSN,
