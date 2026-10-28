@@ -351,7 +351,7 @@ const extractGRNDocument = async (file) => {
     if (unmatched.length) {
       const firstIndex = unmatched[0]
       const first = suggestedRows[firstIndex]
-      setItemMasterDraft({ index: firstIndex, name: first.item_name, category: inferredCategories[firstIndex] || '', uom: '', vendor_name: matchedVendor?.name || fields.vendor_name || '', sub_category: '' })
+      setItemMasterDraft({ index: firstIndex, name: first.item_name, category: inferredCategories[firstIndex] || '', uom: '', vendor_name: matchedVendor?.name || fields.vendor_name || '' })
       await refetch()
     }
     toast.success('Document read. Review every extracted field before saving.')
@@ -426,7 +426,6 @@ const saveNewMasterItem = async () => {
       uom: itemMasterDraft.uom.trim(),
       vendor_code: linkedVendor.code,
       rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
-      sub_category: (itemMasterDraft.sub_category || '').trim() || null,
       status: 'Active',
     })
     const updated = [...lineItems]
@@ -445,7 +444,7 @@ const saveNewMasterItem = async () => {
     if (remaining.length) {
       const nextIndex = remaining[0]
       const nextRow = updated[nextIndex]
-      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, category: inferItemCategory(nextRow.item_name), uom: '', vendor_name: nextRow.vendor_name || '', sub_category: '' })
+      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, category: inferItemCategory(nextRow.item_name), uom: '', vendor_name: nextRow.vendor_name || '' })
     } else {
       setItemMasterDraft(null)
     }
@@ -670,9 +669,6 @@ const createGRN = async () => {
                 <datalist id="grn-item-vendor-options">
                   {vendors.map(v => <option key={v.code} value={v.name} />)}
                 </datalist>
-              </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Sub-category
-                <input className="input" placeholder="Enter sub-category" value={itemMasterDraft.sub_category} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} />
               </label>
             </div>
             <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:20 }}>
