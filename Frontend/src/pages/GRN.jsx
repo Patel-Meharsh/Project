@@ -407,7 +407,8 @@ const saveNewMasterItem = async () => {
     // Reuse a vendor by normalized name. If it is new, create it only after
     // the user explicitly clicks Save Item in this review popup.
     const normalizeVendorName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-    let linkedVendor = vendors.find(v =>
+    const rowVendorCode = lineItems[itemMasterDraft.index]?.vendor_code
+    let linkedVendor = vendors.find(v => v.code === rowVendorCode) || vendors.find(v =>
       normalizeVendorName(v.name) === normalizeVendorName(vendorName)
     )
     if (!linkedVendor) {
