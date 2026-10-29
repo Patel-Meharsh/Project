@@ -621,7 +621,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
         return rows
 
     try:
-        for page in document:
+        for page_index, page in enumerate(document):
             raw_words = page.get_text("words")
             if not raw_words:
                 continue
@@ -786,6 +786,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                     "line_amount": amount,
                     "match_status": "matched" if matched else "unmatched",
                     "source": "receipt_text",
+                    "_source_page_index": page_index,
                 }))
     finally:
         document.close()
@@ -1638,32 +1639,41 @@ async def extract_grn_document(
     # attached to the same invoice row. Scanned PDFs still use the OCR parser.
     if content_type == "application/pdf":
         coordinate_items = _extract_pdf_table_line_items(raw, db)
-        if not coordinate_items:
-            # Scanned PDFs have no useful text-layer coordinates. Render pages
-            # and apply the same header-driven column parser used for JPG/PNG.
-            try:
-                import pymupdf
-                from PIL import Image
-                with pymupdf.open(stream=raw, filetype="pdf") as pdf_document:
-                    image_candidates = []
-                    for page_index in range(min(len(pdf_document), 30)):
-                        page = pdf_document.load_page(page_index)
-                        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2.5, 2.5), alpha=False)
-                        if pixmap.width * pixmap.height > 25_000_000:
-                            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5), alpha=False)
-                        if pixmap.width * pixmap.height > 25_000_000:
-                            continue
-                        page_image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
-                        candidate = _extract_image_table_line_items(page_image, db)
-                        if candidate:
-                            image_candidates.extend(candidate)
-                # Keep rows from every page in source order. Value-based deduplication
-                # can erase legitimate repeated invoice lines, including identical rows.
-                coordinate_items.extend(image_candidates)
-            except Exception:
-                # Existing PDF text/OCR extraction remains a safe fallback.
-                pass
+        # A PDF can mix digital-text pages with scanned pages. Previously, finding
+        # even one digital table row disabled OCR for the entire document, silently
+        # losing scanned pages. OCR only pages with no coordinate-extracted rows;
+        # this also avoids spending OCR time on pages already handled successfully.
+        pages_with_rows = {
+            row.get("_source_page_index")
+            for row in coordinate_items
+            if row.get("_source_page_index") is not None
+        }
+        try:
+            import pymupdf
+            from PIL import Image
+            with pymupdf.open(stream=raw, filetype="pdf") as pdf_document:
+                for page_index in range(min(len(pdf_document), 30)):
+                    if page_index in pages_with_rows:
+                        continue
+                    page = pdf_document.load_page(page_index)
+                    pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2.5, 2.5), alpha=False)
+                    if pixmap.width * pixmap.height > 25_000_000:
+                        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5), alpha=False)
+                    if pixmap.width * pixmap.height > 25_000_000:
+                        continue
+                    page_image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
+                    candidates = _extract_image_table_line_items(page_image, db)
+                    for row in candidates:
+                        row["_source_page_index"] = page_index
+                    coordinate_items.extend(candidates)
+            coordinate_items.sort(key=lambda row: row.get("_source_page_index", 0))
+        except Exception:
+            # Text extraction still returns its available rows if OCR is unavailable.
+            pass
         if coordinate_items:
+            # Internal page markers are only used to merge mixed PDF page types.
+            for row in coordinate_items:
+                row.pop("_source_page_index", None)
             result["line_items"] = coordinate_items
             result["warnings"] = [
                 warning for warning in result.get("warnings", [])
