@@ -23,6 +23,24 @@ class GRNItemDescriptionCleanupTests(unittest.TestCase):
     def test_preserves_numbers_that_are_part_of_product_names(self):
         self.assertEqual(_clean_item_description("15 W LED Fitting Light"), "15 W LED Fitting Light")
         self.assertEqual(_clean_item_description("2 Ltr White Phenyl"), "2 Ltr White Phenyl")
+        self.assertEqual(
+            _clean_item_description("15 W LED Fitting Light", expected_serial=1),
+            "15 W LED Fitting Light",
+        )
+        self.assertEqual(
+            _clean_item_description("2 Ltr White Phenyl", expected_serial=2),
+            "2 Ltr White Phenyl",
+        )
+
+    def test_removes_bare_serial_only_when_it_matches_row_sequence(self):
+        self.assertEqual(
+            _clean_item_description("1 SS CATORI PLATE", expected_serial=1),
+            "SS CATORI PLATE",
+        )
+        self.assertEqual(
+            _clean_item_description("2 Harpic Toilet Cleaner", expected_serial=2),
+            "Harpic Toilet Cleaner",
+        )
 
 
 class EmptyItemMasterQuery:
