@@ -8,6 +8,7 @@ from app.api.grn_extraction import (
     _choose_pdf_page_rows,
     _append_pdf_description_continuation,
     _invoice_number_from_nearby_label,
+    _extract_pdf_table_line_items,
 )
 
 
@@ -66,6 +67,56 @@ class GRNHeaderFallbackTests(unittest.TestCase):
 
     def test_invoice_number_fallback_accepts_short_numeric_invoice_ids(self):
         self.assertEqual(_invoice_number_from_nearby_label("Invoice No. 468\nDate 25/07/2026"), "468")
+
+
+class GRNPDFCoordinateIntegrationTests(unittest.TestCase):
+    def test_stacked_header_and_wrapped_description_are_reconstructed(self):
+        import pymupdf
+
+        document = pymupdf.open()
+        page = document.new_page(width=620, height=260)
+        # Simulate a common invoice whose column labels occupy multiple baselines.
+        for x, y, label in [
+            (40, 100, "Description"),
+            (210, 107, "HSN/SAC"),
+            (285, 103, "GST"),
+            (340, 103, "Quantity"),
+            (410, 103, "Rate"),
+            (500, 103, "Amount"),
+        ]:
+            page.insert_text((x, y), label, fontsize=9)
+        # First product description wraps, but its numeric columns stay on the first line.
+        for x, y, value in [
+            (40, 130, "1"),
+            (55, 130, "M Fold Paper"),
+            (210, 130, "48181000"),
+            (285, 130, "18%"),
+            (340, 130, "180 PAC"),
+            (410, 130, "31.00 PAC"),
+            (500, 130, "5580.00"),
+            (55, 140, "professional"),
+            (40, 165, "2"),
+            (55, 165, "Tissue Roll"),
+            (210, 165, "48181000"),
+            (285, 165, "18%"),
+            (340, 165, "100 NOS"),
+            (410, 165, "17.00 NOS"),
+            (500, 165, "1700.00"),
+            (500, 195, "Total"),
+        ]:
+            page.insert_text((x, y), value, fontsize=9)
+        raw = document.tobytes()
+        document.close()
+
+        rows = _extract_pdf_table_line_items(raw, EmptyItemMasterDB())
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["item_name"], "M Fold Paper professional")
+        self.assertEqual(rows[0]["recd_qty"], 180.0)
+        self.assertEqual(rows[0]["rate"], 31.0)
+        self.assertEqual(rows[0]["line_amount"], 5580.0)
+        self.assertEqual(rows[1]["item_name"], "Tissue Roll")
+        self.assertEqual(rows[1]["recd_qty"], 100.0)
+        self.assertEqual(rows[1]["rate"], 17.0)
 
 
 class GRNPDFDescriptionContinuationTests(unittest.TestCase):
