@@ -69,6 +69,11 @@ class GRNHeaderFallbackTests(unittest.TestCase):
         self.assertEqual(_invoice_number_from_nearby_label("Invoice No. 468\nDate 25/07/2026"), "468")
 
 
+    def test_invoice_number_fallback_skips_adjacent_date_label(self):
+        text = "Invoice No.\nDate 25/07/2026\n468"
+        self.assertEqual(_invoice_number_from_nearby_label(text), "468")
+
+
 class GRNPDFCoordinateIntegrationTests(unittest.TestCase):
     def test_close_invoice_rows_are_not_merged_by_wide_header_columns(self):
         import pymupdf
