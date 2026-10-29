@@ -301,33 +301,49 @@ const extractGRNDocument = async (file) => {
       store_location: fields.store_location || 'STORE-CH',
     }))
     const normalizeItemName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const cleanExtractedName = value => String(value || '')
+      .replace(/^\\s*(?:sr\\.?\\s*no\\.?\\s*)?\\d{1,3}\\s*[.)-]\\s*/i, '')
+      .replace(/^\\s*(?:5|\\d{1,3})\\s+(?=(?:carting|freight|transport|delivery\\s+charges?|packing|handling|loading|unloading)\\b)/i, '')
+      .replace(/\\s*\\(\\s*\\d+(?:\\.\\d+)?\\s*%\\s*\\)\\s*$/i, '')
+      .replace(/^\\s*(?:5|\\d{1,3})\\s+(?=[a-z])/i, (prefix, offset, whole) => {
+        // Treat a bare leading number as a serial only if removing it exactly
+        // matches a known item. This protects real product numbers such as 15W.
+        const withoutSerial = whole.slice(prefix.length).trim()
+        return items.some(item => normalizeItemName(item.name) === normalizeItemName(withoutSerial)) ? '' : prefix
+      }).trim()
     const matchedVendor = vendors.find(v => v.code === fields.vendor_code)
-    const suggestedRows = (result.line_items || []).map((row, idx) => {
-      // Backend OCR matching is primary. If OCR only returned the item name,
-      // use a conservative exact normalized-name match against the local item master.
-      const masterMatch = items.find(item =>
-        (row.item_code && item.code === row.item_code) ||
-        (normalizeItemName(row.item_name) &&
-          normalizeItemName(item.name) === normalizeItemName(row.item_name))
-      )
-      return {
-        id: Date.now() + idx,
-        item_code: row.item_code || masterMatch?.code || '',
-        uom: row.uom || row.unit || '',
-        item_name: masterMatch?.name || row.item_name || '',
-        vendor_code: fields.vendor_code || '',
-        vendor_name: matchedVendor?.name || fields.vendor_name || '',
-        recd_qty: row.recd_qty ?? '',
-        // Default accepted quantity to received quantity for GRN entry.
-        // The store user can reduce it after inspection if some units are rejected.
-        accepted_qty: row.accepted_qty ?? row.recd_qty ?? '',
-        // The invoice's rate must not be replaced by a catalog default.
-        // Leave it blank when OCR could not reliably extract it.
-        rate: row.rate ?? '',
-        needs_review: Boolean(row.needs_review),
-        extraction_warning: row.extraction_warning || '',
-      }
-    })
+    const suggestedRows = (result.line_items || [])
+      .map((row, idx) => ({ row, idx, cleanedName: cleanExtractedName(row.item_name) }))
+      // Carting/freight/etc. are invoice charges, not stock items. They must not
+      // trigger the Item Master creation popup.
+      .filter(({ cleanedName }) => !/\\b(?:carting|freight|transport(?:ation)?|delivery\\s+charges?|packing\\s+charges?|handling\\s+charges?|loading|unloading|round\\s*off)\\b/i.test(cleanedName))
+      .map(({ row, idx, cleanedName }) => {
+        const normalizedName = normalizeItemName(cleanedName)
+        const withoutLeadingDigit = cleanedName.replace(/^\\s*\\d(?=[a-z])/i, '').trim()
+        // Exact lookup first. Then allow a single OCR-added leading digit only
+        // when the remaining text exactly matches an existing master item.
+        const masterMatch = items.find(item =>
+          (row.item_code && item.code === row.item_code) ||
+          (normalizedName && normalizeItemName(item.name) === normalizedName)
+        ) || items.find(item =>
+          withoutLeadingDigit !== cleanedName &&
+          normalizeItemName(item.name) === normalizeItemName(withoutLeadingDigit)
+        )
+        return {
+          id: Date.now() + idx,
+          item_code: masterMatch?.code || (row.item_code || ''),
+          uom: row.uom || row.unit || '',
+          item_name: masterMatch?.name || cleanedName || '',
+          vendor_code: fields.vendor_code || '',
+          vendor_name: matchedVendor?.name || fields.vendor_name || '',
+          recd_qty: row.recd_qty ?? '',
+          // Default accepted quantity to received quantity for GRN entry.
+          accepted_qty: row.accepted_qty ?? row.recd_qty ?? '',
+          rate: row.rate ?? '',
+          needs_review: Boolean(row.needs_review),
+          extraction_warning: row.extraction_warning || '',
+        }
+      })
     // Replace existing rows even when no items were detected, so rows from an
     // earlier PO or receipt can never leak into this document's draft.
     setLineItems(suggestedRows.length ? suggestedRows : [emptyRow()])
