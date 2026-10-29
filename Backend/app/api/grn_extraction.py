@@ -98,6 +98,75 @@ def _line_item_quality(rows: list[dict[str, Any]]) -> float:
     return score
 
 
+def _append_pdf_description_continuation(
+    rows: list[dict[str, Any]],
+    description: str,
+    page_index: int,
+) -> bool:
+    """Append a description-only PDF line to the previous item on the same page."""
+    continuation = re.sub(r"\s+", " ", (description or "")).strip(" .:|-\t")
+    if not continuation or len(_norm(continuation)) < 3 or len(continuation) > 80:
+        return False
+    if re.search(
+        r"\b(?:invoice|description|quantity|qty|rate|amount|subtotal|total|grand|"
+        r"cgst|sgst|igst|taxable|hsn|gstin|round off|continued to page|terms|bank details)\b",
+        continuation,
+        re.I,
+    ):
+        return False
+    if not rows or rows[-1].get("_source_page_index") != page_index:
+        return False
+    previous = rows[-1]
+    previous_name = str(previous.get("item_name") or "").strip()
+    normalized_previous = _norm(previous_name)
+    normalized_continuation = _norm(continuation)
+    if not previous_name or normalized_continuation in normalized_previous:
+        return False
+    previous["item_name"] = f"{previous_name} {continuation}".strip()
+    return True
+
+
+def _invoice_number_from_nearby_label(text: str) -> str | None:
+    """Recover invoice IDs when the label and value are separated in extracted/OCR text."""
+    lines = [re.sub(r"\s+", " ", line).strip(" :#|\t") for line in (text or "").splitlines()]
+    label = re.compile(
+        r"\b(?:tax\s*)?(?:invoice|invo[i1]ce|inv\.?|bill)\s*"
+        r"(?:no\.?|number|num\.?|#|n[o0])(?=\s|[:#|=.-]|$)",
+        re.I,
+    )
+    token_re = re.compile(r"(?<![A-Za-z0-9])([A-Z0-9][A-Z0-9/_.-]{1,39})(?![A-Za-z0-9])", re.I)
+    date_re = re.compile(
+        r"^(?:\d{1,4}[./-]){1,2}\d{1,4}$|^\d{1,2}[-/ ](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-/ ,]+\d{2,4}$",
+        re.I,
+    )
+    for index, line in enumerate(lines[:35]):
+        match = label.search(line)
+        if not match:
+            continue
+        # The value may be on the same line, or one/two visual text lines later.
+        for candidate_index in range(index, min(len(lines), index + 4)):
+            candidate_line = lines[candidate_index]
+            search_from = match.end() if candidate_index == index else 0
+            for token_match in token_re.finditer(candidate_line[search_from:]):
+                candidate = token_match.group(1).strip(" .:/#-|")
+                normalized = re.sub(r"[^A-Z0-9]", "", candidate.upper())
+                if len(normalized) < 2 or not re.search(r"\d", normalized):
+                    continue
+                if date_re.fullmatch(candidate):
+                    continue
+                if re.fullmatch(r"\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]Z[0-9A-Z]", normalized, re.I):
+                    continue
+                if re.search(
+                    r"original|recipient|duplicate|triplicate|dated|gstin|supplier|vendor|"
+                    r"delivery|consignee|reference|purchase|order|payment|amount|taxinvoice",
+                    candidate,
+                    re.I,
+                ):
+                    continue
+                return re.sub(r"\s+", "", candidate)
+    return None
+
+
 def _mark_row_for_review(row: dict[str, Any]) -> dict[str, Any]:
     """Keep extracted invoice evidence and mark incomplete/inconsistent rows for review."""
     warnings = [
@@ -695,11 +764,22 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
             header = None
             header_row_index = -1
             for row_index, row in enumerate(visual_rows):
+                row_center = sum(word["y"] for word in row) / max(1, len(row))
+                # Invoice headers are often stacked over 2-3 lines (e.g. Description
+                # at y=248, Qty/Rate at y=251, and HSN/SAC at y=254). Aggregate only
+                # this compact header band instead of requiring all labels on one line.
+                header_band = []
+                for nearby_index in range(max(0, row_index - 1), min(len(visual_rows), row_index + 5)):
+                    nearby = visual_rows[nearby_index]
+                    nearby_center = sum(word["y"] for word in nearby) / max(1, len(nearby))
+                    if abs(nearby_center - row_center) <= max(12.0, median_height * 3.2):
+                        header_band.append(nearby)
                 kinds: dict[str, list[dict[str, Any]]] = {}
-                for word in row:
-                    kind = token_kind(word["text"])
-                    if kind:
-                        kinds.setdefault(kind, []).append(word)
+                for header_words in header_band:
+                    for word in header_words:
+                        kind = token_kind(word["text"])
+                        if kind:
+                            kinds.setdefault(kind, []).append(word)
                 numeric_kinds = set(kinds) & {"qty", "rate", "amount"}
                 if "description" in kinds and len(numeric_kinds) >= 2:
                     # For multi-word headers, anchor description at the first
@@ -716,6 +796,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                               for kind, group in kinds.items()}
                     header_row_index = row_index
                     break
+            if header is None:
             if header is None:
                 # Some invoices use a short "Item" heading and omit a separate
                 # description heading. Accept it only when the row also contains
@@ -776,7 +857,10 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
 
             if not body_words:
                 continue
-            body_rows = close_row(body_words, max(y_tolerance, median_height * 0.8))
+            # Numeric values and descriptions can sit on slightly different baselines;
+            # use a little more tolerance than page-wide clustering, but keep it well
+            # below the spacing between separate invoice rows.
+            body_rows = close_row(body_words, max(y_tolerance, median_height * 1.15))
 
             for row in body_rows:
                 # Build each cell according to dynamically inferred column boundaries.
@@ -814,6 +898,15 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 # Some tables print the UOM next to quantity; others put it in
                 # its own column. Never infer quantity/rate from description text.
                 if qty is None and rate is None and amount is None:
+                    # Product descriptions such as "M Fold Paper professional",
+                    # "Tissue Roll Plain", or colour/pack-size notes often wrap to a
+                    # second visual line with no numeric cells. Keep them attached
+                    # to the preceding item instead of silently dropping them.
+                    if _append_pdf_description_continuation(extracted, description, page_index):
+                        previous = extracted[-1]
+                        updated_match = match_master(previous["item_name"])
+                        previous["item_code"] = (updated_match.code or "") if updated_match else ""
+                        previous["match_status"] = "matched" if updated_match else "unmatched"
                     continue
                 if qty is not None and rate is not None and amount is not None:
                     expected = qty * rate
@@ -1237,6 +1330,9 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     ], text)
     if invoice_no:
         invoice_no = re.sub(r"\s*/\s*", "/", invoice_no).replace(" ", "")
+    else:
+        # Recover IDs where the label and value are separated by layout/OCR line breaks.
+        invoice_no = _invoice_number_from_nearby_label(text)
     # Do not interpret generic prose containing "purchase order" as a PO number.
     po_no = _first([
         r"(?:purchase\s*order|P\.?\s*O\.?)\s*(?:no\.?|number|ref(?:erence)?\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})",
