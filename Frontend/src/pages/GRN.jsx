@@ -395,6 +395,39 @@ const extractGRNDocument = async (file) => {
 }
 
 
+const chooseExistingMasterItem = (match) => {
+  if (!itemMasterDraft || !match?.code) return
+  const selectedIndex = itemMasterDraft.index
+  const updated = [...lineItems]
+  updated[selectedIndex] = {
+    ...updated[selectedIndex],
+    item_code: match.code,
+    item_name: match.name || updated[selectedIndex].item_name,
+    needs_review: false,
+    extraction_warning: '',
+    possible_matches: [],
+  }
+  setLineItems(updated)
+  const remaining = pendingMasterIndexes.filter(index => index !== selectedIndex)
+  setPendingMasterIndexes(remaining)
+  if (remaining.length) {
+    const nextIndex = remaining[0]
+    const nextRow = updated[nextIndex]
+    setItemMasterDraft({
+      index: nextIndex,
+      name: nextRow.item_name,
+      ...suggestItemMasterDefaults(nextRow.item_name, items),
+      uom: nextRow.uom || '',
+      vendor_name: nextRow.vendor_name || '',
+      possible_matches: nextRow.possible_matches || [],
+      needs_review: nextRow.needs_review,
+    })
+  } else {
+    setItemMasterDraft(null)
+    toast.success(`Linked invoice row to existing item ${match.code}.`)
+  }
+}
+
 const saveNewMasterItem = async () => {
   if (!itemMasterDraft) return
   const name = (itemMasterDraft.name || '').trim()
@@ -679,8 +712,30 @@ const createGRN = async () => {
         <div role="presentation" style={{ position:'fixed', inset:0, zIndex:1200, background:'rgba(15,23,42,.55)', display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
           <div role="dialog" aria-modal="true" aria-labelledby="new-item-master-title" style={{ width:'min(560px, 100%)', maxHeight:'90vh', overflowY:'auto', background:'#fff', borderRadius:14, padding:22, boxShadow:'0 20px 60px rgba(0,0,0,.25)' }}>
             <div style={{ fontSize:11, color:'#64748b', fontWeight:700, letterSpacing:'.06em', textTransform:'uppercase' }}>Invoice item {itemMasterDraft.index + 1} of {lineItems.length}</div>
-            <h2 id="new-item-master-title" style={{ margin:'5px 0 6px', fontSize:20 }}>Add item to Item Master</h2>
-            <p style={{ margin:'0 0 16px', color:'#64748b', fontSize:13 }}>No existing Item Master match was found. Enter the category and vendor name, then click Save Item. The category-based code will fill this invoice row; the next unmatched invoice item will open after saving.</p>
+            <h2 id="new-item-master-title" style={{ margin:'5px 0 6px', fontSize:20 }}>
+              {itemMasterDraft.possible_matches?.length ? 'Review possible Item Master matches' : 'Add item to Item Master'}
+            </h2>
+            <p style={{ margin:'0 0 16px', color:'#64748b', fontSize:13 }}>
+              {itemMasterDraft.possible_matches?.length
+                ? 'These existing items look similar to the invoice description. Select the correct record to reuse its code, or create a new item only if none match.'
+                : 'No likely existing Item Master match was found. Review the name, category, and vendor before creating a new record.'}
+            </p>
+            {!!itemMasterDraft.possible_matches?.length && (
+              <div style={{ display:'grid', gap:8, marginBottom:18 }}>
+                {itemMasterDraft.possible_matches.map(match => (
+                  <div key={match.code} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, padding:10, border:'1px solid #dbeafe', borderRadius:8, background:'#f8fbff' }}>
+                    <div style={{ minWidth:0 }}>
+                      <div style={{ fontWeight:600, color:'#0f172a', fontSize:13 }}>{match.name}</div>
+                      <div style={{ fontSize:12, color:'#64748b', marginTop:3 }}>{match.code}{match.category ? ` · ${match.category}` : ''} · {match.score}% match</div>
+                    </div>
+                    <button type="button" className="btn btn-outline" disabled={savingMasterItem} onClick={() => chooseExistingMasterItem(match)} style={{ flexShrink:0 }}>Use existing</button>
+                  </div>
+                ))}
+                <div style={{ borderTop:'1px solid #e2e8f0', paddingTop:12, color:'#64748b', fontSize:12 }}>
+                  If none of these records is correct, create a new item below.
+                </div>
+              </div>
+            )}
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
               <label style={{ gridColumn:'1 / -1', fontSize:12, color:'#475569' }}>Item name *
                 <input className="input" value={itemMasterDraft.name} onChange={e=>setItemMasterDraft(d=>({...d,name:e.target.value}))} style={{ marginTop:4 }} />
