@@ -442,7 +442,9 @@ const saveNewMasterItem = async () => {
   if (!itemMasterDraft) return
   const name = (itemMasterDraft.name || '').trim()
   if (!name) return toast.error('Enter an item name before saving.')
-  if (!itemMasterDraft.category) return toast.error('Select a category to generate the category-based item code.')
+  const masterGroup = String(itemMasterDraft.master_group || '').trim()
+  if (!masterGroup) return toast.error('Enter or select a master group for this item.')
+  if (!String(itemMasterDraft.category || '').trim()) return toast.error('Enter or select a category under the master group.')
   const subCategory = String(itemMasterDraft.sub_category || '').trim()
   if (!subCategory) return toast.error('Enter a sub-category before saving the item.')
   // Unit of measurement is optional: use the invoice unit when detected,
@@ -485,7 +487,8 @@ const saveNewMasterItem = async () => {
     )
     const code = await codeApi.next('item', categoryPrefix)
     const itemData = {
-      code, name, category: itemMasterDraft.category,
+      code, name, category: itemMasterDraft.category.trim(),
+      master_group: masterGroup,
       sub_category: subCategory,
       uom: invoiceUnit,
       vendor_code: linkedVendor?.code || '',
@@ -504,7 +507,7 @@ const saveNewMasterItem = async () => {
         vendor: {
           code: vendorCode,
           name: vendorName,
-          category: itemMasterDraft.category,
+          category: masterGroup,
           status: 'Active',
         },
       })
