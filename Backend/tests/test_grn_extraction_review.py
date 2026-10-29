@@ -245,6 +245,22 @@ class GRNExtractedRowReviewTests(unittest.TestCase):
             row["extraction_warning"],
         )
 
+    def test_hsn_like_quantity_is_withheld_when_amount_proves_column_shift(self):
+        row = _mark_row_for_review(
+            self.make_row(recd_qty=9405.0, rate=320.0, line_amount=640.0)
+        )
+        self.assertIsNone(row["recd_qty"])
+        self.assertTrue(row["needs_review"])
+        self.assertIn("9405", row["extraction_warning"])
+        self.assertIn("HSN/SAC", row["extraction_warning"])
+
+    def test_large_quantity_is_kept_when_line_arithmetic_supports_it(self):
+        row = _mark_row_for_review(
+            self.make_row(recd_qty=1000.0, rate=1.0, line_amount=1000.0)
+        )
+        self.assertEqual(row["recd_qty"], 1000.0)
+        self.assertFalse(row["needs_review"])
+
     def test_text_parser_keeps_incomplete_item_row_for_review(self):
         rows = _extract_item_rows("LED Fitting 2 Nos", EmptyItemMasterDB())
         self.assertEqual(len(rows), 1)
