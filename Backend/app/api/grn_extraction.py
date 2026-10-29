@@ -48,6 +48,20 @@ def _norm(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (value or "").lower())
 
 
+def _pdf_pages_needing_image_fallback(
+    page_count: int,
+    coordinate_rows: list[dict[str, Any]],
+    max_pages: int = 30,
+) -> list[int]:
+    """Return PDF pages without coordinate rows so scanned/mixed pages get OCR."""
+    pages_with_rows = {
+        row.get("_source_page_index")
+        for row in coordinate_rows
+        if row.get("_source_page_index") is not None
+    }
+    return [index for index in range(min(page_count, max_pages)) if index not in pages_with_rows]
+
+
 def _mark_row_for_review(row: dict[str, Any]) -> dict[str, Any]:
     """Keep extracted invoice evidence and mark incomplete/inconsistent rows for review."""
     warnings = [
@@ -1643,18 +1657,14 @@ async def extract_grn_document(
         # even one digital table row disabled OCR for the entire document, silently
         # losing scanned pages. OCR only pages with no coordinate-extracted rows;
         # this also avoids spending OCR time on pages already handled successfully.
-        pages_with_rows = {
-            row.get("_source_page_index")
-            for row in coordinate_items
-            if row.get("_source_page_index") is not None
-        }
         try:
             import pymupdf
             from PIL import Image
             with pymupdf.open(stream=raw, filetype="pdf") as pdf_document:
-                for page_index in range(min(len(pdf_document), 30)):
-                    if page_index in pages_with_rows:
-                        continue
+                pages_to_ocr = _pdf_pages_needing_image_fallback(
+                    len(pdf_document), coordinate_items
+                )
+                for page_index in pages_to_ocr:
                     page = pdf_document.load_page(page_index)
                     pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2.5, 2.5), alpha=False)
                     if pixmap.width * pixmap.height > 25_000_000:
