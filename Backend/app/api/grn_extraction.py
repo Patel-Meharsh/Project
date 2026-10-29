@@ -682,7 +682,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
         # delivery batches, or rates. Preserve every detected row for GRN review.
         found.append(_mark_row_for_review({
             "item_code": code,
-            "item_name": description,
+            "item_name": ((matched.name or description) if matched else description),
             "vendor_code": "",
             "vendor_name": "",
             "recd_qty": qty,
@@ -1010,7 +1010,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 matched = match_master(description)
                 extracted.append(_mark_row_for_review({
                     "item_code": (matched.code or "") if matched else "",
-                    "item_name": description,
+                    "item_name": ((matched.name or description) if matched else description),
                     "vendor_code": "",
                     "vendor_name": "",
                     "recd_qty": qty,
@@ -1301,7 +1301,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 matched = match_master(description)
                 current_rows.append(_mark_row_for_review({
                     "item_code": (matched.code or "") if matched else "",
-                    "item_name": description,
+                    "item_name": ((matched.name or description) if matched else description),
                     "vendor_code": "",
                     "vendor_name": "",
                     "recd_qty": qty,
