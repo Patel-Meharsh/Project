@@ -1,6 +1,10 @@
 import unittest
 
-from app.api.grn_extraction import _extract_item_rows, _mark_row_for_review
+from app.api.grn_extraction import (
+    _extract_item_rows,
+    _mark_row_for_review,
+    _pdf_pages_needing_image_fallback,
+)
 
 
 class EmptyItemMasterQuery:
@@ -11,6 +15,18 @@ class EmptyItemMasterQuery:
 class EmptyItemMasterDB:
     def query(self, _model):
         return EmptyItemMasterQuery()
+
+
+class GRNPDFPageFallbackTests(unittest.TestCase):
+    def test_mixed_pdf_ocr_only_targets_pages_without_coordinate_rows(self):
+        rows = [
+            {"item_name": "Digital page item", "_source_page_index": 0},
+            {"item_name": "Another digital item", "_source_page_index": 2},
+        ]
+        self.assertEqual(_pdf_pages_needing_image_fallback(4, rows), [1, 3])
+
+    def test_pdf_page_fallback_respects_max_page_limit(self):
+        self.assertEqual(_pdf_pages_needing_image_fallback(35, []), list(range(30)))
 
 
 class GRNExtractedRowReviewTests(unittest.TestCase):
