@@ -345,3 +345,11 @@ class MasterGroupModel(Base):
     status      = Column(String, default="Active")
     created_at  = Column(String)      # ISO timestamp
     updated_at  = Column(String)      # ISO timestamp
+
+
+class CodeReservationModel(Base):
+    """Persist allocated codes so simultaneous requests cannot receive the same code."""
+    __tablename__ = "code_reservations"
+    code = Column(String, primary_key=True)
+    entity = Column(String, nullable=False)
+    prefix = Column(String, nullable=False)
