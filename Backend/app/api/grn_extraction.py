@@ -50,7 +50,7 @@ def _norm(value: str) -> str:
 
 def _clean_item_description(value: str) -> str:
     """Remove explicit leading row serials without damaging product numbers."""
-    description = re.sub(r"\\s+", " ", (value or "")).strip(" .:| -\\t")
+    description = re.sub(r"\s+", " ", (value or "")).strip(" .:| -\t")
     # Remove only a clearly marked serial (1., 01), 2 -). Do not strip a bare
     # leading number followed by whitespace: "15 W LED fitting" is a product.
     previous = None
@@ -63,7 +63,7 @@ def _clean_item_description(value: str) -> str:
             count=1,
             flags=re.I,
         ).strip()
-    return description.strip(" .:| -\\t")
+    return description.strip(" .:| -\t")
 
 
 def _pdf_pages_needing_image_fallback(
