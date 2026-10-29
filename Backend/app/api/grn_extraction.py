@@ -1350,6 +1350,17 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
         # OCR may put the invoice ID on the line immediately after its label.
         r"(?im)^\s*(?:invoice|inv\.?|bill)\s*(?:no\.?|number|num\.?|#)\s*[:\-#]?\s*\n?\s*([A-Z]{2,}[A-Z0-9]*(?:\s*/\s*[A-Z0-9.-]+){1,})\b",
     ], text)
+    if invoice_no and (
+        re.search(
+            r"\b(?:date|dated|gstin|original|recipient|duplicate|triplicate|delivery|reference|purchase|order)\b",
+            invoice_no,
+            re.I,
+        )
+        or _parse_invoice_date(invoice_no)
+    ):
+        # Some layouts place "Date" immediately after "Invoice No."; do not treat
+        # that neighboring field label/date as the invoice identifier.
+        invoice_no = None
     if invoice_no:
         invoice_no = re.sub(r"\s*/\s*", "/", invoice_no).replace(" ", "")
     else:
@@ -1720,7 +1731,9 @@ async def extract_grn_document(
     result = _extract_fields(text, db)
     fields = result.get("fields", {})
     for key in ("invoice_no", "po_no", "grn_date"):
-        if keyword_fields.get(key):
+        if keyword_fields.get(key) and (key != "invoice_no" or not fields.get(key)):
+            # Keep a validated, explicitly labelled invoice ID from the primary
+            # extractor; use the shared keyword parser only when it was not found.
             fields[key] = keyword_fields[key]
     if keyword_fields.get("vendor_code"):
         fields["vendor_code"] = keyword_fields["vendor_code"]
