@@ -877,10 +877,10 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
 
             if not body_words:
                 continue
-            # Numeric values and descriptions can sit on slightly different baselines;
-            # use a little more tolerance than page-wide clustering, but keep it well
-            # below the spacing between separate invoice rows.
-            body_rows = close_row(body_words, max(y_tolerance, median_height * 1.15))
+            # Keep body-row clustering narrower than the spacing between invoice items.
+            # Font bounding boxes can be tall even when baselines are close, so do not
+            # scale this tolerance aggressively with median glyph height.
+            body_rows = close_row(body_words, max(y_tolerance, median_height * 0.8))
 
             for row in body_rows:
                 # Build each cell according to dynamically inferred column boundaries.
