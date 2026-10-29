@@ -797,7 +797,6 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                     header_row_index = row_index
                     break
             if header is None:
-            if header is None:
                 # Some invoices use a short "Item" heading and omit a separate
                 # description heading. Accept it only when the row also contains
                 # quantity, rate/price and amount/value labels.
