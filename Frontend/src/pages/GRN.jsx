@@ -328,7 +328,7 @@ const extractGRNDocument = async (file) => {
           ? items.find(item => normalizeItemName(item.name) === normalizeItemName(withoutLeadingDigit))
           : null
         const tokenSet = value => new Set(String(value || '').toLowerCase()
-          .replace(/[^a-z0-9]+/g, ' ').trim().split(/\\s+/).filter(token => token.length > 1))
+          .replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(token => token.length > 1))
         const sourceTokens = tokenSet(cleanedName)
         const rankedMatches = items.map(item => {
           const itemTokens = tokenSet(item.name)
