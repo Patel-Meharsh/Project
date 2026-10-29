@@ -1044,7 +1044,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 # Preserve credible item rows when one numeric cell was missed by OCR.
                 # Blank values remain editable in the GRN form and must be reviewed;
                 # dropping the whole row silently loses invoice goods.
-                if qty is None and rate is None:
+                if qty is None and rate is None and amount is None:
                     continue
                 if (qty is not None and qty <= 0) or (rate is not None and rate < 0):
                     continue
