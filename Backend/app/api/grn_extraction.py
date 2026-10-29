@@ -48,6 +48,24 @@ def _norm(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (value or "").lower())
 
 
+def _clean_item_description(value: str) -> str:
+    """Remove explicit leading row serials without damaging product numbers."""
+    description = re.sub(r"\\s+", " ", (value or "")).strip(" .:| -\\t")
+    # Remove only a clearly marked serial (1., 01), 2 -). Do not strip a bare
+    # leading number followed by whitespace: "15 W LED fitting" is a product.
+    previous = None
+    while description != previous:
+        previous = description
+        description = re.sub(
+            r"^\\s*(?:(?:sr|s)\\.?\\s*(?:no|number)\\.?\\s*)?\\d{1,3}\\s*[.)-]\\s*(?=[A-Za-z])",
+            "",
+            description,
+            count=1,
+            flags=re.I,
+        ).strip()
+    return description.strip(" .:| -\\t")
+
+
 def _pdf_pages_needing_image_fallback(
     page_count: int,
     coordinate_rows: list[dict[str, Any]],
@@ -733,6 +751,13 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
         token = re.sub(r"[^a-z]", "", value.lower())
         # Header aliases are normalized so punctuation, slashes and spacing do
         # not matter (e.g. "Description of Product / Service").
+        # Explicit serial-number columns must stay separate from the item
+        # description column; otherwise their values get prefixed to item names.
+        if token in {
+            "srno", "sno", "serialno", "serialnumber", "slno", "slnumber",
+            "srnumber", "serial", "srlno", "srlno",
+        }:
+            return "serial"
         if token in {
             "description", "particulars", "item", "items", "itemdescription",
             "descriptionofgoods", "descriptionofgoodsandservices",
@@ -881,7 +906,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
             # number from a neighboring column.
             column_centers = sorted(
                 (x, kind) for kind, x in header.items()
-                if kind in {"description", "qty", "rate", "amount", "unit", "hsn", "gst", "discount", "value_supply"}
+                if kind in {"description", "serial", "qty", "rate", "amount", "unit", "hsn", "gst", "discount", "value_supply"}
             )
             boundaries = [
                 (column_centers[i][0] + column_centers[i + 1][0]) / 2
