@@ -48,6 +48,37 @@ def _norm(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (value or "").lower())
 
 
+def _mark_row_for_review(row: dict[str, Any]) -> dict[str, Any]:
+    """Keep extracted invoice evidence and mark incomplete/inconsistent rows for review."""
+    warnings = [
+        part.strip()
+        for part in str(row.get("extraction_warning") or "").split(";")
+        if part.strip()
+    ]
+    qty = row.get("recd_qty")
+    rate = row.get("rate")
+    amount = row.get("line_amount")
+
+    if qty is None and "quantity was not confidently read" not in warnings:
+        warnings.append("quantity was not confidently read")
+    if rate is None and "rate was not confidently read" not in warnings:
+        warnings.append("rate was not confidently read")
+    if qty is not None and rate is not None and amount is not None:
+        expected = qty * rate
+        if abs(expected - amount) > max(0.05, abs(amount) * 0.015):
+            arithmetic_warning = "quantity × rate differs from the printed line amount"
+            if arithmetic_warning not in warnings:
+                warnings.append(arithmetic_warning)
+
+    if warnings:
+        row["needs_review"] = True
+        row["extraction_warning"] = "; ".join(warnings)
+    else:
+        row["needs_review"] = False
+        row["extraction_warning"] = ""
+    return row
+
+
 def _ocr_quality_score(text: str) -> float:
     """Prefer readable OCR that preserves invoice line rows, not just header text."""
     if not text or not text.strip():
@@ -400,14 +431,10 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             trailing_numbers = re.findall(number_re, body[qm.end():])
             rate = _number(trailing_numbers[0]) if trailing_numbers else None
             amount = _number(trailing_numbers[-1]) if len(trailing_numbers) >= 2 else None
-            # Do not trust a rate inferred from OCR column order unless it is
-            # arithmetically consistent with quantity and line amount. Incorrect
-            # values are worse than blanks in an inventory record.
-            if qty is not None and rate is not None and amount is not None:
-                expected_amount = qty * rate
-                if abs(expected_amount - amount) > max(2.0, expected_amount * 0.03):
-                    rate = None
-                    amount = None
+            # Preserve the values read from the invoice even if the arithmetic
+            # disagrees. The row-level review marker below warns the user rather
+            # than silently erasing OCR evidence that may be correct for tax/discount
+            # or rounding reasons. Never auto-correct the rate from arithmetic alone.
         else:
             # Many invoices omit UOM from the printed row. The previous parser
             # discarded those rows entirely. Try description + quantity + rate +
@@ -437,11 +464,8 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             amount = _number(row_numbers[-1])
             if qty is None or rate is None or amount is None or qty <= 0 or rate < 0 or amount < 0:
                 continue
-            # Validate the inferred amount against quantity × rate. If the
-            # arithmetic is inconsistent, leave amount blank for manual review.
-            expected_amount = qty * rate
-            if expected_amount > 0 and abs(expected_amount - amount) > max(2.0, expected_amount * 0.08):
-                amount = None
+            # Keep the source amount even when quantity × rate disagrees. The
+            # review marker below records the inconsistency without destroying data.
 
         description = re.sub(r"\s+", " ", description).strip(" .:-")
         if len(_norm(description)) < 3 or not re.search(r"[A-Za-z]", description):
@@ -454,7 +478,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
         # Do not deduplicate invoice rows by item code: a supplier may list the
         # same catalog item on multiple lines with different quantities, variants,
         # delivery batches, or rates. Preserve every detected row for GRN review.
-        found.append({
+        found.append(_mark_row_for_review({
             "item_code": code,
             "item_name": description,
             "vendor_code": "",
@@ -468,7 +492,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             "line_amount": amount,
             "match_status": "matched" if matched else "unmatched",
             "source": "receipt_text",
-        })
+        }))
         if code:
             seen_codes.add(code)
 
@@ -750,7 +774,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                         # uncertainty in the warning rather than silently blanking.
                         pass
                 matched = match_master(description)
-                extracted.append({
+                extracted.append(_mark_row_for_review({
                     "item_code": (matched.code or "") if matched else "",
                     "item_name": description,
                     "vendor_code": "",
@@ -762,20 +786,14 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                     "line_amount": amount,
                     "match_status": "matched" if matched else "unmatched",
                     "source": "receipt_text",
-                })
+                }))
     finally:
         document.close()
 
-    # Keep repeated descriptions if they are separate invoice lines, but avoid
-    # accidental duplicate rows generated by wrapped/overlapping text extraction.
-    deduped = []
-    seen = set()
-    for row in extracted:
-        key = (_norm(row["item_name"]), row.get("recd_qty"), row.get("rate"), row.get("line_amount"))
-        if key not in seen:
-            seen.add(key)
-            deduped.append(row)
-    return deduped
+    # Keep every row in document order. Identical item/quantity/rate combinations
+    # can legitimately appear more than once on an invoice; global value-based
+    # deduplication silently removed those real lines.
+    return extracted
 
 def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
     """Read invoice line items from image OCR boxes, using the invoice's own columns.
@@ -1023,20 +1041,25 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                         if len(supported) == 1:
                             rate = round(supported[0], 4)
 
-                # The user's required columns are item name, quantity and rate.
-                # Do not add a row when OCR could not find either numeric field.
-                if qty is None or rate is None or qty <= 0 or rate < 0:
+                # Preserve credible item rows when one numeric cell was missed by OCR.
+                # Blank values remain editable in the GRN form and must be reviewed;
+                # dropping the whole row silently loses invoice goods.
+                if qty is None and rate is None and amount is None:
+                    continue
+                if (qty is not None and qty <= 0) or (rate is not None and rate < 0):
                     continue
                 # Fail closed on HSN/SAC codes shifted into Qty (e.g. 38089400).
                 # A suspicious row is omitted for manual review rather than allowing
                 # an eight-digit tax code to inflate received/accepted inventory.
-                qty_digits = str(int(qty)) if float(qty).is_integer() else ""
-                if qty >= 100000 or (4 <= len(qty_digits) <= 8 and qty == int(qty)):
+                qty_digits = str(int(qty)) if qty is not None and float(qty).is_integer() else ""
+                if qty is not None and (
+                    qty >= 100000 or (4 <= len(qty_digits) <= 8 and qty == int(qty))
+                ):
                     continue
                 if re.fullmatch(r"[\d\s.,/-]+", description):
                     continue
                 matched = match_master(description)
-                current_rows.append({
+                current_rows.append(_mark_row_for_review({
                     "item_code": (matched.code or "") if matched else "",
                     "item_name": description,
                     "vendor_code": "",
@@ -1048,20 +1071,17 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                     "line_amount": amount,
                     "match_status": "matched" if matched else "unmatched",
                     "source": "receipt_text",
-                })
+                }))
             # Score row integrity, not just count. Invoice line amount should agree
             # with quantity × rate within rounding tolerance. Wrong column assignments
             # are penalized; missing amounts remain usable but lower-confidence.
             candidate_score = 0.0
-            seen_descriptions: set[str] = set()
             for item in current_rows:
                 qty_value = item.get("recd_qty")
                 rate_value = item.get("rate")
                 amount_value = item.get("line_amount")
-                description_key = _norm(item.get("item_name", ""))
-                if description_key in seen_descriptions:
-                    candidate_score -= 8
-                seen_descriptions.add(description_key)
+                # Repeated descriptions are valid invoice rows (e.g. same item
+                # supplied from different batches/lines), so do not penalize them.
                 candidate_score += 8
                 if amount_value is not None and qty_value is not None and rate_value is not None:
                     expected = qty_value * rate_value
@@ -1076,19 +1096,10 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 if not item.get("unit"):
                     candidate_score -= 0.5
             # Prefer a candidate with more valid rows only after evaluating integrity.
-            # Rows whose three numeric fields contradict qty × rate are not safe
-            # to prefill: a GRN changes stock, so uncertain numbers must be reviewed
-            # manually rather than presented as reliable extracted values.
-            validated_rows = []
-            for item in current_rows:
-                qty_value = item.get("recd_qty")
-                rate_value = item.get("rate")
-                amount_value = item.get("line_amount")
-                if qty_value is not None and rate_value is not None and amount_value is not None:
-                    expected = qty_value * rate_value
-                    if abs(expected - amount_value) > max(0.05, abs(amount_value) * 0.015):
-                        continue
-                validated_rows.append(item)
+            # Keep rows even when qty × rate conflicts with the printed amount.
+            # Discounts, tax-inclusive rates, rounding, or OCR errors can explain
+            # differences; preserve the evidence and flag it for manual review.
+            validated_rows = [_mark_row_for_review(item) for item in current_rows]
 
             if candidate_score > best_score or (
                 candidate_score == best_score and len(validated_rows) > len(best_rows)
@@ -1551,7 +1562,8 @@ async def extract_grn_document(
         supplemental_result = _extract_fields(
             "\n".join(part for part in (text, supplemental_field_text) if part), db
         )
-        fields = result.get("fields", {})
+        # Keep keyword-parser values already applied above. Resetting this dict to
+        # result["fields"] here discarded successful invoice/PO/vendor matches.
         supplemental_fields = supplemental_result.get("fields", {})
         # Only replace missing header fields; never overwrite a populated field
         # with a blank or an unmatched supplier candidate.
@@ -1645,19 +1657,9 @@ async def extract_grn_document(
                         candidate = _extract_image_table_line_items(page_image, db)
                         if candidate:
                             image_candidates.extend(candidate)
-                # Remove OCR duplicates while preserving distinct rows with
-                # different item/quantity/rate combinations.
-                seen = set()
-                for row in image_candidates:
-                    key = (
-                        _norm(str(row.get("item_name") or "")),
-                        row.get("recd_qty"),
-                        row.get("rate"),
-                        row.get("line_amount"),
-                    )
-                    if key not in seen:
-                        seen.add(key)
-                        coordinate_items.append(row)
+                # Keep rows from every page in source order. Value-based deduplication
+                # can erase legitimate repeated invoice lines, including identical rows.
+                coordinate_items.extend(image_candidates)
             except Exception:
                 # Existing PDF text/OCR extraction remains a safe fallback.
                 pass
@@ -1675,6 +1677,14 @@ async def extract_grn_document(
                 result["warnings"].append(
                     "One or more invoice descriptions could not be matched confidently to the item master."
                 )
+
+    review_rows = [row for row in result.get("line_items", []) if row.get("needs_review")]
+    if review_rows:
+        result["warnings"] = list(dict.fromkeys(
+            result.get("warnings", []) + [
+                f"{len(review_rows)} extracted line(s) need manual review because one or more values are incomplete or inconsistent."
+            ]
+        ))
 
     result["filename"] = (file.filename or "document")[:160]
     result["document_type"] = "pdf" if content_type == "application/pdf" else "image"
