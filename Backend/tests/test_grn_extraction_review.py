@@ -190,6 +190,36 @@ class GRNPDFCoordinateIntegrationTests(unittest.TestCase):
         self.assertEqual(rows[1]["recd_qty"], 4.0)
 
 
+    def test_separate_unit_column_preserves_uncommon_unit_abbreviation(self):
+        import pymupdf
+
+        document = pymupdf.open()
+        page = document.new_page(width=620, height=240)
+        for x, y, label in [
+            (40, 100, "Description"),
+            (280, 100, "Unit"),
+            (350, 100, "Quantity"),
+            (430, 100, "Rate"),
+            (520, 100, "Amount"),
+        ]:
+            page.insert_text((x, y), label, fontsize=9)
+        for x, y, value in [
+            (55, 130, "PVC Pipe"),
+            (290, 130, "RFT"),
+            (360, 130, "12"),
+            (440, 130, "25.00"),
+            (520, 130, "300.00"),
+        ]:
+            page.insert_text((x, y), value, fontsize=9)
+
+        raw = document.tobytes()
+        document.close()
+
+        rows = _extract_pdf_table_line_items(raw, EmptyItemMasterDB())
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["unit"], "RFT")
+        self.assertEqual(rows[0]["recd_qty"], 12.0)
+
     def test_full_twenty_four_line_invoice_table_keeps_every_goods_row(self):
         import pymupdf
 
