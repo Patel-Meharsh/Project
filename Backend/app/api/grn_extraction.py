@@ -361,63 +361,84 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
     """Compare Tesseract and optional PaddleOCR candidates after local preprocessing."""
     import pytesseract
 
-    candidates: list[str] = []
-    for variant in _prepare_ocr_variants(image):
+    variants = _prepare_ocr_variants(image)
+    plain_candidates: list[dict[str, Any]] = []
+    for variant_index, variant in enumerate(variants):
         for mode in modes:
             config = f"--oem 3 --psm {mode}"
             candidate = pytesseract.image_to_string(variant, config=config).strip()
             if candidate:
                 # Correct high-confidence, common OCR confusion in quantities.
                 candidate = re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", candidate, flags=re.I)
-                candidates.append(candidate)
+                plain_candidates.append({
+                    "text": candidate,
+                    "variant": variant,
+                    "variant_index": variant_index,
+                    "mode": mode,
+                    "score": _ocr_quality_score(candidate),
+                })
 
-            # Reconstruct rows from word bounding boxes as a second candidate.
-            # This often preserves table columns better than image_to_string,
-            # which can read quantity/rate/amount in separate or misleading lines.
-            try:
-                from pytesseract import Output
-                data = pytesseract.image_to_data(
-                    variant, config=config, output_type=Output.DICT
-                )
-                words = []
-                for index, raw_word in enumerate(data.get("text", [])):
-                    word = (raw_word or "").strip()
-                    try:
-                        confidence = float(data["conf"][index])
-                    except (ValueError, TypeError, KeyError):
-                        confidence = -1
-                    if word and confidence >= 15:
-                        words.append({
-                            "text": word,
-                            "x": int(data["left"][index]),
-                            "y": int(data["top"][index]) + int(data["height"][index]) // 2,
-                        })
-                # Cluster words by vertical centre, then order each row left-to-right.
-                words.sort(key=lambda word: (word["y"], word["x"]))
-                rows = []
-                for word in words:
-                    best_row = None
-                    best_distance = None
-                    for row in rows[-4:]:
-                        centre = sum(item["y"] for item in row) / len(row)
-                        distance = abs(word["y"] - centre)
-                        if distance <= max(10, int(variant.height * 0.006)) and (
-                            best_distance is None or distance < best_distance
-                        ):
-                            best_row, best_distance = row, distance
-                    if best_row is None:
-                        rows.append([word])
-                    else:
-                        best_row.append(word)
-                reconstructed = "\n".join(
-                    " ".join(item["text"] for item in sorted(row, key=lambda item: item["x"]))
-                    for row in rows
-                ).strip()
-                if reconstructed:
-                    candidates.append(reconstructed)
-            except Exception:
-                # Plain OCR remains available if TSV/bounding-box reconstruction fails.
-                pass
+    # Keep every inexpensive plain-text candidate, but run the more expensive TSV
+    # word-box pass only for the best candidate from each page-segmentation mode.
+    # Two strong box reconstructions usually preserve table alignment without
+    # tripling OCR work across every threshold/contrast variant.
+    candidates = [record["text"] for record in plain_candidates]
+    best_by_mode: dict[int, dict[str, Any]] = {}
+    for record in plain_candidates:
+        mode = record["mode"]
+        if mode not in best_by_mode or record["score"] > best_by_mode[mode]["score"]:
+            best_by_mode[mode] = record
+    selected_box_candidates = sorted(
+        best_by_mode.values(), key=lambda record: record["score"], reverse=True
+    )[:2]
+
+    for record in selected_box_candidates:
+        try:
+            from pytesseract import Output
+            data = pytesseract.image_to_data(
+                record["variant"],
+                config=f"--oem 3 --psm {record['mode']}",
+                output_type=Output.DICT,
+            )
+            words = []
+            for index, raw_word in enumerate(data.get("text", [])):
+                word = (raw_word or "").strip()
+                try:
+                    confidence = float(data["conf"][index])
+                except (ValueError, TypeError, KeyError):
+                    confidence = -1
+                if word and confidence >= 15:
+                    words.append({
+                        "text": word,
+                        "x": int(data["left"][index]),
+                        "y": int(data["top"][index]) + int(data["height"][index]) // 2,
+                    })
+            # Cluster words by vertical centre, then order each row left-to-right.
+            words.sort(key=lambda word: (word["y"], word["x"]))
+            rows = []
+            for word in words:
+                best_row = None
+                best_distance = None
+                for row in rows[-4:]:
+                    centre = sum(item["y"] for item in row) / len(row)
+                    distance = abs(word["y"] - centre)
+                    if distance <= max(10, int(record["variant"].height * 0.006)) and (
+                        best_distance is None or distance < best_distance
+                    ):
+                        best_row, best_distance = row, distance
+                if best_row is None:
+                    rows.append([word])
+                else:
+                    best_row.append(word)
+            reconstructed = "\n".join(
+                " ".join(item["text"] for item in sorted(row, key=lambda item: item["x"]))
+                for row in rows
+            ).strip()
+            if reconstructed:
+                candidates.append(reconstructed)
+        except Exception:
+            # Plain OCR remains available if TSV/bounding-box reconstruction fails.
+            pass
 
     paddle_text = _paddleocr_candidate(image)
     if paddle_text:
