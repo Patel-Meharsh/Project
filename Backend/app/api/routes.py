@@ -1248,6 +1248,18 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
         return _re.sub(r"[^a-z0-9]", "", (value or "").strip().lower())
 
     line_items = data.pop("line_items", []) or []
+    store_location = str(data.get("store_location") or "").strip()
+    if not store_location:
+        raise HTTPException(400, "Store location is required before saving a GRN.")
+    location = db.query(models.LocationModel).filter_by(code=store_location).first()
+    if not location:
+        raise HTTPException(422, f"Store location '{store_location}' does not exist.")
+    requested_grn_no = str(data.get("grn_no") or "").strip()
+    if requested_grn_no and db.query(models.GRNModel).filter_by(grn_no=requested_grn_no).first():
+        raise HTTPException(409, f"GRN number '{requested_grn_no}' already exists. Generate a new GRN number.")
+    requested_po_no = str(data.get("po_no") or "").strip()
+    if requested_po_no and not db.query(models.PurchaseOrderModel).filter_by(po_no=requested_po_no).first():
+        raise HTTPException(422, f"Purchase order '{requested_po_no}' does not exist.")
     top_vendor_name = (data.get("vendor_name") or "").strip()
     line_vendor_names = [str(li.get("vendor_name") or "").strip() for li in line_items]
     supplied_vendor_code = (data.get("vendor_code") or "").strip()
