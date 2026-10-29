@@ -9,6 +9,7 @@ from app.api.grn_extraction import (
     _append_pdf_description_continuation,
     _invoice_number_from_nearby_label,
     _extract_pdf_table_line_items,
+    _extract_fields,
 )
 
 
@@ -57,6 +58,19 @@ class GRNPDFPageFallbackTests(unittest.TestCase):
 
 
 class GRNHeaderFallbackTests(unittest.TestCase):
+    def test_primary_field_extractor_recovers_separated_ecs_style_invoice_number(self):
+        text = (
+            "Tax Invoice\nInvoice No. (ORIGINAL FOR RECIPIENT)\n"
+            "ECS LOTIONS\nECS/26-27/0081\nDated 12-Oct-26"
+        )
+        result = _extract_fields(text, EmptyItemMasterDB())
+        self.assertEqual(result["fields"]["invoice_no"], "ECS/26-27/0081")
+
+    def test_primary_field_extractor_skips_date_after_invoice_label(self):
+        text = "Tax Invoice\nInvoice No.\nDate 25/07/2026\n468"
+        result = _extract_fields(text, EmptyItemMasterDB())
+        self.assertEqual(result["fields"]["invoice_no"], "468")
+
     def test_invoice_number_is_found_when_separated_from_label_by_other_header_text(self):
         text = "Tax Invoice\nInvoice No. (ORIGINAL FOR RECIPIENT)\nECS LOTIONS\nECS/26-27/0081\nDated 12-Oct-26"
         self.assertEqual(_invoice_number_from_nearby_label(text), "ECS/26-27/0081")
