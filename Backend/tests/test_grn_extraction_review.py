@@ -1,6 +1,16 @@
 import unittest
 
-from app.api.grn_extraction import _mark_row_for_review
+from app.api.grn_extraction import _extract_item_rows, _mark_row_for_review
+
+
+class EmptyItemMasterQuery:
+    def all(self):
+        return []
+
+
+class EmptyItemMasterDB:
+    def query(self, _model):
+        return EmptyItemMasterQuery()
 
 
 class GRNExtractedRowReviewTests(unittest.TestCase):
@@ -39,6 +49,21 @@ class GRNExtractedRowReviewTests(unittest.TestCase):
             "quantity × rate differs from the printed line amount",
             row["extraction_warning"],
         )
+
+    def test_text_parser_keeps_incomplete_item_row_for_review(self):
+        rows = _extract_item_rows("LED Fitting 2 Nos", EmptyItemMasterDB())
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["item_name"], "LED Fitting")
+        self.assertEqual(rows[0]["recd_qty"], 2.0)
+        self.assertIsNone(rows[0]["rate"])
+        self.assertTrue(rows[0]["needs_review"])
+
+    def test_text_parser_does_not_deduplicate_identical_invoice_lines(self):
+        text = "LED Fitting 2 Nos 320 640\\nLED Fitting 2 Nos 320 640"
+        rows = _extract_item_rows(text, EmptyItemMasterDB())
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["item_name"], rows[1]["item_name"])
+        self.assertEqual(rows[0]["recd_qty"], rows[1]["recd_qty"])
 
 
 if __name__ == "__main__":
