@@ -319,19 +319,45 @@ const extractGRNDocument = async (file) => {
       .filter(({ cleanedName }) => !/\\b(?:carting|freight|transport(?:ation)?|delivery\\s+charges?|packing\\s+charges?|handling\\s+charges?|loading|unloading|round\\s*off)\\b/i.test(cleanedName))
       .map(({ row, idx, cleanedName }) => {
         const normalizedName = normalizeItemName(cleanedName)
-        const withoutLeadingDigit = cleanedName.replace(/^\\s*\\d(?=[a-z])/i, '').trim()
-        // Exact lookup first. Then allow a single OCR-added leading digit only
-        // when the remaining text exactly matches an existing master item.
-        const masterMatch = items.find(item =>
-          (row.item_code && item.code === row.item_code) ||
-          (normalizedName && normalizeItemName(item.name) === normalizedName)
-        ) || items.find(item =>
-          withoutLeadingDigit !== cleanedName &&
-          normalizeItemName(item.name) === normalizeItemName(withoutLeadingDigit)
+        const validCodeMatch = items.find(item => row.item_code && item.code === row.item_code)
+        const exactNameMatch = items.find(item =>
+          normalizedName && normalizeItemName(item.name) === normalizedName
         )
+        const withoutLeadingDigit = cleanedName.replace(/^\\s*\\d(?=[a-z])/i, '').trim()
+        const serialCleanMatch = withoutLeadingDigit !== cleanedName
+          ? items.find(item => normalizeItemName(item.name) === normalizeItemName(withoutLeadingDigit))
+          : null
+        const tokenSet = value => new Set(String(value || '').toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ').trim().split(/\\s+/).filter(token => token.length > 1))
+        const sourceTokens = tokenSet(cleanedName)
+        const rankedMatches = items.map(item => {
+          const itemTokens = tokenSet(item.name)
+          const intersection = [...sourceTokens].filter(token => itemTokens.has(token)).length
+          const union = new Set([...sourceTokens, ...itemTokens]).size
+          const tokenScore = union ? intersection / union : 0
+          const sourceNorm = normalizeItemName(cleanedName)
+          const itemNorm = normalizeItemName(item.name)
+          const containmentScore = sourceNorm && itemNorm && (sourceNorm.includes(itemNorm) || itemNorm.includes(sourceNorm))
+            ? Math.min(sourceNorm.length, itemNorm.length) / Math.max(sourceNorm.length, itemNorm.length)
+            : 0
+          return { item, score: Math.max(tokenScore, containmentScore) }
+        }).filter(match => match.score >= 0.45)
+          .sort((a, b) => b.score - a.score)
+        const bestCandidate = rankedMatches[0]
+        const runnerUp = rankedMatches[1]
+        const confidentSimilarityMatch = bestCandidate &&
+          bestCandidate.score >= 0.82 &&
+          (!runnerUp || bestCandidate.score - runnerUp.score >= 0.12)
+          ? bestCandidate.item
+          : null
+        const masterMatch = validCodeMatch || exactNameMatch || serialCleanMatch || confidentSimilarityMatch
+        const possibleMatches = masterMatch ? [] : rankedMatches.slice(0, 3).map(({ item, score }) => ({
+          code: item.code, name: item.name, category: item.category || '', score: Math.round(score * 100),
+        }))
+        const uncertainMatch = !masterMatch && possibleMatches.length > 0
         return {
           id: Date.now() + idx,
-          item_code: masterMatch?.code || (row.item_code || ''),
+          item_code: masterMatch?.code || '',
           uom: row.uom || row.unit || '',
           item_name: masterMatch?.name || cleanedName || '',
           vendor_code: fields.vendor_code || '',
@@ -340,8 +366,11 @@ const extractGRNDocument = async (file) => {
           // Default accepted quantity to received quantity for GRN entry.
           accepted_qty: row.accepted_qty ?? row.recd_qty ?? '',
           rate: row.rate ?? '',
-          needs_review: Boolean(row.needs_review),
-          extraction_warning: row.extraction_warning || '',
+          needs_review: Boolean(row.needs_review || uncertainMatch),
+          extraction_warning: row.extraction_warning || (uncertainMatch
+            ? 'Possible existing Item Master matches need review before creating a new item.'
+            : ''),
+          possible_matches: possibleMatches,
         }
       })
     // Replace existing rows even when no items were detected, so rows from an
