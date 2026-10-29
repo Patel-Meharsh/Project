@@ -554,7 +554,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
 
         # OCR may keep a row together, omit the serial number, or place a serial
         # number directly against the description. Do not require a serial number.
-        body = re.sub(r"^\s*[\W_]*\d{1,3}\s*[\W_]*", "", line)
+        body = re.sub(r"^\s*[\W_]*\d{1,3}\s*[.)-]\s*", "", line)
         qty_matches = list(re.finditer(rf"(?<![A-Za-z])({number_re})\s*({unit_re})\b", body, re.I))
         qty = rate = amount = None
         unit = ""
@@ -655,7 +655,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             # Keep the source amount even when quantity × rate disagrees. The
             # review marker below records the inconsistency without destroying data.
 
-        description = re.sub(r"\s+", " ", description).strip(" .:-")
+        description = _clean_item_description(description)
         if len(_norm(description)) < 3 or not re.search(r"[A-Za-z]", description):
             continue
         if re.search(r"\b(?:cgst|sgst|igst|total|round off|tax|gstin|invoice|dated)\b", description, re.I):
@@ -947,14 +947,14 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                         cells.setdefault(kind, []).append(word)
                 # Preserve reading order when a product name wraps onto a lower baseline.
                 description_words = sorted(cells.get("description", []), key=lambda w: (w["y"], w["x0"]))
-                description = " ".join(w["text"] for w in description_words).strip(" .:|-\t")
+                description = _clean_item_description(" ".join(w["text"] for w in description_words))
                 if not description or not re.search(r"[A-Za-z]{2,}", description):
                     continue
                 if re.search(r"\b(?:description|particulars|quantity|qty|rate|amount|subtotal|grand total|cgst|sgst|igst|taxable|invoice|page)\b", description, re.I):
                     continue
                 # Remove only a leading row serial; preserve meaningful leading
                 # product values such as "15 W LED fitting".
-                description = re.sub(r"^\s*\d{1,3}[.)]?\s+(?=[A-Za-z])", "", description).strip()
+                description = _clean_item_description(description)
 
                 def cell_text(kind: str) -> str:
                     return " ".join(w["text"] for w in sorted(cells.get(kind, []), key=lambda w: w["x0"]))
@@ -1229,7 +1229,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 def cell(kind: str) -> str:
                     return " ".join(w["text"] for w in sorted(cells.get(kind, []), key=lambda w: w["x0"]))
 
-                description = re.sub(r"\s+", " ", cell("description")).strip(" .:|-\t")
+                description = _clean_item_description(cell("description"))
                 if not description or not re.search(r"[A-Za-z]{2,}", description):
                     continue
                 if re.search(r"\b(?:description|particulars|quantity|qty|rate|amount|subtotal|total|cgst|sgst|igst|taxable|invoice|page|gstin)\b", description, re.I):
@@ -1237,7 +1237,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 # Freight/carting/packing are invoice charges, not stock items.
                 if re.search(r"\b(?:carting|freight|transport(?:ation)?|delivery\s+charges?|packing\s+charges?|handling\s+charges?|loading|unloading|round\s*off)\b", description, re.I):
                     continue
-                description = re.sub(r"^\s*\d{1,3}[.)]?\s+(?=[A-Za-z])", "", description).strip()
+                description = _clean_item_description(description)
                 # Reject tiny OCR fragments (e.g. "sis") as item descriptions.
                 # They are commonly misread remnants of a longer product name and
                 # must not become a selectable GRN item or trigger a weak catalog match.
