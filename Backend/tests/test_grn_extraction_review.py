@@ -177,7 +177,7 @@ class GRNPDFCoordinateIntegrationTests(unittest.TestCase):
 
         for index in range(1, 25):
             y = 125 + index * 25
-            name = "Repeated Cleaning Cloth" if index in (4, 19) else f"Invoice Item {index:02d}"
+            name = "Repeated Cleaning Cloth" if index in (4, 19) else f"Cleaning Supply Item {index:02d}"
             for x, value in [
                 (40, str(index)),
                 (55, name),
