@@ -328,7 +328,7 @@ const extractGRNDocument = async (file) => {
     setPendingMasterIndexes(unmatched)
     if (unmatched.length) {
       const first = suggestedRows[unmatched[0]]
-      setItemMasterDraft({ index: unmatched[0], name: first.item_name, ...suggestItemMasterDefaults(first.item_name, items), uom: first.uom || '', vendor_name: fields.vendor_name || '', sub_category: '' })
+      setItemMasterDraft({ index: unmatched[0], name: first.item_name, ...suggestItemMasterDefaults(first.item_name, items), uom: first.uom || '', vendor_name: first.vendor_name || fields.vendor_name || '', sub_category: '' })
     }
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
@@ -622,13 +622,13 @@ const createGRN = async () => {
           <div role="dialog" aria-modal="true" aria-labelledby="new-item-master-title" style={{ width:'min(560px, 100%)', maxHeight:'90vh', overflowY:'auto', background:'#fff', borderRadius:14, padding:22, boxShadow:'0 20px 60px rgba(0,0,0,.25)' }}>
             <div style={{ fontSize:11, color:'#64748b', fontWeight:700, letterSpacing:'.06em', textTransform:'uppercase' }}>Invoice item {itemMasterDraft.index + 1} of {lineItems.length}</div>
             <h2 id="new-item-master-title" style={{ margin:'5px 0 6px', fontSize:20 }}>Add item to Item Master</h2>
-            <p style={{ margin:'0 0 16px', color:'#64748b', fontSize:13 }}>No existing Item Master match was found. Review the details and click Save Item; the generated code will then fill this invoice row.</p>
+            <p style={{ margin:'0 0 16px', color:'#64748b', fontSize:13 }}>No existing Item Master match was found. Enter the category and vendor name, then click Save Item. The category-based code will fill this invoice row; the next unmatched invoice item will open after saving.</p>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
               <label style={{ gridColumn:'1 / -1', fontSize:12, color:'#475569' }}>Item name *
                 <input className="input" value={itemMasterDraft.name} onChange={e=>setItemMasterDraft(d=>({...d,name:e.target.value}))} style={{ marginTop:4 }} />
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Category *
-                <select className="input" value={itemMasterDraft.category} onChange={e=>setItemMasterDraft(d=>({...d,category:e.target.value}))} style={{ marginTop:4 }}>
+                <select required className="input" value={itemMasterDraft.category} onChange={e=>setItemMasterDraft(d=>({...d,category:e.target.value}))} style={{ marginTop:4 }}>
                   <option value="">Select category</option>
                   {[...new Set(items.map(i=>i.category).filter(Boolean))].sort().map(category=><option key={category} value={category}>{category}</option>)}
                   {['Cleaning','Electrical','Stationery','Washroom','Waste Management','General'].filter(category=>!items.some(i=>(i.category||'').toLowerCase()===category.toLowerCase())).map(category=><option key={category} value={category}>{category}</option>)}
@@ -642,7 +642,7 @@ const createGRN = async () => {
                 {!itemMasterDraft.uom && <span style={{ display:'block', marginTop:4, color:'#64748b' }}>No unit detected; you can still save this item.</span>}
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Vendor name *
-                <input className="input" placeholder="Enter supplier/vendor name" value={itemMasterDraft.vendor_name} onChange={e=>setItemMasterDraft(d=>({...d,vendor_name:e.target.value}))} style={{ marginTop:4 }} list="grn-item-vendor-options" />
+                <input required className="input" placeholder="Enter supplier/vendor name" value={itemMasterDraft.vendor_name} onChange={e=>setItemMasterDraft(d=>({...d,vendor_name:e.target.value}))} style={{ marginTop:4 }} list="grn-item-vendor-options" />
                 <datalist id="grn-item-vendor-options">
                   {vendors.map(v => <option key={v.code} value={v.name} />)}
                 </datalist>
