@@ -5,6 +5,7 @@ from app.api.grn_extraction import (
     _mark_row_for_review,
     _pdf_pages_needing_image_fallback,
     _line_item_quality,
+    _choose_pdf_page_rows,
 )
 
 
@@ -40,6 +41,16 @@ class GRNPDFPageFallbackTests(unittest.TestCase):
         complete = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": 320, "line_amount": 640}]
         incomplete = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": None, "line_amount": 640}]
         self.assertGreater(_line_item_quality(complete), _line_item_quality(incomplete))
+
+    def test_pdf_page_uses_better_ocr_candidate(self):
+        existing = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": None, "line_amount": 640}]
+        candidate = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": 320, "line_amount": 640}]
+        self.assertIs(_choose_pdf_page_rows(existing, candidate), candidate)
+
+    def test_pdf_page_keeps_existing_rows_when_ocr_is_worse(self):
+        existing = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": 320, "line_amount": 640}]
+        candidate = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": None, "line_amount": 640}]
+        self.assertIs(_choose_pdf_page_rows(existing, candidate), existing)
 
 
 class GRNExtractedRowReviewTests(unittest.TestCase):
