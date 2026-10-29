@@ -57,7 +57,7 @@ def _clean_item_description(value: str) -> str:
     while description != previous:
         previous = description
         description = re.sub(
-            r"^\\s*(?:(?:sr|s)\\.?\\s*(?:no|number)\\.?\\s*)?\\d{1,3}\\s*[.)-]\\s*(?=[A-Za-z])",
+            r"^\s*(?:(?:sr|s)\.?\s*(?:no|number)\.?\s*)?\d{1,3}\s*[.)-]\s*(?=[A-Za-z])",
             "",
             description,
             count=1,
