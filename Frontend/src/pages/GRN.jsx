@@ -80,7 +80,7 @@ function suggestItemMasterDefaults(name, items) {
   const tokens = value => new Set(String(value || '').toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(token => token.length > 1))
   const target = tokens(name)
-  if (!target.size) return { category: '', sub_category: '', uom: '' }
+  if (!target.size) return { master_group: '', category: '', sub_category: '', uom: '' }
   const ranked = items.map(item => {
     const candidate = tokens(item.name)
     const overlap = [...target].filter(token => candidate.has(token)).length
@@ -90,13 +90,19 @@ function suggestItemMasterDefaults(name, items) {
   const best = ranked[0]
   // Only use a reasonably strong match; never infer from a weak/ambiguous name.
   if (!best || best.score < 0.5 || (ranked[1] && best.score - ranked[1].score < 0.12)) {
-    return { category: '', uom: '' }
+    return { master_group: '', category: '', sub_category: '', uom: '' }
   }
   return {
+    master_group: best.item.master_group_name || best.item.master_group || '',
     category: best.item.category || '',
     sub_category: best.item.sub_category || '',
     uom: best.item.uom || '',
   }
+}
+
+const CATEGORY_SUGGESTIONS_BY_GROUP = {
+  hardware: ['Door Fittings', 'Fasteners', 'Plumbing Fittings', 'Hand Tools'],
+  electrical: ['Lighting', 'Wiring'],
 }
 
 export default function GRN() {
