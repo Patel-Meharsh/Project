@@ -493,6 +493,48 @@ def get_items(category: Optional[str] = None, db: Session = Depends(get_db), cur
         result.append(d)
     return result
 
+@router.post("/items/with-vendor")
+def create_item_with_vendor(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
+    """Create an item and its new vendor in one database transaction."""
+    _require_role(current_user, "admin")
+    item_data = data.get("item")
+    vendor_data = data.get("vendor")
+    if not isinstance(item_data, dict) or not str(item_data.get("code") or "").strip() or not str(item_data.get("name") or "").strip():
+        raise HTTPException(400, "Item code and name are required.")
+    if vendor_data is not None and (
+        not isinstance(vendor_data, dict)
+        or not str(vendor_data.get("code") or "").strip()
+        or not str(vendor_data.get("name") or "").strip()
+    ):
+        raise HTTPException(400, "Vendor code and name are required when creating a vendor.")
+
+    try:
+        vendor = None
+        item_payload = dict(item_data)
+        if vendor_data is not None:
+            vendor = models.VendorModel(**_clean(vendor_data, models.VendorModel))
+            db.add(vendor)
+            db.flush()
+            item_payload["vendor_code"] = vendor.code
+        _resolve_master_group(item_payload, db)
+        item = models.ItemModel(**_clean(item_payload, models.ItemModel))
+        db.add(item)
+        db.flush()
+        db.commit()
+        db.refresh(item)
+        if vendor is not None:
+            db.refresh(vendor)
+        return {"item": item, "vendor": vendor}
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "The item or vendor code already exists. Refresh the data and try again.")
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise HTTPException(500, "Could not create the item and vendor. No changes were saved.")
+
 @router.post("/items")
 def create_item(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
     _require_role(current_user, "admin")
