@@ -754,8 +754,8 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
         # Explicit serial-number columns must stay separate from the item
         # description column; otherwise their values get prefixed to item names.
         if token in {
-            "srno", "sno", "serialno", "serialnumber", "slno", "slnumber",
-            "srnumber", "serial", "srlno", "srlno",
+            "sr", "sl", "sr", "sl", "srno", "sno", "serialno", "serialnumber", "slno", "slnumber",
+            "srnumber", "serial", "srlno",
         }:
             return "serial"
         if token in {
@@ -1045,7 +1045,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
     def label_kind(value: str) -> str | None:
         value = normalize_label(value)
         if value in {
-            "srno", "sno", "serialno", "serialnumber", "slno", "slnumber",
+            "sr", "sl", "srno", "sno", "serialno", "serialnumber", "slno", "slnumber",
             "srnumber", "serial", "srlno",
         }:
             return "ignore_serial"
