@@ -10,7 +10,19 @@ from app.api.grn_extraction import (
     _invoice_number_from_nearby_label,
     _extract_pdf_table_line_items,
     _extract_fields,
+    _clean_item_description,
 )
+
+
+class GRNItemDescriptionCleanupTests(unittest.TestCase):
+    def test_removes_explicit_serial_number_from_item_name(self):
+        self.assertEqual(_clean_item_description("01. Lizol Floor Cleaner"), "Lizol Floor Cleaner")
+        self.assertEqual(_clean_item_description("2) Harpic Toilet Cleaner"), "Harpic Toilet Cleaner")
+        self.assertEqual(_clean_item_description("Sr. No. 3 - M Fold Napkin"), "M Fold Napkin")
+
+    def test_preserves_numbers_that_are_part_of_product_names(self):
+        self.assertEqual(_clean_item_description("15 W LED Fitting Light"), "15 W LED Fitting Light")
+        self.assertEqual(_clean_item_description("2 Ltr White Phenyl"), "2 Ltr White Phenyl")
 
 
 class EmptyItemMasterQuery:
