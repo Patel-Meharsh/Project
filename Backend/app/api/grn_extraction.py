@@ -868,7 +868,8 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                     kind = column_for((word["x0"] + word["x1"]) / 2)
                     if kind:
                         cells.setdefault(kind, []).append(word)
-                description_words = sorted(cells.get("description", []), key=lambda w: w["x0"])
+                # Preserve reading order when a product name wraps onto a lower baseline.
+                description_words = sorted(cells.get("description", []), key=lambda w: (w["y"], w["x0"]))
                 description = " ".join(w["text"] for w in description_words).strip(" .:|-\t")
                 if not description or not re.search(r"[A-Za-z]{2,}", description):
                     continue
