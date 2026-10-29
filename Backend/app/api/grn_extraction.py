@@ -1673,6 +1673,14 @@ async def extract_grn_document(
                     "One or more invoice descriptions could not be matched confidently to the item master."
                 )
 
+    review_rows = [row for row in result.get("line_items", []) if row.get("needs_review")]
+    if review_rows:
+        result["warnings"] = list(dict.fromkeys(
+            result.get("warnings", []) + [
+                f"{len(review_rows)} extracted line(s) need manual review because one or more values are incomplete or inconsistent."
+            ]
+        ))
+
     result["filename"] = (file.filename or "document")[:160]
     result["document_type"] = "pdf" if content_type == "application/pdf" else "image"
     return result
