@@ -1569,7 +1569,8 @@ async def extract_grn_document(
         supplemental_result = _extract_fields(
             "\n".join(part for part in (text, supplemental_field_text) if part), db
         )
-        fields = result.get("fields", {})
+        # Keep keyword-parser values already applied above. Resetting this dict to
+        # result["fields"] here discarded successful invoice/PO/vendor matches.
         supplemental_fields = supplemental_result.get("fields", {})
         # Only replace missing header fields; never overwrite a populated field
         # with a blank or an unmatched supplier candidate.
