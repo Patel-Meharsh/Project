@@ -80,7 +80,7 @@ function suggestItemMasterDefaults(name, items) {
   const tokens = value => new Set(String(value || '').toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(token => token.length > 1))
   const target = tokens(name)
-  if (!target.size) return { category: '', uom: '' }
+  if (!target.size) return { category: '', sub_category: '', uom: '' }
   const ranked = items.map(item => {
     const candidate = tokens(item.name)
     const overlap = [...target].filter(token => candidate.has(token)).length
@@ -94,6 +94,7 @@ function suggestItemMasterDefaults(name, items) {
   }
   return {
     category: best.item.category || '',
+    sub_category: best.item.sub_category || '',
     uom: best.item.uom || '',
   }
 }
@@ -433,6 +434,8 @@ const saveNewMasterItem = async () => {
   const name = (itemMasterDraft.name || '').trim()
   if (!name) return toast.error('Enter an item name before saving.')
   if (!itemMasterDraft.category) return toast.error('Select a category to generate the category-based item code.')
+  const subCategory = String(itemMasterDraft.sub_category || '').trim()
+  if (!subCategory) return toast.error('Enter a sub-category before saving the item.')
   // Unit of measurement is optional: use the invoice unit when detected,
   // otherwise allow the user to create the master item without blocking.
   const invoiceUnit = String(lineItems[itemMasterDraft.index]?.uom || itemMasterDraft.uom || '').trim()
@@ -484,9 +487,7 @@ const saveNewMasterItem = async () => {
     const code = await codeApi.next('item', categoryPrefix)
     const created = await itemApi.create({
       code, name, category: itemMasterDraft.category,
-      // Sub-category is intentionally not requested during GRN-driven creation.
-      // The invoice's vendor is linked explicitly below instead.
-      sub_category: null,
+      sub_category: subCategory,
       uom: invoiceUnit,
       vendor_code: linkedVendor.code,
       rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
@@ -741,11 +742,17 @@ const createGRN = async () => {
                 <input className="input" value={itemMasterDraft.name} onChange={e=>setItemMasterDraft(d=>({...d,name:e.target.value}))} style={{ marginTop:4 }} />
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Category *
-                <select required className="input" value={itemMasterDraft.category} onChange={e=>setItemMasterDraft(d=>({...d,category:e.target.value}))} style={{ marginTop:4 }}>
+                <select required className="input" value={itemMasterDraft.category} onChange={e=>setItemMasterDraft(d=>({...d,category:e.target.value,sub_category:''}))} style={{ marginTop:4 }}>
                   <option value="">Select category</option>
                   {[...new Set(items.map(i=>i.category).filter(Boolean))].sort().map(category=><option key={category} value={category}>{category}</option>)}
                   {['Cleaning','Electrical','Stationery','Washroom','Waste Management','General'].filter(category=>!items.some(i=>(i.category||'').toLowerCase()===category.toLowerCase())).map(category=><option key={category} value={category}>{category}</option>)}
                 </select>
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Sub-category *
+                <input required className="input" value={itemMasterDraft.sub_category || ''} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} placeholder="Enter sub-category" list="grn-item-subcategory-options" />
+                <datalist id="grn-item-subcategory-options">
+                  {[...new Set(items.filter(i=>(i.category||'').trim().toLowerCase()===(itemMasterDraft.category||'').trim().toLowerCase()).map(i=>(i.sub_category||'').trim()).filter(Boolean))].sort().map(subCategory=><option key={subCategory} value={subCategory} />)}
+                </datalist>
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Unit of measurement (from invoice)
                 <input className="input" value={itemMasterDraft.uom || ''} readOnly aria-readonly="true" placeholder="Unit not detected in invoice" style={{ marginTop:4, background:'#f8fafc' }} />
