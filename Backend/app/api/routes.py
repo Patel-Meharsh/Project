@@ -505,6 +505,7 @@ def _resolve_master_group(data: dict, db: Session):
                 )
                 db.add(category)
                 db.flush()
+            data["category"] = category.name
 
 @router.get("/items")
 def get_items(category: Optional[str] = None, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
