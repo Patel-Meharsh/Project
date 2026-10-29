@@ -70,6 +70,53 @@ class GRNHeaderFallbackTests(unittest.TestCase):
 
 
 class GRNPDFCoordinateIntegrationTests(unittest.TestCase):
+    def test_close_invoice_rows_are_not_merged_by_wide_header_columns(self):
+        import pymupdf
+
+        document = pymupdf.open()
+        page = document.new_page(width=620, height=240)
+        for x, y, label in [
+            (40, 100, "Description"),
+            (210, 107, "HSN/SAC"),
+            (285, 103, "GST"),
+            (340, 103, "Quantity"),
+            (410, 103, "Rate"),
+            (500, 103, "Amount"),
+            (560, 103, "Value"),
+            (560, 108, "Supply"),
+        ]:
+            page.insert_text((x, y), label, fontsize=9)
+        for x, y, value in [
+            (40, 130, "1"),
+            (55, 130, "SS CATORI PLATE"),
+            (210, 130, "9999"),
+            (285, 130, "18"),
+            (340, 132, "2.00"),
+            (410, 132, "35.00"),
+            (500, 134, "70.00"),
+            (560, 137, "82.60"),
+            (40, 141, "2"),
+            (55, 141, "SS NUT-BOLT"),
+            (210, 141, "8888"),
+            (285, 141, "18"),
+            (340, 143, "4.00"),
+            (410, 143, "15.00"),
+            (500, 145, "60.00"),
+            (560, 148, "70.80"),
+            (500, 190, "Total"),
+        ]:
+            page.insert_text((x, y), value, fontsize=9)
+        raw = document.tobytes()
+        document.close()
+
+        rows = _extract_pdf_table_line_items(raw, EmptyItemMasterDB())
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["item_name"], "SS CATORI PLATE")
+        self.assertEqual(rows[0]["recd_qty"], 2.0)
+        self.assertEqual(rows[1]["item_name"], "SS NUT-BOLT")
+        self.assertEqual(rows[1]["recd_qty"], 4.0)
+
+
     def test_stacked_header_and_wrapped_description_are_reconstructed(self):
         import pymupdf
 
