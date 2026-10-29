@@ -877,10 +877,10 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
 
             if not body_words:
                 continue
-            # Keep body-row clustering narrower than the spacing between invoice items.
-            # Font bounding boxes can be tall even when baselines are close, so do not
-            # scale this tolerance aggressively with median glyph height.
-            body_rows = close_row(body_words, max(y_tolerance, median_height * 0.8))
+            # visual_rows already grouped words using the page's baseline tolerance.
+            # Reuse that same narrow tolerance here; widening it by glyph-box height can
+            # merge neighboring invoice items whose descriptions start slightly lower.
+            body_rows = close_row(body_words, y_tolerance)
 
             for row in body_rows:
                 # Build each cell according to dynamically inferred column boundaries.
