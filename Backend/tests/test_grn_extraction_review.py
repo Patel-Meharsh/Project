@@ -59,7 +59,7 @@ class GRNExtractedRowReviewTests(unittest.TestCase):
         self.assertTrue(rows[0]["needs_review"])
 
     def test_text_parser_does_not_deduplicate_identical_invoice_lines(self):
-        text = "LED Fitting 2 Nos 320 640\\nLED Fitting 2 Nos 320 640"
+        text = "LED Fitting 2 Nos 320 640\nLED Fitting 2 Nos 320 640"
         rows = _extract_item_rows(text, EmptyItemMasterDB())
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["item_name"], rows[1]["item_name"])
