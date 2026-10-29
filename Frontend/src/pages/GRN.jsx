@@ -315,6 +315,8 @@ const extractGRNDocument = async (file) => {
         // The invoice's rate must not be replaced by a catalog default.
         // Leave it blank when OCR could not reliably extract it.
         rate: row.rate ?? '',
+        needs_review: Boolean(row.needs_review),
+        extraction_warning: row.extraction_warning || '',
       }
     })
     // Replace existing rows even when no items were detected, so rows from an
@@ -755,6 +757,11 @@ const createGRN = async () => {
                           hasError={rowError && !row.item_code}
                         />
                         {row.item_name && <div style={{ fontSize:11, color:'#94a3b8', marginTop:3, paddingLeft:2 }}>{row.item_name}</div>}
+                        {row.needs_review && (
+                          <div role="status" style={{ fontSize:11, color:'#b45309', marginTop:5, padding:'5px 7px', background:'#fffbeb', borderRadius:5 }}>
+                            {'Review extracted values' + (row.extraction_warning ? ': ' + row.extraction_warning : ' before saving.')}
+                          </div>
+                        )}
                       </div>
                       <div style={{ flex:1, minWidth:0 }}>
                         <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>Vendor</div>
