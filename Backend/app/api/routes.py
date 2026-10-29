@@ -7,6 +7,7 @@ import os
 import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app import models
 from app.budget_config import APPROVED_BUDGET
@@ -2302,32 +2303,53 @@ async def import_returns(file: UploadFile = File(...), mapping: str = Form(""), 
 # ─── AUTO CODE GENERATION ─────────────────────────────────────────────────────
 @router.get("/next-code/{entity}")
 def next_code(entity: str, prefix: Optional[str] = None, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
-    """Auto-generate next code. For items, pass ?prefix=DG to get DG-001 instead of HK-001."""
+    """Allocate and reserve a unique next code, including under concurrent requests."""
     prefixes = {
-        "item": ("items", models.ItemModel, "code", "HK-"),
-        "vendor": ("vendors", models.VendorModel, "code", "VND-"),
-        "issuance": ("issuances", models.IssuanceLogModel, "issue_id", "ISS-"),
-        "return": ("returns", models.ReturnLogModel, "return_id", "RET-"),
-        "pr": ("prs", models.PurchaseRequisitionModel, "pr_no", "PR-"),
-        "po": ("pos", models.PurchaseOrderModel, "po_no", "PO-"),
-        "grn": ("grns", models.GRNModel, "grn_no", "GRN-"),
+        "item": (models.ItemModel, "code", "HK-"),
+        "vendor": (models.VendorModel, "code", "VND-"),
+        "issuance": (models.IssuanceLogModel, "issue_id", "ISS-"),
+        "return": (models.ReturnLogModel, "return_id", "RET-"),
+        "pr": (models.PurchaseRequisitionModel, "pr_no", "PR-"),
+        "po": (models.PurchaseOrderModel, "po_no", "PO-"),
+        "grn": (models.GRNModel, "grn_no", "GRN-"),
     }
     if entity not in prefixes:
         raise HTTPException(400, f"Unknown entity: {entity}")
-    _, model_cls, pk_attr, default_prefix = prefixes[entity]
-    pfx = (prefix.strip().rstrip("-") + "-") if prefix else default_prefix
-    rows = db.query(getattr(model_cls, pk_attr)).filter(
-        getattr(model_cls, pk_attr).like(f"{pfx}%")
-    ).all()
-    nums = []
-    for (val,) in rows:
+
+    model_cls, pk_attr, default_prefix = prefixes[entity]
+    clean_prefix = (prefix or default_prefix).strip().rstrip("-")
+    if not clean_prefix or not clean_prefix.replace("-", "").isalnum():
+        raise HTTPException(400, "Invalid code prefix")
+    pfx = f"{clean_prefix}-"
+    code_column = getattr(model_cls, pk_attr)
+
+    # A reservation row is the serialization point: the primary key ensures
+    # that two requests racing for the same candidate cannot both receive it.
+    for _attempt in range(20):
+        existing_values = db.query(code_column).filter(code_column.like(f"{pfx}%")).all()
+        reserved_values = db.query(models.CodeReservationModel.code).filter(
+            models.CodeReservationModel.entity == entity,
+            models.CodeReservationModel.prefix == pfx,
+        ).all()
+        nums = []
+        for (value,) in [*existing_values, *reserved_values]:
+            text_value = str(value or "")
+            if not text_value.startswith(pfx):
+                continue
+            suffix = text_value[len(pfx):]
+            if suffix.isdigit():
+                nums.append(int(suffix))
+        next_n = max(nums, default=0) + 1
+        candidate = f"{pfx}{next_n:03d}"
         try:
-            n = int(str(val).replace(pfx, "").split("-")[-1])
-            nums.append(n)
-        except Exception:
-            pass
-    next_n = (max(nums) + 1) if nums else 1
-    return {"code": f"{pfx}{str(next_n).zfill(3)}"}
+            db.add(models.CodeReservationModel(code=candidate, entity=entity, prefix=pfx))
+            db.commit()
+            return {"code": candidate}
+        except IntegrityError:
+            # Another request reserved the same code first. Roll back and
+            # recalculate from the now-persisted reservation.
+            db.rollback()
+    raise HTTPException(503, "Could not allocate a unique code; please retry")
 
 # ─── VENDOR PROFILE ───────────────────────────────────────────────────────────
 @router.get("/vendors/{code}/profile")
