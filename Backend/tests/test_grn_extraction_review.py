@@ -4,6 +4,7 @@ from app.api.grn_extraction import (
     _extract_item_rows,
     _mark_row_for_review,
     _pdf_pages_needing_image_fallback,
+    _line_item_quality,
 )
 
 
@@ -27,6 +28,18 @@ class GRNPDFPageFallbackTests(unittest.TestCase):
 
     def test_pdf_page_fallback_respects_max_page_limit(self):
         self.assertEqual(_pdf_pages_needing_image_fallback(35, []), list(range(30)))
+
+    def test_pdf_page_with_uncertain_rows_is_retried_with_ocr(self):
+        rows = [
+            {"item_name": "Complete item", "_source_page_index": 0, "needs_review": False},
+            {"item_name": "Missing rate item", "_source_page_index": 1, "needs_review": True},
+        ]
+        self.assertEqual(_pdf_pages_needing_image_fallback(3, rows), [1, 2])
+
+    def test_quality_prefers_complete_consistent_rows(self):
+        complete = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": 320, "line_amount": 640}]
+        incomplete = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": None, "line_amount": 640}]
+        self.assertGreater(_line_item_quality(complete), _line_item_quality(incomplete))
 
 
 class GRNExtractedRowReviewTests(unittest.TestCase):
