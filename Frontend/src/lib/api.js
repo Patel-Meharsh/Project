@@ -50,6 +50,7 @@ export const hkApi = {
 export const itemApi = {
   getAll:  () => api.get('/items').then(r => Array.isArray(r.data) ? r.data : []),
   create:  (data) => api.post('/items', data).then(r => r.data),
+  createWithVendor: (data) => api.post('/items/with-vendor', data).then(r => r.data),
   update:  (code, data) => api.put(`/items/${code}`, data).then(r => r.data),
 }
 
