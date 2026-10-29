@@ -991,7 +991,14 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 rate = _number(rate_match.group(0)) if rate_match else None
                 amount = _number(amount_matches[-1].group(0)) if amount_matches else None
                 unit_match = unit_re.search((qty_text + " " + unit_text).strip())
+                # Prefer a recognized abbreviation, but preserve a short textual
+                # value from an explicitly detected Unit/UOM column (e.g. RFT,
+                # RMT, EA) even when it is not in the common abbreviation list.
                 unit = unit_match.group(1).upper().rstrip(".") if unit_match else ""
+                if not unit and unit_text:
+                    candidate_unit = re.sub(r"[^A-Za-z./ -]", "", unit_text).strip(" .-/").upper()
+                    if candidate_unit and len(candidate_unit) <= 12 and len(candidate_unit.split()) <= 2:
+                        unit = candidate_unit
 
                 # Some tables print the UOM next to quantity; others put it in
                 # its own column. Never infer quantity/rate from description text.
@@ -1271,8 +1278,13 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 rate = _number(rate_match.group(0)) if rate_match else None
                 amount_matches = list(number_re.finditer(cell("amount")))
                 amount = _number(amount_matches[-1].group(0)) if amount_matches else None
-                unit_match = unit_re.search(qty_text + " " + cell("unit"))
+                unit_text = cell("unit")
+                unit_match = unit_re.search(qty_text + " " + unit_text)
                 unit = unit_match.group(1).upper().rstrip(".") if unit_match else ""
+                if not unit and unit_text:
+                    candidate_unit = re.sub(r"[^A-Za-z./ -]", "", unit_text).strip(" .-/").upper()
+                    if candidate_unit and len(candidate_unit) <= 12 and len(candidate_unit.split()) <= 2:
+                        unit = candidate_unit
 
                 # OCR frequently drops a faint decimal point (e.g. 76.00 -> 7600).
                 # Only repair a rate when the independently detected line amount
