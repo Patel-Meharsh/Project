@@ -19,7 +19,12 @@ class SafeRecordCreationTests(unittest.TestCase):
         )
         Base.metadata.create_all(
             self.engine,
-            tables=[models.ItemModel.__table__, models.VendorModel.__table__],
+            tables=[
+                models.ItemModel.__table__,
+                models.VendorModel.__table__,
+                models.MasterGroupModel.__table__,
+                models.CategoryModel.__table__,
+            ],
         )
         self.Session = sessionmaker(bind=self.engine)
         self.db = self.Session()
@@ -53,6 +58,63 @@ class SafeRecordCreationTests(unittest.TestCase):
         self.assertEqual(result["item"].vendor_code, "VND-001")
         self.assertIsNotNone(self.db.query(models.VendorModel).filter_by(code="VND-001").first())
         self.assertIsNotNone(self.db.query(models.ItemModel).filter_by(code="EM-001").first())
+
+    def test_new_group_and_category_are_created_for_item(self):
+        result = create_item_with_vendor(
+            {
+                "item": {
+                    "code": "HW-001",
+                    "name": "Door Hinge",
+                    "category": "Door Fittings",
+                    "sub_category": "Door Hardware",
+                    "master_group": "Hardware",
+                },
+                "vendor": {
+                    "code": "VND-HW-001",
+                    "name": "Hardware Supplier",
+                    "category": "Hardware",
+                    "status": "Active",
+                },
+            },
+            self.db,
+            self.admin,
+        )
+
+        group = self.db.query(models.MasterGroupModel).filter_by(name="Hardware").one()
+        category = self.db.query(models.CategoryModel).filter_by(
+            name="Door Fittings", master_group="Hardware"
+        ).one()
+        self.assertEqual(result["item"].master_group_id, group.id)
+        self.assertEqual(result["item"].master_group, "Hardware")
+        self.assertEqual(category.name, "Door Fittings")
+
+    def test_existing_group_and_category_are_reused_case_insensitively(self):
+        group = models.MasterGroupModel(name="Hardware", status="Active")
+        self.db.add(group)
+        self.db.flush()
+        category = models.CategoryModel(name="Fasteners", master_group="Hardware", status="Active")
+        self.db.add(category)
+        self.db.commit()
+
+        create_item_with_vendor(
+            {
+                "item": {
+                    "code": "HW-002",
+                    "name": "Hex Bolt",
+                    "category": "fasteners",
+                    "master_group": "hardware",
+                },
+                "vendor": None,
+            },
+            self.db,
+            self.admin,
+        )
+
+        self.assertEqual(self.db.query(models.MasterGroupModel).count(), 1)
+        self.assertEqual(self.db.query(models.CategoryModel).count(), 1)
+        item = self.db.query(models.ItemModel).filter_by(code="HW-002").one()
+        self.assertEqual(item.master_group_id, group.id)
+        self.assertEqual(item.master_group, "Hardware")
 
     def test_item_failure_rolls_back_new_vendor(self):
         self.db.add(models.ItemModel(code="EM-001", name="Existing item"))
