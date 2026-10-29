@@ -474,25 +474,34 @@ const saveNewMasterItem = async () => {
     let linkedVendor = vendors.find(v =>
       normalizeVendorName(v.name) === normalizeVendorName(vendorName)
     )
-    if (!linkedVendor) {
-      const vendorCode = await codeApi.next('vendor')
-      linkedVendor = await vendorApi.create({
-        code: vendorCode,
-        name: vendorName,
-        category: itemMasterDraft.category,
-        status: 'Active',
-      })
-    }
-
     const code = await codeApi.next('item', categoryPrefix)
-    const created = await itemApi.create({
+    const itemData = {
       code, name, category: itemMasterDraft.category,
       sub_category: subCategory,
       uom: invoiceUnit,
-      vendor_code: linkedVendor.code,
+      vendor_code: linkedVendor?.code || '',
       rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
       status: 'Active',
-    })
+    }
+    let created
+    if (linkedVendor) {
+      created = await itemApi.create(itemData)
+    } else {
+      // The backend creates the new vendor and item in one transaction. If
+      // either insert fails, neither record is committed.
+      const vendorCode = await codeApi.next('vendor')
+      const result = await itemApi.createWithVendor({
+        item: itemData,
+        vendor: {
+          code: vendorCode,
+          name: vendorName,
+          category: itemMasterDraft.category,
+          status: 'Active',
+        },
+      })
+      created = result.item
+      linkedVendor = result.vendor
+    }
     const updated = [...lineItems]
     updated[itemMasterDraft.index] = {
       ...updated[itemMasterDraft.index],
@@ -523,13 +532,24 @@ const saveNewMasterItem = async () => {
 const createGRN = async () => {
 
   // validation
-  if (!form.store_location) return alert('Store Location is required — stock cannot be updated without it.')
+  if (!form.store_location) return toast.error('Store Location is required — stock cannot be updated without it.')
+  if (!form.grn_no || !form.grn_date) return toast.error('GRN number and date are required.')
+  if (lineItems.length === 0) return toast.error('Add at least one invoice line before saving.')
   if (lineItems.some(r => !String(r.item_name || '').trim() || !String(r.item_code || '').trim())) {
     setRowError(true)
     return alert('Every invoice line must be linked to an Item Master record. For unmatched items, complete the Add item to Item Master popup and click Save Item before saving the GRN.')
   }
-  if (lineItems.some(r => !(Number(r.accepted_qty) > 0))) {
-    return alert('Accepted Qty must be greater than 0 for all line items.')
+  if (lineItems.some(r => !Number.isFinite(Number(r.recd_qty)) || Number(r.recd_qty) <= 0)) {
+    return toast.error('Received quantity must be greater than 0 for every line item.')
+  }
+  if (lineItems.some(r => !Number.isFinite(Number(r.accepted_qty)) || Number(r.accepted_qty) <= 0 || Number(r.accepted_qty) > Number(r.recd_qty))) {
+    return toast.error('Accepted quantity must be greater than 0 and cannot exceed received quantity.')
+  }
+  if (lineItems.some(r => !Number.isFinite(Number(r.rate)) || Number(r.rate) < 0)) {
+    return toast.error('Rate must be a valid non-negative number.')
+  }
+  if (!window.confirm(`Save GRN ${form.grn_no} with ${lineItems.length} line item(s)? This will update inventory${form.po_no ? ' and the linked purchase order' : ''}.`)) {
+    return
   }
 
   // NEW payload (this is what you were missing)
@@ -555,7 +575,7 @@ const createGRN = async () => {
       toast.success('GRN created')
     }
   } catch (err) {
-    toast.error(editTarget ? 'Failed to update GRN' : 'Failed to create GRN')
+    toast.error(err.response?.data?.detail || (editTarget ? 'Failed to update GRN' : 'Failed to create GRN. No success was reported; check the records before retrying.'))
     return
   }
 
