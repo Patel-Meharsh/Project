@@ -136,6 +136,45 @@ class GRNPDFCoordinateIntegrationTests(unittest.TestCase):
         self.assertEqual(rows[1]["recd_qty"], 4.0)
 
 
+    def test_full_twenty_four_line_invoice_table_keeps_every_goods_row(self):
+        import pymupdf
+
+        document = pymupdf.open()
+        page = document.new_page(width=620, height=900)
+        for x, y, label in [
+            (40, 100, "Description"),
+            (210, 100, "HSN/SAC"),
+            (285, 100, "GST"),
+            (340, 100, "Quantity"),
+            (410, 100, "Rate"),
+            (500, 100, "Amount"),
+        ]:
+            page.insert_text((x, y), label, fontsize=9)
+
+        for index in range(1, 25):
+            y = 125 + index * 25
+            name = "Repeated Cleaning Cloth" if index in (4, 19) else f"Invoice Item {index:02d}"
+            for x, value in [
+                (40, str(index)),
+                (55, name),
+                (210, "48181000"),
+                (285, "18%"),
+                (340, str(index)),
+                (410, "10.00"),
+                (500, f"{index * 10:.2f}"),
+            ]:
+                page.insert_text((x, y), value, fontsize=9)
+
+        raw = document.tobytes()
+        document.close()
+
+        rows = _extract_pdf_table_line_items(raw, EmptyItemMasterDB())
+        self.assertEqual(len(rows), 24)
+        self.assertEqual([row["recd_qty"] for row in rows], [float(i) for i in range(1, 25)])
+        self.assertEqual(rows[3]["item_name"], "Repeated Cleaning Cloth")
+        self.assertEqual(rows[18]["item_name"], "Repeated Cleaning Cloth")
+        self.assertEqual(rows[23]["line_amount"], 240.0)
+
     def test_stacked_header_and_wrapped_description_are_reconstructed(self):
         import pymupdf
 
