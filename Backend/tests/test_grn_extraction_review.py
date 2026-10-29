@@ -6,6 +6,8 @@ from app.api.grn_extraction import (
     _pdf_pages_needing_image_fallback,
     _line_item_quality,
     _choose_pdf_page_rows,
+    _append_pdf_description_continuation,
+    _invoice_number_from_nearby_label,
 )
 
 
@@ -51,6 +53,42 @@ class GRNPDFPageFallbackTests(unittest.TestCase):
         existing = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": 320, "line_amount": 640}]
         candidate = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": None, "line_amount": 640}]
         self.assertIs(_choose_pdf_page_rows(existing, candidate), existing)
+
+
+class GRNHeaderFallbackTests(unittest.TestCase):
+    def test_invoice_number_is_found_when_separated_from_label_by_other_header_text(self):
+        text = "Tax Invoice\nInvoice No. (ORIGINAL FOR RECIPIENT)\nECS LOTIONS\nECS/26-27/0081\nDated 12-Oct-26"
+        self.assertEqual(_invoice_number_from_nearby_label(text), "ECS/26-27/0081")
+
+    def test_invoice_number_fallback_does_not_return_date_or_gstin(self):
+        text = "Invoice No.\nGSTIN 24ABCDE1234F1Z5\nDated 12-Oct-26"
+        self.assertIsNone(_invoice_number_from_nearby_label(text))
+
+    def test_invoice_number_fallback_accepts_short_numeric_invoice_ids(self):
+        self.assertEqual(_invoice_number_from_nearby_label("Invoice No. 468\nDate 25/07/2026"), "468")
+
+
+class GRNPDFDescriptionContinuationTests(unittest.TestCase):
+    def test_description_only_line_is_appended_to_previous_item_on_same_page(self):
+        rows = [{
+            "item_name": "M Fold Paper",
+            "_source_page_index": 0,
+            "recd_qty": 180,
+            "rate": 31,
+            "line_amount": 5580,
+        }]
+        self.assertTrue(_append_pdf_description_continuation(rows, "professional", 0))
+        self.assertEqual(rows[0]["item_name"], "M Fold Paper professional")
+
+    def test_continuation_does_not_cross_page_boundaries(self):
+        rows = [{"item_name": "Tissue Roll", "_source_page_index": 0}]
+        self.assertFalse(_append_pdf_description_continuation(rows, "Plain", 1))
+        self.assertEqual(rows[0]["item_name"], "Tissue Roll")
+
+    def test_total_and_header_text_are_not_appended_as_descriptions(self):
+        rows = [{"item_name": "LED Fitting", "_source_page_index": 0}]
+        self.assertFalse(_append_pdf_description_continuation(rows, "Grand Total", 0))
+        self.assertEqual(rows[0]["item_name"], "LED Fitting")
 
 
 class GRNExtractedRowReviewTests(unittest.TestCase):
