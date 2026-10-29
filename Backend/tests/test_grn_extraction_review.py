@@ -41,6 +41,30 @@ class GRNPDFPageFallbackTests(unittest.TestCase):
         ]
         self.assertEqual(_pdf_pages_needing_image_fallback(3, rows), [1, 2])
 
+    def test_pdf_page_is_retried_when_text_parser_suggests_a_missing_row(self):
+        rows = [
+            {"item_name": "Item one", "_source_page_index": 0, "needs_review": False},
+            {"item_name": "Item two", "_source_page_index": 0, "needs_review": False},
+        ]
+        self.assertEqual(
+            _pdf_pages_needing_image_fallback(
+                1, rows, expected_row_counts={0: 3}
+            ),
+            [0],
+        )
+
+    def test_pdf_page_is_not_retried_when_row_counts_agree(self):
+        rows = [
+            {"item_name": "Item one", "_source_page_index": 0, "needs_review": False},
+            {"item_name": "Item two", "_source_page_index": 0, "needs_review": False},
+        ]
+        self.assertEqual(
+            _pdf_pages_needing_image_fallback(
+                1, rows, expected_row_counts={0: 2}
+            ),
+            [],
+        )
+
     def test_quality_prefers_complete_consistent_rows(self):
         complete = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": 320, "line_amount": 640}]
         incomplete = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": None, "line_amount": 640}]
