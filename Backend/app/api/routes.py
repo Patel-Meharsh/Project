@@ -468,15 +468,43 @@ def update_hk_item(code: str, data: dict, db: Session = Depends(get_db), current
 
 # ─── ITEMS ────────────────────────────────────────────────────────────────────
 def _resolve_master_group(data: dict, db: Session):
-    """Resolve master_group_id from either master_group_id or master_group string."""
+    """Resolve or create an item master group and its category in the same transaction."""
     mg_id = data.get("master_group_id")
-    mg_name = data.get("master_group", "")
+    mg_name = str(data.get("master_group") or "").strip()
+    grp = None
+
     if mg_id:
-        return  # Already has FK
+        grp = db.query(models.MasterGroupModel).filter_by(id=mg_id).first()
+        if grp and not mg_name:
+            mg_name = grp.name
+
     if mg_name:
-        grp = db.query(models.MasterGroupModel).filter_by(name=mg_name).first()
-        if grp:
-            data["master_group_id"] = grp.id
+        grp = db.query(models.MasterGroupModel).filter(
+            func.lower(func.trim(models.MasterGroupModel.name)) == mg_name.lower()
+        ).first()
+        if not grp:
+            now = datetime.datetime.utcnow().isoformat()
+            grp = models.MasterGroupModel(
+                name=mg_name, status="Active", created_at=now, updated_at=now
+            )
+            db.add(grp)
+            db.flush()
+
+        data["master_group"] = grp.name
+        data["master_group_id"] = grp.id
+
+        category_name = str(data.get("category") or "").strip()
+        if category_name:
+            category = db.query(models.CategoryModel).filter(
+                func.lower(func.trim(models.CategoryModel.name)) == category_name.lower(),
+                func.lower(func.trim(models.CategoryModel.master_group)) == grp.name.lower(),
+            ).first()
+            if not category:
+                category = models.CategoryModel(
+                    name=category_name, master_group=grp.name, status="Active"
+                )
+                db.add(category)
+                db.flush()
 
 @router.get("/items")
 def get_items(category: Optional[str] = None, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
