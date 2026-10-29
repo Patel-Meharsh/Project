@@ -53,13 +53,39 @@ def _pdf_pages_needing_image_fallback(
     coordinate_rows: list[dict[str, Any]],
     max_pages: int = 30,
 ) -> list[int]:
-    """Return PDF pages without coordinate rows so scanned/mixed pages get OCR."""
-    pages_with_rows = {
-        row.get("_source_page_index")
-        for row in coordinate_rows
-        if row.get("_source_page_index") is not None
-    }
-    return [index for index in range(min(page_count, max_pages)) if index not in pages_with_rows]
+    """Return pages with no table rows or rows already marked uncertain for OCR review."""
+    rows_by_page: dict[int, list[dict[str, Any]]] = {}
+    for row in coordinate_rows:
+        page_index = row.get("_source_page_index")
+        if page_index is not None:
+            rows_by_page.setdefault(page_index, []).append(row)
+    pages = []
+    for index in range(min(page_count, max_pages)):
+        page_rows = rows_by_page.get(index, [])
+        # A partial coordinate parse can produce some rows and still miss others.
+        # If any row is incomplete/inconsistent, run the OCR alternative for that page.
+        if not page_rows or any(row.get("needs_review") for row in page_rows):
+            pages.append(index)
+    return pages
+
+
+def _line_item_quality(rows: list[dict[str, Any]]) -> float:
+    """Score candidate rows for completeness and arithmetic consistency."""
+    score = float(len(rows) * 10)
+    for row in rows:
+        qty, rate, amount = row.get("recd_qty"), row.get("rate"), row.get("line_amount")
+        if qty is None:
+            score -= 3
+        if rate is None:
+            score -= 3
+        if amount is not None and qty is not None and rate is not None:
+            if abs(qty * rate - amount) <= max(2.0, abs(amount) * 0.03):
+                score += 4
+            else:
+                score -= 5
+        if len(_norm(row.get("item_name", ""))) < 4:
+            score -= 4
+    return score
 
 
 def _mark_row_for_review(row: dict[str, Any]) -> dict[str, Any]:
@@ -1675,7 +1701,18 @@ async def extract_grn_document(
                     candidates = _extract_image_table_line_items(page_image, db)
                     for row in candidates:
                         row["_source_page_index"] = page_index
-                    coordinate_items.extend(candidates)
+                    existing = [
+                        row for row in coordinate_items
+                        if row.get("_source_page_index") == page_index
+                    ]
+                    # Prefer the OCR candidate only when it is measurably better;
+                    # otherwise retain the coordinate parser's source values.
+                    if candidates and (not existing or _line_item_quality(candidates) > _line_item_quality(existing)):
+                        coordinate_items = [
+                            row for row in coordinate_items
+                            if row.get("_source_page_index") != page_index
+                        ]
+                        coordinate_items.extend(candidates)
             coordinate_items.sort(key=lambda row: row.get("_source_page_index", 0))
         except Exception:
             # Text extraction still returns its available rows if OCR is unavailable.
