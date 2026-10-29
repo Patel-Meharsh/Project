@@ -773,12 +773,22 @@ const createGRN = async () => {
               <label style={{ gridColumn:'1 / -1', fontSize:12, color:'#475569' }}>Item name *
                 <input className="input" value={itemMasterDraft.name} onChange={e=>setItemMasterDraft(d=>({...d,name:e.target.value}))} style={{ marginTop:4 }} />
               </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Master group *
+                <input required className="input" value={itemMasterDraft.master_group || ''} onChange={e=>setItemMasterDraft(d=>({...d,master_group:e.target.value,category:''}))} style={{ marginTop:4 }} placeholder="e.g. Hardware or Electrical" list="grn-item-master-group-options" />
+                <datalist id="grn-item-master-group-options">
+                  {masterGroupNames.map(group=><option key={group} value={group} />)}
+                </datalist>
+                <span style={{ display:'block', marginTop:4, color:'#64748b' }}>A new group will be created automatically if it does not exist.</span>
+              </label>
               <label style={{ fontSize:12, color:'#475569' }}>Category *
-                <select required className="input" value={itemMasterDraft.category} onChange={e=>setItemMasterDraft(d=>({...d,category:e.target.value,sub_category:''}))} style={{ marginTop:4 }}>
-                  <option value="">Select category</option>
-                  {[...new Set(items.map(i=>i.category).filter(Boolean))].sort().map(category=><option key={category} value={category}>{category}</option>)}
-                  {['Cleaning','Electrical','Stationery','Washroom','Waste Management','General'].filter(category=>!items.some(i=>(i.category||'').toLowerCase()===category.toLowerCase())).map(category=><option key={category} value={category}>{category}</option>)}
-                </select>
+                <input required className="input" value={itemMasterDraft.category || ''} onChange={e=>setItemMasterDraft(d=>({...d,category:e.target.value}))} style={{ marginTop:4 }} placeholder="e.g. Door Fittings or Lighting" list="grn-item-category-options" />
+                <datalist id="grn-item-category-options">
+                  {[...new Set([
+                    ...categories.filter(category => String(category.master_group || '').trim().toLowerCase() === String(itemMasterDraft.master_group || '').trim().toLowerCase()).map(category => category.name),
+                    ...(CATEGORY_SUGGESTIONS_BY_GROUP[String(itemMasterDraft.master_group || '').trim().toLowerCase()] || []),
+                  ])].sort().map(category=><option key={category} value={category} />)}
+                </datalist>
+                <span style={{ display:'block', marginTop:4, color:'#64748b' }}>Choose a suggestion or enter a new category; it will be created under this group if needed.</span>
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Sub-category *
                 <input required className="input" value={itemMasterDraft.sub_category || ''} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} placeholder="Enter sub-category" list="grn-item-subcategory-options" />
