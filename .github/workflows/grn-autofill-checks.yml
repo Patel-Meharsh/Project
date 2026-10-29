@@ -6,10 +6,6 @@ on:
       - "Backend/**"
       - "Frontend/**"
       - ".github/workflows/grn-autofill-checks.yml"
-  push:
-    branches:
-      - main
-      - "fix/grn-autofill-audit"
 
 jobs:
   backend-tests:
