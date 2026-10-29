@@ -274,6 +274,17 @@ const extractGRNDocument = async (file) => {
   if (!file) return
   setExtractingDocument(true)
   setExtractionResult(null)
+  // Start each upload from a clean document draft, including when extraction fails.
+  // Otherwise values from a previously uploaded invoice can remain visible and be saved.
+  setForm(f => ({
+    ...f,
+    invoice_no: '',
+    po_no: '',
+    grn_date: new Date().toISOString().split('T')[0],
+  }))
+  setLineItems([emptyRow()])
+  setPendingMasterIndexes([])
+  setItemMasterDraft(null)
   try {
     const result = await grnApi.extractDocument(file)
     setExtractionResult(result)
