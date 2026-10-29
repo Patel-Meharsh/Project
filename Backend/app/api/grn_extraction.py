@@ -178,6 +178,26 @@ def _mark_row_for_review(row: dict[str, Any]) -> dict[str, Any]:
     rate = row.get("rate")
     amount = row.get("line_amount")
 
+    # A common column-alignment failure is an HSN/SAC code (for example 9405)
+    # being read as quantity. Keep ordinary large quantities when their arithmetic
+    # supports them; when a 4-8 digit integer makes the printed line amount wildly
+    # implausible, withhold it from the draft and force OCR/manual review instead
+    # of pre-filling an obviously unsafe accepted quantity.
+    if (
+        qty is not None
+        and float(qty).is_integer()
+        and 1000 <= qty < 100_000_000
+        and rate is not None
+        and amount is not None
+        and abs(qty * rate - amount) > max(10.0, abs(amount) * 0.20)
+        and qty * max(abs(rate), 1.0) > max(abs(amount), 1.0) * 20
+    ):
+        warnings.append(
+            f"quantity candidate {qty:g} may be an HSN/SAC code; quantity was withheld for review"
+        )
+        row["recd_qty"] = None
+        qty = None
+
     if qty is None and "quantity was not confidently read" not in warnings:
         warnings.append("quantity was not confidently read")
     if rate is None and "rate was not confidently read" not in warnings:
