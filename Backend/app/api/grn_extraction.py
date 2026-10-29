@@ -52,19 +52,29 @@ def _pdf_pages_needing_image_fallback(
     page_count: int,
     coordinate_rows: list[dict[str, Any]],
     max_pages: int = 30,
+    expected_row_counts: dict[int, int] | None = None,
 ) -> list[int]:
-    """Return pages with no table rows or rows already marked uncertain for OCR review."""
+    """Return pages where coordinate extraction is absent, uncertain, or likely incomplete."""
     rows_by_page: dict[int, list[dict[str, Any]]] = {}
     for row in coordinate_rows:
         page_index = row.get("_source_page_index")
         if page_index is not None:
             rows_by_page.setdefault(page_index, []).append(row)
     pages = []
+    expected_row_counts = expected_row_counts or {}
     for index in range(min(page_count, max_pages)):
         page_rows = rows_by_page.get(index, [])
         # A partial coordinate parse can produce some rows and still miss others.
         # If any row is incomplete/inconsistent, run the OCR alternative for that page.
-        if not page_rows or any(row.get("needs_review") for row in page_rows):
+        # A separate text parser can also reveal likely omissions even when all
+        # coordinate rows look complete (e.g. one missed row in a long invoice).
+        text_row_count = expected_row_counts.get(index, 0)
+        likely_missing_rows = text_row_count > len(page_rows)
+        if (
+            not page_rows
+            or any(row.get("needs_review") for row in page_rows)
+            or likely_missing_rows
+        ):
             pages.append(index)
     return pages
 
@@ -1848,8 +1858,22 @@ async def extract_grn_document(
             import pymupdf
             from PIL import Image
             with pymupdf.open(stream=raw, filetype="pdf") as pdf_document:
+                # Count independent text-parser candidates per page as a second
+                # signal for missing rows. This is only a trigger for OCR; it never
+                # adds text-parser rows directly or overrides coordinate evidence.
+                expected_row_counts: dict[int, int] = {}
+                for index, page in enumerate(pdf_document):
+                    page_text = page.get_text("text") or ""
+                    text_candidates = [
+                        row for row in _extract_item_rows(page_text, db)
+                        if row.get("source") == "receipt_text"
+                    ] if page_text.strip() else []
+                    expected_row_counts[index] = len(text_candidates)
+
                 pages_to_ocr = _pdf_pages_needing_image_fallback(
-                    len(pdf_document), coordinate_items
+                    len(pdf_document),
+                    coordinate_items,
+                    expected_row_counts=expected_row_counts,
                 )
                 for page_index in pages_to_ocr:
                     page = pdf_document.load_page(page_index)
