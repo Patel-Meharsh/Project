@@ -1045,6 +1045,11 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
     def label_kind(value: str) -> str | None:
         value = normalize_label(value)
         if value in {
+            "srno", "sno", "serialno", "serialnumber", "slno", "slnumber",
+            "srnumber", "serial", "srlno",
+        }:
+            return "ignore_serial"
+        if value in {
             "description", "particulars", "item", "items", "product", "products",
             "goods", "details", "itemdescription", "descriptionofgoods",
             "descriptionofgoodsandservices", "descriptionofproductservice",
