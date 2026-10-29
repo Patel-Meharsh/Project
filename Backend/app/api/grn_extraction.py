@@ -485,7 +485,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
         # Do not deduplicate invoice rows by item code: a supplier may list the
         # same catalog item on multiple lines with different quantities, variants,
         # delivery batches, or rates. Preserve every detected row for GRN review.
-        found.append({
+        found.append(_mark_row_for_review({
             "item_code": code,
             "item_name": description,
             "vendor_code": "",
@@ -499,7 +499,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             "line_amount": amount,
             "match_status": "matched" if matched else "unmatched",
             "source": "receipt_text",
-        })
+        }))
         if code:
             seen_codes.add(code)
 
@@ -781,7 +781,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                         # uncertainty in the warning rather than silently blanking.
                         pass
                 matched = match_master(description)
-                extracted.append({
+                extracted.append(_mark_row_for_review({
                     "item_code": (matched.code or "") if matched else "",
                     "item_name": description,
                     "vendor_code": "",
@@ -793,7 +793,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                     "line_amount": amount,
                     "match_status": "matched" if matched else "unmatched",
                     "source": "receipt_text",
-                })
+                }))
     finally:
         document.close()
 
@@ -1058,8 +1058,10 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 # Fail closed on HSN/SAC codes shifted into Qty (e.g. 38089400).
                 # A suspicious row is omitted for manual review rather than allowing
                 # an eight-digit tax code to inflate received/accepted inventory.
-                qty_digits = str(int(qty)) if float(qty).is_integer() else ""
-                if qty >= 100000 or (4 <= len(qty_digits) <= 8 and qty == int(qty)):
+                qty_digits = str(int(qty)) if qty is not None and float(qty).is_integer() else ""
+                if qty is not None and (
+                    qty >= 100000 or (4 <= len(qty_digits) <= 8 and qty == int(qty))
+                ):
                     continue
                 if re.fullmatch(r"[\d\s.,/-]+", description):
                     continue
