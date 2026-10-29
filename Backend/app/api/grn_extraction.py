@@ -754,7 +754,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
         # Explicit serial-number columns must stay separate from the item
         # description column; otherwise their values get prefixed to item names.
         if token in {
-            "sr", "sl", "sr", "sl", "srno", "sno", "serialno", "serialnumber", "slno", "slnumber",
+            "sr", "sl", "srno", "sno", "serialno", "serialnumber", "slno", "slnumber",
             "srnumber", "serial", "srlno",
         }:
             return "serial"
