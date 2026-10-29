@@ -1385,7 +1385,13 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
                  qty=po_total_accepted, rate=data.get("rate"),
                  meta={"grn_no": grn.grn_no, "received_qty": po.received_qty, "balance_qty": po.balance_qty})
 
-    db.commit(); db.refresh(grn); return {"grn_no": grn.grn_no}
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(500, "GRN could not be saved. No GRN, inventory, or purchase-order changes were committed; please retry.")
+    db.refresh(grn)
+    return {"grn_no": grn.grn_no}
 
 @router.put("/grns/{grn_no}")
 def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
