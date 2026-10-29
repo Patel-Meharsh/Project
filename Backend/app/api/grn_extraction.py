@@ -431,14 +431,10 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             trailing_numbers = re.findall(number_re, body[qm.end():])
             rate = _number(trailing_numbers[0]) if trailing_numbers else None
             amount = _number(trailing_numbers[-1]) if len(trailing_numbers) >= 2 else None
-            # Do not trust a rate inferred from OCR column order unless it is
-            # arithmetically consistent with quantity and line amount. Incorrect
-            # values are worse than blanks in an inventory record.
-            if qty is not None and rate is not None and amount is not None:
-                expected_amount = qty * rate
-                if abs(expected_amount - amount) > max(2.0, expected_amount * 0.03):
-                    rate = None
-                    amount = None
+            # Preserve the values read from the invoice even if the arithmetic
+            # disagrees. The row-level review marker below warns the user rather
+            # than silently erasing OCR evidence that may be correct for tax/discount
+            # or rounding reasons. Never auto-correct the rate from arithmetic alone.
         else:
             # Many invoices omit UOM from the printed row. The previous parser
             # discarded those rows entirely. Try description + quantity + rate +
@@ -468,11 +464,8 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             amount = _number(row_numbers[-1])
             if qty is None or rate is None or amount is None or qty <= 0 or rate < 0 or amount < 0:
                 continue
-            # Validate the inferred amount against quantity × rate. If the
-            # arithmetic is inconsistent, leave amount blank for manual review.
-            expected_amount = qty * rate
-            if expected_amount > 0 and abs(expected_amount - amount) > max(2.0, expected_amount * 0.08):
-                amount = None
+            # Keep the source amount even when quantity × rate disagrees. The
+            # review marker below records the inconsistency without destroying data.
 
         description = re.sub(r"\s+", " ", description).strip(" .:-")
         if len(_norm(description)) < 3 or not re.search(r"[A-Za-z]", description):
