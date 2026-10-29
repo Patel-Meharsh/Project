@@ -65,6 +65,14 @@ class GRNExtractedRowReviewTests(unittest.TestCase):
         self.assertEqual(rows[0]["item_name"], rows[1]["item_name"])
         self.assertEqual(rows[0]["recd_qty"], rows[1]["recd_qty"])
 
+    def test_text_parser_preserves_arithmetic_mismatch_for_review(self):
+        rows = _extract_item_rows("LED Fitting 2 Nos 320 700", EmptyItemMasterDB())
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["rate"], 320.0)
+        self.assertEqual(rows[0]["line_amount"], 700.0)
+        self.assertTrue(rows[0]["needs_review"])
+        self.assertIn("quantity × rate differs from the printed line amount", rows[0]["extraction_warning"])
+
 
 if __name__ == "__main__":
     unittest.main()
