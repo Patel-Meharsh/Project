@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import DeleteToolbar, { SelectTh, SelectTd } from '../components/DeleteToolbar'
 import { useDeleteMode } from '../hooks/useDeleteMode'
 import { deleteApi } from '../lib/api'
-import { grnApi, poApi, vendorApi, itemApi, codeApi, locationApi} from '../lib/api'
+import { grnApi, poApi, vendorApi, itemApi, codeApi, locationApi, categoryApi, masterGroupApi } from '../lib/api'
 import { fmtCurrency, fmtDate } from '../lib/utils'
 import { StatusBadge, Spinner, SearchInput, FormRow, FormGrid } from '../components/UI'
 import SlideOver from '../components/SlideOver'
@@ -108,9 +108,12 @@ export default function GRN() {
       vendorApi.getAll(),
       itemApi.getAll(),
       locationApi.getAll(),
-    ]).catch(err => { toast.error('Failed to load GRN data'); return [[], [], [], [], []] })
+      categoryApi.getAll(),
+      masterGroupApi.getAll(),
+    ]).catch(err => { toast.error('Failed to load GRN data'); return [[], [], [], [], [], [], []] })
   )
-  const [grns, pos, vendors, items, locs] = fetchResult || [[], [], [], [], []]
+  const [grns, pos, vendors, items, locs, categories, masterGroups] = fetchResult || [[], [], [], [], [], [], []]
+  const masterGroupNames = [...new Set([...masterGroups.map(group => group.name), ...items.map(item => item.master_group_name || item.master_group), 'Hardware', 'Electrical', 'Stationery', 'Cleaning', 'Washroom', 'Waste Management', 'General'].map(value => String(value || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState({ grn_no:'', grn_date: new Date().toISOString().split('T')[0], invoice_no:'', po_no:'', uom:'', rate:0, received_by:'Store Keeper', inspected_by:'', store_location:'STORE-CH', batch_lot:'', status:'Stored', remarks:'' })
