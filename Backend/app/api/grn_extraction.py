@@ -69,6 +69,16 @@ def _pdf_pages_needing_image_fallback(
     return pages
 
 
+def _choose_pdf_page_rows(
+    existing: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Choose the OCR alternative only when it improves row quality."""
+    if candidates and (not existing or _line_item_quality(candidates) > _line_item_quality(existing)):
+        return candidates
+    return existing
+
+
 def _line_item_quality(rows: list[dict[str, Any]]) -> float:
     """Score candidate rows for completeness and arithmetic consistency."""
     score = float(len(rows) * 10)
@@ -1707,12 +1717,13 @@ async def extract_grn_document(
                     ]
                     # Prefer the OCR candidate only when it is measurably better;
                     # otherwise retain the coordinate parser's source values.
-                    if candidates and (not existing or _line_item_quality(candidates) > _line_item_quality(existing)):
+                    chosen_page_rows = _choose_pdf_page_rows(existing, candidates)
+                    if chosen_page_rows is not existing:
                         coordinate_items = [
                             row for row in coordinate_items
                             if row.get("_source_page_index") != page_index
                         ]
-                        coordinate_items.extend(candidates)
+                        coordinate_items.extend(chosen_page_rows)
             coordinate_items.sort(key=lambda row: row.get("_source_page_index", 0))
         except Exception:
             # Text extraction still returns its available rows if OCR is unavailable.
