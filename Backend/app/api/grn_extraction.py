@@ -48,6 +48,37 @@ def _norm(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (value or "").lower())
 
 
+def _mark_row_for_review(row: dict[str, Any]) -> dict[str, Any]:
+    """Keep extracted invoice evidence and mark incomplete/inconsistent rows for review."""
+    warnings = [
+        part.strip()
+        for part in str(row.get("extraction_warning") or "").split(";")
+        if part.strip()
+    ]
+    qty = row.get("recd_qty")
+    rate = row.get("rate")
+    amount = row.get("line_amount")
+
+    if qty is None and "quantity was not confidently read" not in warnings:
+        warnings.append("quantity was not confidently read")
+    if rate is None and "rate was not confidently read" not in warnings:
+        warnings.append("rate was not confidently read")
+    if qty is not None and rate is not None and amount is not None:
+        expected = qty * rate
+        if abs(expected - amount) > max(0.05, abs(amount) * 0.015):
+            arithmetic_warning = "quantity × rate differs from the printed line amount"
+            if arithmetic_warning not in warnings:
+                warnings.append(arithmetic_warning)
+
+    if warnings:
+        row["needs_review"] = True
+        row["extraction_warning"] = "; ".join(warnings)
+    else:
+        row["needs_review"] = False
+        row["extraction_warning"] = ""
+    return row
+
+
 def _ocr_quality_score(text: str) -> float:
     """Prefer readable OCR that preserves invoice line rows, not just header text."""
     if not text or not text.strip():
@@ -1033,13 +1064,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 if re.fullmatch(r"[\d\s.,/-]+", description):
                     continue
                 matched = match_master(description)
-                row_needs_review = qty is None or rate is None
-                row_review_reasons = []
-                if qty is None:
-                    row_review_reasons.append("quantity was not confidently read")
-                if rate is None:
-                    row_review_reasons.append("rate was not confidently read")
-                current_rows.append({
+                current_rows.append(_mark_row_for_review({
                     "item_code": (matched.code or "") if matched else "",
                     "item_name": description,
                     "vendor_code": "",
@@ -1050,10 +1075,8 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                     "unit": unit,
                     "line_amount": amount,
                     "match_status": "matched" if matched else "unmatched",
-                    "needs_review": row_needs_review,
-                    "extraction_warning": "; ".join(row_review_reasons),
                     "source": "receipt_text",
-                })
+                }))
             # Score row integrity, not just count. Invoice line amount should agree
             # with quantity × rate within rounding tolerance. Wrong column assignments
             # are penalized; missing amounts remain usable but lower-confidence.
@@ -1081,21 +1104,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
             # Keep rows even when qty × rate conflicts with the printed amount.
             # Discounts, tax-inclusive rates, rounding, or OCR errors can explain
             # differences; preserve the evidence and flag it for manual review.
-            validated_rows = []
-            for item in current_rows:
-                qty_value = item.get("recd_qty")
-                rate_value = item.get("rate")
-                amount_value = item.get("line_amount")
-                if qty_value is not None and rate_value is not None and amount_value is not None:
-                    expected = qty_value * rate_value
-                    if abs(expected - amount_value) > max(0.05, abs(amount_value) * 0.015):
-                        item["needs_review"] = True
-                        existing_warning = item.get("extraction_warning", "")
-                        arithmetic_warning = "quantity × rate differs from the printed line amount"
-                        item["extraction_warning"] = "; ".join(
-                            part for part in (existing_warning, arithmetic_warning) if part
-                        )
-                validated_rows.append(item)
+            validated_rows = [_mark_row_for_review(item) for item in current_rows]
 
             if candidate_score > best_score or (
                 candidate_score == best_score and len(validated_rows) > len(best_rows)
