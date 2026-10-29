@@ -793,7 +793,8 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 for nearby_index in range(max(0, row_index - 1), min(len(visual_rows), row_index + 5)):
                     nearby = visual_rows[nearby_index]
                     nearby_center = sum(word["y"] for word in nearby) / max(1, len(nearby))
-                    if abs(nearby_center - row_center) <= max(12.0, median_height * 3.2):
+                    header_band_tolerance = max(8.0, min(14.0, median_height * 0.9))
+                    if abs(nearby_center - row_center) <= header_band_tolerance:
                         header_band.append(nearby)
                 kinds: dict[str, list[dict[str, Any]]] = {}
                 for header_words in header_band:
