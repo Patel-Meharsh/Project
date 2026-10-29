@@ -961,7 +961,14 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                         cells.setdefault(kind, []).append(word)
                 # Preserve reading order when a product name wraps onto a lower baseline.
                 description_words = sorted(cells.get("description", []), key=lambda w: (w["y"], w["x0"]))
-                description = _clean_item_description(" ".join(w["text"] for w in description_words), row_number)
+                # Wrapped description-only baselines do not represent new
+                # goods rows. Use the next extracted item ordinal rather than
+                # the visual-row index so a serial such as "2 Tissue Roll" is
+                # removed even when the previous item's name wraps over a line.
+                description = _clean_item_description(
+                    " ".join(w["text"] for w in description_words),
+                    len(extracted) + 1,
+                )
                 if not description or not re.search(r"[A-Za-z]{2,}", description):
                     continue
                 if re.search(r"\b(?:description|particulars|quantity|qty|rate|amount|subtotal|grand total|cgst|sgst|igst|taxable|invoice|page)\b", description, re.I):
