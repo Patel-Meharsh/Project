@@ -318,10 +318,8 @@ const extractGRNDocument = async (file) => {
         vendor_code: fields.vendor_code || '',
         vendor_name: matchedVendor?.name || fields.vendor_name || '',
         recd_qty: row.recd_qty ?? '',
-        // Keep accepted quantity blank unless the receipt explicitly provides it:
-        // received quantity is not proof that every unit passed inspection.
-        // For this workflow, prefill accepted quantity from received quantity;
-        // the user can reduce it after inspection if some units are rejected.
+        // Default accepted quantity to received quantity for GRN entry.
+        // The store user can reduce it after inspection if some units are rejected.
         accepted_qty: row.accepted_qty ?? row.recd_qty ?? '',
         // The invoice's rate must not be replaced by a catalog default.
         // Leave it blank when OCR could not reliably extract it.
@@ -408,7 +406,9 @@ const saveNewMasterItem = async () => {
     const code = await codeApi.next('item', categoryPrefix)
     const created = await itemApi.create({
       code, name, category: itemMasterDraft.category,
-      sub_category: (itemMasterDraft.sub_category || '').trim() || null,
+      // Sub-category is intentionally not requested during GRN-driven creation.
+      // The invoice's vendor is linked explicitly below instead.
+      sub_category: null,
       uom: invoiceUnit,
       vendor_code: linkedVendor.code,
       rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
@@ -646,9 +646,6 @@ const createGRN = async () => {
                   {[...new Set(items.map(i=>i.category).filter(Boolean))].sort().map(category=><option key={category} value={category}>{category}</option>)}
                   {['Cleaning','Electrical','Stationery','Washroom','Waste Management','General'].filter(category=>!items.some(i=>(i.category||'').toLowerCase()===category.toLowerCase())).map(category=><option key={category} value={category}>{category}</option>)}
                 </select>
-              </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Sub-category
-                <input className="input" placeholder="e.g. Lighting, Cleaning liquid" value={itemMasterDraft.sub_category || ''} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} />
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Unit of measurement (from invoice)
                 <input className="input" value={itemMasterDraft.uom || ''} readOnly aria-readonly="true" placeholder="Unit not detected in invoice" style={{ marginTop:4, background:'#f8fafc' }} />
