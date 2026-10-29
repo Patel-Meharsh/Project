@@ -48,8 +48,8 @@ def _norm(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (value or "").lower())
 
 
-def _clean_item_description(value: str) -> str:
-    """Remove explicit leading row serials without damaging product numbers."""
+def _clean_item_description(value: str, expected_serial: int | None = None) -> str:
+    """Remove explicit or sequence-confirmed row serials without damaging product numbers."""
     description = re.sub(r"\s+", " ", (value or "")).strip(" .:| -\t")
     # Remove only a clearly marked serial (1., 01), 2 -). Do not strip a bare
     # leading number followed by whitespace: "15 W LED fitting" is a product.
@@ -63,6 +63,20 @@ def _clean_item_description(value: str) -> str:
             count=1,
             flags=re.I,
         ).strip()
+    # Some invoices print a bare serial (e.g. "1 Lizol") without punctuation
+    # and omit the serial-column header. Strip it only when it matches the row's
+    # expected sequence, and not when the remainder starts with a product unit
+    # ("15 W LED", "2 Ltr White Phenyl", "3 Pin Plug").
+    if expected_serial is not None:
+        match = re.match(r"^\s*(\d{1,3})\s+(?=[A-Za-z])", description)
+        if match and int(match.group(1)) == expected_serial:
+            remainder = description[match.end():]
+            if not re.match(
+                r"^(?:W|WATT|L|LTR|LITRE|LITER|ML|MM|CM|MTR|KG|GM|GMS|PCS|PC|NOS|INCH|FT|PIN)\b",
+                remainder,
+                re.I,
+            ):
+                description = remainder.strip()
     return description.strip(" .:| -\t")
 
 
@@ -938,7 +952,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
             # merge neighboring invoice items whose descriptions start slightly lower.
             body_rows = close_row(body_words, y_tolerance)
 
-            for row in body_rows:
+            for row_number, row in enumerate(body_rows, start=1):
                 # Build each cell according to dynamically inferred column boundaries.
                 cells: dict[str, list[dict[str, Any]]] = {}
                 for word in row:
@@ -947,7 +961,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                         cells.setdefault(kind, []).append(word)
                 # Preserve reading order when a product name wraps onto a lower baseline.
                 description_words = sorted(cells.get("description", []), key=lambda w: (w["y"], w["x0"]))
-                description = _clean_item_description(" ".join(w["text"] for w in description_words))
+                description = _clean_item_description(" ".join(w["text"] for w in description_words), row_number)
                 if not description or not re.search(r"[A-Za-z]{2,}", description):
                     continue
                 if re.search(r"\b(?:description|particulars|quantity|qty|rate|amount|subtotal|grand total|cgst|sgst|igst|taxable|invoice|page)\b", description, re.I):
