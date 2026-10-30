@@ -372,6 +372,7 @@ const extractGRNDocument = async (file) => {
           item_name: masterMatch?.name || cleanedName || '',
           vendor_code: fields.vendor_code || '',
           vendor_name: matchedVendor?.name || fields.vendor_name || '',
+          vendor_gst_no: fields.gst_no || matchedVendor?.gst_no || '',
           recd_qty: row.recd_qty ?? '',
           // Default accepted quantity to received quantity for GRN entry.
           accepted_qty: row.accepted_qty ?? row.recd_qty ?? '',
@@ -394,7 +395,7 @@ const extractGRNDocument = async (file) => {
     setPendingMasterIndexes(unmatched)
     if (unmatched.length) {
       const first = suggestedRows[unmatched[0]]
-      setItemMasterDraft({ index: unmatched[0], name: first.item_name, ...suggestItemMasterDefaults(first.item_name, items), uom: first.uom || '', vendor_name: first.vendor_name || fields.vendor_name || '', possible_matches: first.possible_matches || [], needs_review: first.needs_review })
+      setItemMasterDraft({ index: unmatched[0], name: first.item_name, ...suggestItemMasterDefaults(first.item_name, items), uom: first.uom || '', vendor_name: first.vendor_name || fields.vendor_name || '', gst_no: fields.gst_no || '', possible_matches: first.possible_matches || [], needs_review: first.needs_review })
     }
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
@@ -429,6 +430,7 @@ const chooseExistingMasterItem = (match) => {
       ...suggestItemMasterDefaults(nextRow.item_name, items),
       uom: nextRow.uom || '',
       vendor_name: nextRow.vendor_name || '',
+      gst_no: nextRow.vendor_gst_no || '',
       possible_matches: nextRow.possible_matches || [],
       needs_review: nextRow.needs_review,
     })
@@ -451,7 +453,9 @@ const saveNewMasterItem = async () => {
   // otherwise allow the user to create the master item without blocking.
   const invoiceUnit = String(lineItems[itemMasterDraft.index]?.uom || itemMasterDraft.uom || '').trim()
   const vendorName = (itemMasterDraft.vendor_name || '').trim()
+  const vendorGstin = String(itemMasterDraft.gst_no || '').replace(/[^a-z0-9]/gi, '').toUpperCase()
   if (!vendorName) return toast.error('Enter the vendor name for this item.')
+  if (vendorGstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(vendorGstin)) return toast.error('Enter a valid 15-character GSTIN.')
   setSavingMasterItem(true)
   try {
     // Reuse the established code prefix for this category (for example,
@@ -482,9 +486,14 @@ const saveNewMasterItem = async () => {
     // Reuse a vendor by normalized name. If it is new, create it only after
     // the user explicitly clicks Save Item in this review popup.
     const normalizeVendorName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-    let linkedVendor = vendors.find(v =>
-      normalizeVendorName(v.name) === normalizeVendorName(vendorName)
-    )
+    let linkedVendor = vendorGstin
+      ? vendors.find(v => String(v.gst_no || '').replace(/[^a-z0-9]/gi, '').toUpperCase() === vendorGstin)
+      : null
+    if (!linkedVendor) {
+      const nameMatches = vendors.filter(v => normalizeVendorName(v.name) === normalizeVendorName(vendorName))
+      if (nameMatches.length > 1) return toast.error('More than one vendor has this name. Enter the GSTIN to identify the correct vendor.')
+      linkedVendor = nameMatches[0] || null
+    }
     const code = await codeApi.next('item', categoryPrefix)
     const itemData = {
       code, name, category: itemMasterDraft.category.trim(),
@@ -508,6 +517,7 @@ const saveNewMasterItem = async () => {
           code: vendorCode,
           name: vendorName,
           category: masterGroup,
+          gst_no: vendorGstin,
           status: 'Active',
         },
       })
@@ -808,6 +818,9 @@ const createGRN = async () => {
                 <datalist id="grn-item-vendor-options">
                   {vendors.map(v => <option key={v.code} value={v.name} />)}
                 </datalist>
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Vendor GSTIN
+                <input className="input" maxLength={15} value={itemMasterDraft.gst_no || ''} onChange={e=>setItemMasterDraft(d=>({...d,gst_no:e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'')}))} style={{ marginTop:4 }} placeholder="15-character GSTIN" />
               </label>
             </div>
             <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:20 }}>
