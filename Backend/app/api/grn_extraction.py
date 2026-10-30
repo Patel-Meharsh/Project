@@ -517,6 +517,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
     """Extract invoice rows even when OCR breaks a table into uneven text lines."""
     from difflib import SequenceMatcher
+    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items
 
     raw_lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
     masters = db.query(models.ItemModel).all()
@@ -676,6 +677,15 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
         if re.search(r"\b(?:cgst|sgst|igst|total|round off|tax|gstin|invoice|dated)\b", description, re.I):
             continue
 
+        serial_warning = None
+        description, serial_warning = resolve_description(
+            description,
+            expected_serial=len(found) + 1,
+            score_fn=lambda candidate: (
+                suggest_master_items(candidate, masters, limit=1, min_score=0.0)[0]["score"]
+                if suggest_master_items(candidate, masters, limit=1, min_score=0.0) else 0.0
+            ),
+        )
         matched = match_master(description)
         code = (matched.code or "") if matched else ""
         # Do not deduplicate invoice rows by item code: a supplier may list the
@@ -695,6 +705,8 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             "line_amount": amount,
             "match_status": "matched" if matched else "unmatched",
             "source": "receipt_text",
+            "needs_review": bool(serial_warning),
+            "extraction_warning": serial_warning or "",
         }))
         if code:
             seen_codes.add(code)
@@ -1058,6 +1070,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
         return []
 
     from difflib import SequenceMatcher
+    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items
 
     masters = db.query(models.ItemModel).all()
     number_re = re.compile(r"(?<![A-Za-z])\d[\d,]*(?:\.\d{1,4})?")
@@ -1258,7 +1271,17 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 def cell(kind: str) -> str:
                     return " ".join(w["text"] for w in sorted(cells.get(kind, []), key=lambda w: w["x0"]))
 
+                serial_text = cell("ignore_serial")
                 description = _clean_item_description(cell("description"), len(current_rows) + 1)
+                description, serial_warning = resolve_description(
+                    description,
+                    expected_serial=len(current_rows) + 1,
+                    serial_text=serial_text,
+                    score_fn=lambda candidate: (
+                        suggest_master_items(candidate, masters, limit=1, min_score=0.0)[0]["score"]
+                        if suggest_master_items(candidate, masters, limit=1, min_score=0.0) else 0.0
+                    ),
+                )
                 if not description or not re.search(r"[A-Za-z]{2,}", description):
                     continue
                 if re.search(r"\b(?:description|particulars|quantity|qty|rate|amount|subtotal|total|cgst|sgst|igst|taxable|invoice|page|gstin)\b", description, re.I):
@@ -1331,6 +1354,8 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                     "line_amount": amount,
                     "match_status": "matched" if matched else "unmatched",
                     "source": "receipt_text",
+                    "needs_review": bool(serial_warning),
+                    "extraction_warning": serial_warning or "",
                 }))
             # Score row integrity, not just count. Invoice line amount should agree
             # with quantity × rate within rounding tolerance. Wrong column assignments
