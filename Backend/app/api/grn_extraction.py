@@ -6,6 +6,7 @@ Scanned-image OCR requires the Tesseract binary to be installed on the server.
 from __future__ import annotations
 
 import io
+import os
 import re
 from datetime import datetime
 from typing import Any
