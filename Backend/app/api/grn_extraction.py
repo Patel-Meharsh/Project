@@ -69,7 +69,7 @@ def _clean_item_description(value: str, expected_serial: int | None = None) -> s
     # expected sequence, and not when the remainder starts with a product unit
     # ("15 W LED", "2 Ltr White Phenyl", "3 Pin Plug").
     if expected_serial is not None:
-        match = re.match(r"^\s*(\d{1,3})\s+(?=[A-Za-z])", description)
+        match = re.match(r"^\s*(\d{1,3})\s+(?=[A-Za-z0-9])", description)
         if match and int(match.group(1)) == expected_serial:
             remainder = description[match.end():]
             if not re.match(
@@ -670,7 +670,7 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             # Keep the source amount even when quantity × rate disagrees. The
             # review marker below records the inconsistency without destroying data.
 
-        description = _clean_item_description(description)
+        description = _clean_item_description(description, len(found) + 1)
         if len(_norm(description)) < 3 or not re.search(r"[A-Za-z]", description):
             continue
         if re.search(r"\b(?:cgst|sgst|igst|total|round off|tax|gstin|invoice|dated)\b", description, re.I):
@@ -1258,7 +1258,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 def cell(kind: str) -> str:
                     return " ".join(w["text"] for w in sorted(cells.get(kind, []), key=lambda w: w["x0"]))
 
-                description = _clean_item_description(cell("description"))
+                description = _clean_item_description(cell("description"), len(current_rows) + 1)
                 if not description or not re.search(r"[A-Za-z]{2,}", description):
                     continue
                 if re.search(r"\b(?:description|particulars|quantity|qty|rate|amount|subtotal|total|cgst|sgst|igst|taxable|invoice|page|gstin)\b", description, re.I):
