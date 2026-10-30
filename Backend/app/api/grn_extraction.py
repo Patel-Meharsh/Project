@@ -1468,13 +1468,13 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
         # Contact details are often printed on the same line as the supplier.
         # Keep the business-name portion and never treat an email/phone as a name.
         candidate = re.split(
-            r"(?i)\\b(?:phone|mobile|mob|tel|email|e-mail|website|web|www|gstin|gst\\s*in)\\b|@|https?://",
+            r"(?i)\b(?:phone|mobile|mob|tel|email|e-mail|website|web|www|gstin|gst\s*in)\b|@|https?://",
             candidate,
             maxsplit=1,
         )[0].strip(" :|,-")
-        candidate = re.sub(r"\\b\\+?\\d[\\d ()-]{7,}\\b", " ", candidate)
-        candidate = re.sub(r"\\s+", " ", candidate).strip(" :|,-")
-        if not candidate or "@" in candidate or re.search(r"\\d{8,}", re.sub(r"\\D", "", candidate)):
+        candidate = re.sub(r"\b\+?\d[\d ()-]{7,}\b", " ", candidate)
+        candidate = re.sub(r"\s+", " ", candidate).strip(" :|,-")
+        if not candidate or "@" in candidate or re.search(r"\d{8,}", re.sub(r"\D", "", candidate)):
             return ""
         # A candidate must contain a real alphabetic business-name token.
         words = re.findall(r"[A-Za-z][A-Za-z&.'-]*", candidate)
@@ -1483,7 +1483,7 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
         return candidate[:90]
 
     vendor_text = clean_vendor_candidate(_first([
-        r"(?:supplier|vendor)\\s*(?:name)?\\s*[:\\-]\\s*([^\\n]{2,120})",
+        r"(?:supplier|vendor)\s*(?:name)?\s*[:\-]\s*([^\n]{2,120})",
     ], text))
     if not vendor_text:
         # Many small-business invoices print the trading name as a standalone
@@ -1491,25 +1491,25 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
         # Score only plausible company-name lines; do not pick the first line
         # containing letters (which can be an email address or contact label).
         ignored_header = re.compile(
-            r"invoice|tax invoice|bill no|invoice no|gstin|gst\\s*in|state code|date|dated|"
-            r"phone|mobile|\\bmob\\b|tel|email|e-mail|www|https?://|page|amount|"
+            r"invoice|tax invoice|bill no|invoice no|gstin|gst\s*in|state code|date|dated|"
+            r"phone|mobile|\bmob\b|tel|email|e-mail|www|https?://|page|amount|"
             r"buyer|consignee|ship to|bill to|address|contact|original|duplicate|"
             r"udyam|pan no|state name|dispatch",
             re.I,
         )
         candidates = []
         for index, header_line in enumerate(text.splitlines()[:20]):
-            raw_candidate = re.sub(r"\\s+", " ", header_line).strip(" :|-")
+            raw_candidate = re.sub(r"\s+", " ", header_line).strip(" :|-")
             candidate = clean_vendor_candidate(raw_candidate)
             if not candidate or ignored_header.search(raw_candidate):
                 continue
-            if re.search(r"@|https?://|\\b\\d{8,}\\b", raw_candidate):
+            if re.search(r"@|https?://|\b\d{8,}\b", raw_candidate):
                 continue
             words = re.findall(r"[A-Za-z][A-Za-z&.'-]*", candidate)
-            if len(words) < 2 and not re.search(r"\\b(?:traders|trading|hardware|enterprise|enterprises|industries|stores|store|agency|agencies|sales|services|suppliers|supplier|corporation|co)\\b", candidate, re.I):
+            if len(words) < 2 and not re.search(r"\b(?:traders|trading|hardware|enterprise|enterprises|industries|stores|store|agency|agencies|sales|services|suppliers|supplier|corporation|co)\b", candidate, re.I):
                 continue
             score = min(len(words), 4) * 2
-            if re.search(r"\\b(?:hardware|traders|trading|enterprise|enterprises|industries|stores|agency|sales|services|corporation)\\b", candidate, re.I):
+            if re.search(r"\b(?:hardware|traders|trading|enterprise|enterprises|industries|stores|agency|sales|services|corporation)\b", candidate, re.I):
                 score += 3
             if raw_candidate.isupper():
                 score += 1
