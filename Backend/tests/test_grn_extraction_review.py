@@ -125,6 +125,16 @@ class GRNHeaderFallbackTests(unittest.TestCase):
         self.assertEqual(result["fields"]["vendor_name"], "KALYAN HARDWARE")
         self.assertEqual(result["fields"]["vendor_code"], "")
 
+    def test_vendor_name_fallback_rejects_ocr_contact_line(self):
+        text = (
+            "TAX INVOICE\\n"
+            "(N): 9825851575. E-matt t Jtuapa\\n"
+            "KALYAN HARDWARE\\n"
+            "Invoice No. KH-102"
+        )
+        result = _extract_fields(text, EmptyItemMasterDB())
+        self.assertEqual(result["fields"]["vendor_name"], "KALYAN HARDWARE")
+
     def test_vendor_name_label_does_not_include_contact_details(self):
         text = (
             "Supplier Name: Kalyan Hardware Phone: 9876543210\\n"
