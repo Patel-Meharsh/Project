@@ -1699,6 +1699,7 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
             "grn_date": invoice_date or "",
             "vendor_code": vendor_match.code if vendor_match else (po_match.vendor_code if po_match else ""),
             "vendor_name": vendor_match.name if vendor_match else (vendor_text or ""),
+            "gst_no": next(iter(ocr_gstins)) if len(ocr_gstins) == 1 else "",
             "store_location": (po_match.delivery_location if po_match else "") or "",
         },
         "line_items": items,
