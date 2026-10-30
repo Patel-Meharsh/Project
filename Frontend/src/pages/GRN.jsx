@@ -568,10 +568,13 @@ const createGRN = async () => {
   const payload = {
     ...form,
     line_items: lineItems.map(r => ({
-      item_code: r.item_code.trim(),
-      item_name: r.item_name.trim(),
-      vendor_code: r.vendor_code.trim(),
-      vendor_name: r.vendor_name.trim(),
+      // Preserve invoice-derived line details (description, UOM, tax/amount
+      // metadata, etc.) while replacing master references with saved codes.
+      ...r,
+      item_code: String(r.item_code || '').trim(),
+      item_name: String(r.item_name || '').trim(),
+      vendor_code: String(r.vendor_code || '').trim(),
+      vendor_name: String(r.vendor_name || '').trim(),
       recd_qty: Number(r.recd_qty),
       accepted_qty: Number(r.accepted_qty),
       rate: Number(r.rate || 0),
