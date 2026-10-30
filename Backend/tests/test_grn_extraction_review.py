@@ -112,6 +112,28 @@ class GRNPDFPageFallbackTests(unittest.TestCase):
 
 
 class GRNHeaderFallbackTests(unittest.TestCase):
+    def test_vendor_name_fallback_ignores_phone_email_and_prefers_business_heading(self):
+        text = (
+            "TAX INVOICE\\n"
+            "Phone: 9876543210\\n"
+            "sales@kalyanhardware.in\\n"
+            "KALYAN HARDWARE\\n"
+            "GSTIN: 24ABCDE1234F1Z5\\n"
+            "Invoice No. KH-102"
+        )
+        result = _extract_fields(text, EmptyItemMasterDB())
+        self.assertEqual(result["fields"]["vendor_name"], "KALYAN HARDWARE")
+        self.assertEqual(result["fields"]["vendor_code"], "")
+
+    def test_vendor_name_label_does_not_include_contact_details(self):
+        text = (
+            "Supplier Name: Kalyan Hardware Phone: 9876543210\\n"
+            "Email: sales@kalyanhardware.in\\n"
+            "Invoice No. KH-102"
+        )
+        result = _extract_fields(text, EmptyItemMasterDB())
+        self.assertEqual(result["fields"]["vendor_name"], "Kalyan Hardware")
+
     def test_primary_field_extractor_recovers_separated_ecs_style_invoice_number(self):
         text = (
             "Tax Invoice\nInvoice No. (ORIGINAL FOR RECIPIENT)\n"
