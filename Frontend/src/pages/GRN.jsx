@@ -427,6 +427,26 @@ const extractGRNDocument = async (file) => {
 }
 
 
+const resumePendingMasterSetup = () => {
+  if (!pendingMasterIndexes.length) return
+  const nextIndex = pendingMasterIndexes[0]
+  const nextRow = lineItems[nextIndex]
+  if (!nextRow) {
+    setPendingMasterIndexes([])
+    return
+  }
+  setItemMasterDraft({
+    index: nextIndex,
+    name: nextRow.item_name || '',
+    ...suggestItemMasterDefaults(nextRow.item_name || '', items),
+    uom: nextRow.uom || '',
+    vendor_name: nextRow.vendor_name || '',
+    gst_no: normalizeGstin(nextRow.vendor_gst_no),
+    possible_matches: nextRow.possible_matches || [],
+    needs_review: nextRow.needs_review,
+  })
+}
+
 const chooseExistingMasterItem = (match) => {
   if (!itemMasterDraft || !match?.code) return
   const selectedIndex = itemMasterDraft.index
@@ -843,7 +863,7 @@ const createGRN = async () => {
               </label>
             </div>
             <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:20 }}>
-              <button className="btn btn-outline" disabled={savingMasterItem} onClick={()=>{setItemMasterDraft(null);setPendingMasterIndexes([]);toast.error('Item setup cancelled. Each invoice line must be linked to an Item Master record before the GRN can be saved.')}}>Cancel item setup</button>
+              <button className="btn btn-outline" disabled={savingMasterItem} onClick={()=>{setItemMasterDraft(null);toast('Item setup paused. Your extracted invoice and pending items are saved in this GRN draft.')}}>Close for now</button>
               <button className="btn btn-accent" disabled={savingMasterItem} onClick={saveNewMasterItem}>{savingMasterItem ? 'Saving…' : 'Save Item'}</button>
             </div>
           </div>
@@ -887,6 +907,15 @@ const createGRN = async () => {
                 </label>
               </div>
               {extractingDocument && <div style={{ marginTop:8, fontSize:12, color:'#2563eb' }}>Reading document…</div>}
+              {extractionResult && pendingMasterIndexes.length > 0 && !itemMasterDraft && (
+                <div style={{ marginTop:10, padding:10, border:'1px solid #f4c66a', borderRadius:8, background:'#fffbeb', display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
+                  <div style={{ fontSize:12, color:'#92400e' }}>
+                    <strong>{pendingMasterIndexes.length} invoice item{pendingMasterIndexes.length === 1 ? '' : 's'} still need Item Master setup.</strong>
+                    <div>You can continue later without uploading the invoice again.</div>
+                  </div>
+                  <button type="button" className="btn btn-accent" onClick={resumePendingMasterSetup}>Resume item setup</button>
+                </div>
+              )}
               {extractionResult && <div style={{ marginTop:10, fontSize:12 }}>
                 <div style={{ fontWeight:700, color:'#166534', marginBottom:4 }}>Document processed — manual review required</div>
                 {(extractionResult.warnings || []).length > 0 && <ul style={{ margin:'4px 0 0', paddingLeft:18, color:'#92400e' }}>
