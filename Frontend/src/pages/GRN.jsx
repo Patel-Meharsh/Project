@@ -452,9 +452,9 @@ const saveNewMasterItem = async () => {
   // otherwise allow the user to create the master item without blocking.
   const invoiceUnit = String(lineItems[itemMasterDraft.index]?.uom || itemMasterDraft.uom || '').trim()
   const vendorName = (itemMasterDraft.vendor_name || '').trim()
-  const vendorGstin = String(itemMasterDraft.gst_no || '').replace(/[^a-z0-9]/gi, '').toUpperCase()
+  const vendorGstin = String(itemMasterDraft.gst_no || '').normalize('NFKC').replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 15)
   if (!vendorName) return toast.error('Enter the vendor name for this item.')
-  if (vendorGstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(vendorGstin)) return toast.error('Enter a valid 15-character GSTIN.')
+  if (vendorGstin && (vendorGstin.length !== 15 || !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(vendorGstin))) return toast.error(`GSTIN must contain 15 valid characters (currently ${vendorGstin.length}). Check the GSTIN copied from the invoice.`)
   setSavingMasterItem(true)
   try {
     // Reuse the established code prefix for this category (for example,
@@ -755,9 +755,9 @@ const createGRN = async () => {
   
       {itemMasterDraft && (
         <div role="presentation" style={{ position:'fixed', inset:0, zIndex:1200, background:'rgba(15,23,42,.55)', display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
-          <div role="dialog" aria-modal="true" aria-labelledby="new-item-master-title" style={{ width:'min(560px, 100%)', maxHeight:'90vh', overflowY:'auto', background:'#fff', borderRadius:14, padding:22, boxShadow:'0 20px 60px rgba(0,0,0,.25)' }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="new-item-master-title" style={{ width:'min(560px, 100%)', maxHeight:'90vh', overflowY:'auto', background:'#fff', borderRadius:14, padding:22, boxShadow:'0 20px 60px rgba(0,0,0,.25)', fontFamily:"'DM Sans', sans-serif", color:'var(--ink)' }}>
             <div style={{ fontSize:11, color:'#64748b', fontWeight:700, letterSpacing:'.06em', textTransform:'uppercase' }}>Invoice item {itemMasterDraft.index + 1} of {lineItems.length}</div>
-            <h2 id="new-item-master-title" style={{ margin:'5px 0 6px', fontSize:20 }}>
+            <h2 id="new-item-master-title" style={{ margin:'5px 0 6px', fontSize:20, fontFamily:"'DM Sans', sans-serif", fontWeight:600 }}>
               {itemMasterDraft.possible_matches?.length ? 'Review possible Item Master matches' : 'Add item to Item Master'}
             </h2>
             <p style={{ margin:'0 0 16px', color:'#64748b', fontSize:13 }}>
@@ -819,7 +819,8 @@ const createGRN = async () => {
                 </datalist>
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Vendor GSTIN
-                <input className="input" maxLength={15} value={itemMasterDraft.gst_no || ''} onChange={e=>setItemMasterDraft(d=>({...d,gst_no:e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'')}))} style={{ marginTop:4 }} placeholder="15-character GSTIN" />
+                <input className="input" maxLength={30} autoComplete="off" spellCheck={false} value={itemMasterDraft.gst_no || ''} onChange={e=>setItemMasterDraft(d=>({...d,gst_no:e.target.value.normalize('NFKC').replace(/[^A-Z0-9]/gi,'').toUpperCase().slice(0,15)}))} style={{ marginTop:4 }} placeholder="15-character GSTIN" />
+                <span style={{ display:'block', marginTop:4, color:'#64748b', fontSize:11, textAlign:'right' }}>{String(itemMasterDraft.gst_no || '').replace(/[^A-Z0-9]/gi,'').length}/15 characters</span>
               </label>
             </div>
             <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:20 }}>
@@ -961,8 +962,12 @@ const createGRN = async () => {
                         onClick={() => { if (lineItems.length > 1) setLineItems(lineItems.filter((_, i) => i !== idx)) }}
                       >×</button>
                     </div>
-                    {/* Card row 2: Qty Recd + Qty Accepted + Rate */}
-                    <div style={{ display:'flex', gap:8 }}>
+                    {/* Card row 2: Qty Recd + Qty Accepted + Rate + Unit */}
+                    <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                      <div style={{ flex:'1 1 105px', minWidth:0 }}>
+                        <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>Unit</div>
+                        <input className="input" value={row.uom || ''} placeholder="From invoice" onChange={e => { const updated=[...lineItems]; updated[idx].uom=e.target.value; setLineItems(updated) }} />
+                      </div>
                       <div style={{ flex:1 }}>
                         <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>Qty Recd</div>
                         <input className="input" type="number" min="0"
