@@ -448,7 +448,6 @@ const saveNewMasterItem = async () => {
   if (!masterGroup) return toast.error('Enter or select a master group for this item.')
   if (!String(itemMasterDraft.category || '').trim()) return toast.error('Enter or select a category under the master group.')
   const subCategory = String(itemMasterDraft.sub_category || '').trim()
-  if (!subCategory) return toast.error('Enter a sub-category before saving the item.')
   // Unit of measurement is optional: use the invoice unit when detected,
   // otherwise allow the user to create the master item without blocking.
   const invoiceUnit = String(lineItems[itemMasterDraft.index]?.uom || itemMasterDraft.uom || '').trim()
@@ -803,8 +802,8 @@ const createGRN = async () => {
                 </datalist>
                 <span style={{ display:'block', marginTop:4, color:'#64748b' }}>Choose a suggestion or enter a new category; it will be created under this group if needed.</span>
               </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Sub-category *
-                <input required className="input" value={itemMasterDraft.sub_category || ''} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} placeholder="Enter sub-category" list="grn-item-subcategory-options" />
+              <label style={{ fontSize:12, color:'#475569' }}>Sub-category
+                <input className="input" value={itemMasterDraft.sub_category || ''} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} placeholder="Enter sub-category" list="grn-item-subcategory-options" />
                 <datalist id="grn-item-subcategory-options">
                   {[...new Set(items.filter(i=>(i.category||'').trim().toLowerCase()===(itemMasterDraft.category||'').trim().toLowerCase()).map(i=>(i.sub_category||'').trim()).filter(Boolean))].sort().map(subCategory=><option key={subCategory} value={subCategory} />)}
                 </datalist>
