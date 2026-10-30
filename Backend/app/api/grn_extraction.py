@@ -1881,7 +1881,7 @@ async def extract_grn_document(
     # Ignore generic filenames such as "invoice", "scan", or "document".
     filename_stem = os.path.splitext(os.path.basename(file.filename or ""))[0]
     filename_vendor_name = re.sub(r"[._-]+", " ", filename_stem)
-    filename_vendor_name = re.sub(r"\\s+", " ", filename_vendor_name).strip(" _-")
+    filename_vendor_name = re.sub(r"\s+", " ", filename_vendor_name).strip(" _-")
     generic_filename = re.fullmatch(
         r"(?i)(?:invoice|tax invoice|bill|receipt|document|scan|image|photo|img|"
         r"whatsapp image|untitled|download|file|\d{1,8})",
@@ -1891,7 +1891,7 @@ async def extract_grn_document(
         not fields.get("vendor_code")
         and len(filename_vendor_name) >= 4
         and not generic_filename
-        and not re.fullmatch(r"[\\W\\d_]+", filename_vendor_name)
+        and not re.fullmatch(r"[\W\d_]+", filename_vendor_name)
     ):
         fields["vendor_name"] = filename_vendor_name
     for key in ("invoice_no", "po_no", "grn_date"):
