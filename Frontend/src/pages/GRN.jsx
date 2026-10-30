@@ -12,6 +12,9 @@ import { canDo } from '../lib/auth'
 import useDataFetch from '../lib/useDataFetch'
 import { useToast } from '../components/Toast'
 
+const normalizeGstin = value => String(value || '').normalize('NFKC').replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 15)
+const normalizeVendorName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+
 const PencilIcon = () => (
   <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M11 4l4 4L6 17H2v-4L11 4z"/><path d="M9.5 6.5l4 4"/>
@@ -321,7 +324,8 @@ const extractGRNDocument = async (file) => {
         const withoutSerial = whole.slice(prefix.length).trim()
         return items.some(item => normalizeItemName(item.name) === normalizeItemName(withoutSerial)) ? '' : prefix
       }).trim()
-    const matchedVendor = vendors.find(v => v.code === fields.vendor_code)
+    const matchedVendor = vendors.find(v => v.code === fields.vendor_code) ||
+      vendors.find(v => normalizeVendorName(v.name) && normalizeVendorName(v.name) === normalizeVendorName(fields.vendor_name))
     const suggestedRows = (result.line_items || [])
       .map((row, idx) => ({ row, idx, cleanedName: cleanExtractedName(row.item_name) }))
       // Carting/freight/etc. are invoice charges, not stock items. They must not
@@ -372,7 +376,7 @@ const extractGRNDocument = async (file) => {
           item_name: masterMatch?.name || cleanedName || '',
           vendor_code: fields.vendor_code || '',
           vendor_name: matchedVendor?.name || fields.vendor_name || '',
-          vendor_gst_no: fields.gst_no || matchedVendor?.gst_no || '',
+          vendor_gst_no: matchedVendor ? normalizeGstin(matchedVendor.gst_no) : normalizeGstin(fields.gst_no),
           recd_qty: row.recd_qty ?? '',
           // Default accepted quantity to received quantity for GRN entry.
           accepted_qty: row.accepted_qty ?? row.recd_qty ?? '',
@@ -395,7 +399,7 @@ const extractGRNDocument = async (file) => {
     setPendingMasterIndexes(unmatched)
     if (unmatched.length) {
       const first = suggestedRows[unmatched[0]]
-      setItemMasterDraft({ index: unmatched[0], name: first.item_name, ...suggestItemMasterDefaults(first.item_name, items), uom: first.uom || '', vendor_name: first.vendor_name || fields.vendor_name || '', gst_no: fields.gst_no || '', possible_matches: first.possible_matches || [], needs_review: first.needs_review })
+      setItemMasterDraft({ index: unmatched[0], name: first.item_name, ...suggestItemMasterDefaults(first.item_name, items), uom: first.uom || '', vendor_name: first.vendor_name || fields.vendor_name || '', gst_no: first.vendor_gst_no || '', possible_matches: first.possible_matches || [], needs_review: first.needs_review })
     }
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
@@ -430,7 +434,7 @@ const chooseExistingMasterItem = (match) => {
       ...suggestItemMasterDefaults(nextRow.item_name, items),
       uom: nextRow.uom || '',
       vendor_name: nextRow.vendor_name || '',
-      gst_no: nextRow.vendor_gst_no || '',
+      gst_no: normalizeGstin(nextRow.vendor_gst_no),
       possible_matches: nextRow.possible_matches || [],
       needs_review: nextRow.needs_review,
     })
@@ -530,6 +534,7 @@ const saveNewMasterItem = async () => {
       item_name: created.name,
       vendor_code: linkedVendor.code,
       vendor_name: linkedVendor.name,
+      vendor_gst_no: normalizeGstin(linkedVendor.gst_no || vendorGstin),
     }
     setLineItems(updated)
     await refetch()
@@ -539,7 +544,7 @@ const saveNewMasterItem = async () => {
     if (remaining.length) {
       const nextIndex = remaining[0]
       const nextRow = updated[nextIndex]
-      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, ...suggestItemMasterDefaults(nextRow.item_name, items), uom: nextRow.uom || '', vendor_name: nextRow.vendor_name || '', possible_matches: nextRow.possible_matches || [], needs_review: nextRow.needs_review })
+      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, ...suggestItemMasterDefaults(nextRow.item_name, items), uom: nextRow.uom || '', vendor_name: nextRow.vendor_name || '', gst_no: normalizeGstin(nextRow.vendor_gst_no), possible_matches: nextRow.possible_matches || [], needs_review: nextRow.needs_review })
     } else {
       setItemMasterDraft(null)
     }
@@ -813,14 +818,14 @@ const createGRN = async () => {
                 {!itemMasterDraft.uom && <span style={{ display:'block', marginTop:4, color:'#64748b' }}>No unit detected; you can still save this item.</span>}
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Vendor name *
-                <input required className="input" placeholder="Enter supplier/vendor name" value={itemMasterDraft.vendor_name} onChange={e=>setItemMasterDraft(d=>({...d,vendor_name:e.target.value}))} style={{ marginTop:4 }} list="grn-item-vendor-options" />
+                <input required className="input" placeholder="Enter supplier/vendor name" value={itemMasterDraft.vendor_name} onChange={e=>setItemMasterDraft(d=>{ const vendorName=e.target.value; const directoryVendor=vendors.find(v=>normalizeVendorName(v.name)===normalizeVendorName(vendorName)); return {...d,vendor_name:vendorName,gst_no:directoryVendor ? normalizeGstin(directoryVendor.gst_no) : normalizeGstin(lineItems[d.index]?.vendor_gst_no)} })} style={{ marginTop:4 }} list="grn-item-vendor-options" />
                 <datalist id="grn-item-vendor-options">
                   {vendors.map(v => <option key={v.code} value={v.name} />)}
                 </datalist>
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Vendor GSTIN
-                <input className="input" maxLength={30} autoComplete="off" spellCheck={false} value={itemMasterDraft.gst_no || ''} onChange={e=>setItemMasterDraft(d=>({...d,gst_no:e.target.value.normalize('NFKC').replace(/[^A-Z0-9]/gi,'').toUpperCase().slice(0,15)}))} style={{ marginTop:4 }} placeholder="15-character GSTIN" />
-                <span style={{ display:'block', marginTop:4, color:'#64748b', fontSize:11, textAlign:'right' }}>{String(itemMasterDraft.gst_no || '').replace(/[^A-Z0-9]/gi,'').length}/15 characters</span>
+                <input className="input" maxLength={15} autoComplete="off" spellCheck={false} value={itemMasterDraft.gst_no || ''} readOnly={vendors.some(v=>normalizeVendorName(v.name)===normalizeVendorName(itemMasterDraft.vendor_name))} onChange={e=>setItemMasterDraft(d=>({...d,gst_no:normalizeGstin(e.target.value)}))} style={{ marginTop:4, background:vendors.some(v=>normalizeVendorName(v.name)===normalizeVendorName(itemMasterDraft.vendor_name)) ? '#f8fafc' : '#fff' }} placeholder="15-character GSTIN" />
+                <span style={{ display:'block', marginTop:4, color:'#64748b', fontSize:11, textAlign:'right' }}>{normalizeGstin(itemMasterDraft.gst_no).length}/15 characters</span>
               </label>
             </div>
             <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:20 }}>
