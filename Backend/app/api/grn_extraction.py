@@ -1465,6 +1465,14 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     ], text)
     def clean_vendor_candidate(value: str | None) -> str:
         candidate = re.sub(r"\s+", " ", value or "").strip(" :|,-")
+        # Reject contact-only lines rather than turning OCR-corrupted
+        # phone/email text into a plausible-looking supplier name.
+        if re.search(r"\d{8,}", re.sub(r"\D", "", candidate)):
+            return ""
+        if re.match(r"(?i)^\s*[([]?\s*(?:n|m|ph|mob|tel)\s*[)\].:-]", candidate):
+            return ""
+        if re.search(r"(?i)e[- ]?m(?:ail|att|a1l)\b", candidate):
+            return ""
         # Contact details are often printed on the same line as the supplier.
         # Keep the business-name portion and never treat an email/phone as a name.
         candidate = re.split(
@@ -1503,7 +1511,9 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
             candidate = clean_vendor_candidate(raw_candidate)
             if not candidate or ignored_header.search(raw_candidate):
                 continue
-            if re.search(r"@|https?://|\b\d{8,}\b", raw_candidate):
+            if re.search(r"@|https?://|\d{8,}", raw_candidate):
+                continue
+            if re.search(r"(?i)e[- ]?m(?:ail|att|a1l)\b", raw_candidate):
                 continue
             words = re.findall(r"[A-Za-z][A-Za-z&.'-]*", candidate)
             if len(words) < 2 and not re.search(r"\b(?:traders|trading|hardware|enterprise|enterprises|industries|stores|store|agency|agencies|sales|services|suppliers|supplier|corporation|co)\b", candidate, re.I):
