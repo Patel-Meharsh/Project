@@ -1336,19 +1336,40 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
     supplied_vendor_code = (data.get("vendor_code") or "").strip()
     vendor_name = top_vendor_name or next((name for name in line_vendor_names if name), "")
 
-    vendor = db.query(models.VendorModel).filter_by(code=supplied_vendor_code).first() if supplied_vendor_code else None
-    if not vendor and vendor_name:
-        target = _master_key(vendor_name)
-        vendor_matches = [v for v in db.query(models.VendorModel).all()
-                          if target and _master_key(v.name) == target]
-        if len(vendor_matches) == 1:
-            vendor = vendor_matches[0]
-        elif len(vendor_matches) > 1:
-            raise HTTPException(409, f"Multiple vendors match '{vendor_name}'. Select a vendor manually.")
-        else:
-            raise HTTPException(422, f"Vendor '{vendor_name}' is not in Vendor Master. Create it from the item setup popup first.")
+    def _resolve_vendor(code_value, name_value):
+        code_value = str(code_value or "").strip()
+        name_value = str(name_value or "").strip()
+        resolved = db.query(models.VendorModel).filter_by(code=code_value).first() if code_value else None
+        if code_value and not resolved:
+            raise HTTPException(422, f"Vendor code '{code_value}' does not exist in Vendor Master.")
+        if not resolved and name_value:
+            target = _master_key(name_value)
+            matches = [v for v in db.query(models.VendorModel).all()
+                       if target and _master_key(v.name) == target]
+            if len(matches) == 1:
+                resolved = matches[0]
+            elif len(matches) > 1:
+                raise HTTPException(409, f"Multiple vendors match '{name_value}'. Select a vendor manually.")
+            else:
+                raise HTTPException(422, f"Vendor '{name_value}' is not in Vendor Master. Create it from the item setup popup first.")
+        return resolved
+
+    vendor = _resolve_vendor(supplied_vendor_code, vendor_name)
     if vendor:
         data["vendor_code"] = vendor.code
+        data["vendor_name"] = vendor.name
+
+    # Resolve vendor references independently for every invoice line. This keeps
+    # multi-vendor line data correct and ensures inventory receives real master codes.
+    for li in line_items:
+        line_vendor = _resolve_vendor(li.get("vendor_code"), li.get("vendor_name"))
+        if not line_vendor:
+            line_vendor = vendor
+        if line_vendor:
+            li["vendor_code"] = line_vendor.code
+            li["vendor_name"] = line_vendor.name
+        elif li.get("vendor_code"):
+            raise HTTPException(422, f"Vendor code '{li['vendor_code']}' does not exist in Vendor Master.")
 
     # Every line must already point to a real Item Master record. This prevents
     # unreviewed OCR text from becoming a permanent master item during GRN save.
