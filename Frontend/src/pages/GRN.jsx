@@ -14,6 +14,24 @@ import { useToast } from '../components/Toast'
 
 const normalizeGstin = value => String(value || '').normalize('NFKC').replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 15)
 const normalizeVendorName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+const findDirectoryVendor = (vendors, name, code = '') => {
+  if (code) {
+    const byCode = vendors.find(v => String(v.code || '').toLowerCase() === String(code).toLowerCase())
+    if (byCode) return byCode
+  }
+  const normalized = normalizeVendorName(name)
+  if (!normalized) return null
+  const exact = vendors.filter(v => normalizeVendorName(v.name) === normalized)
+  if (exact.length === 1) return exact[0]
+  if (exact.length > 1) return null
+  // OCR may omit punctuation, spaces, or a small part of the registered name.
+  // Accept a partial match only when it identifies one directory vendor uniquely.
+  const partial = vendors.filter(v => {
+    const candidate = normalizeVendorName(v.name)
+    return candidate && (candidate.includes(normalized) || normalized.includes(candidate))
+  })
+  return partial.length === 1 ? partial[0] : null
+}
 
 const PencilIcon = () => (
   <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -324,8 +342,7 @@ const extractGRNDocument = async (file) => {
         const withoutSerial = whole.slice(prefix.length).trim()
         return items.some(item => normalizeItemName(item.name) === normalizeItemName(withoutSerial)) ? '' : prefix
       }).trim()
-    const matchedVendor = vendors.find(v => v.code === fields.vendor_code) ||
-      vendors.find(v => normalizeVendorName(v.name) && normalizeVendorName(v.name) === normalizeVendorName(fields.vendor_name))
+    const matchedVendor = findDirectoryVendor(vendors, fields.vendor_name, fields.vendor_code)
     const suggestedRows = (result.line_items || [])
       .map((row, idx) => ({ row, idx, cleanedName: cleanExtractedName(row.item_name) }))
       // Carting/freight/etc. are invoice charges, not stock items. They must not
@@ -488,14 +505,11 @@ const saveNewMasterItem = async () => {
       .split(/[^A-Za-z0-9]+/).filter(Boolean).map(part => part[0]).join('').toUpperCase().slice(0, 3) || 'ITM')
     // Reuse a vendor by normalized name. If it is new, create it only after
     // the user explicitly clicks Save Item in this review popup.
-    const normalizeVendorName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-    let linkedVendor = vendorGstin
-      ? vendors.find(v => String(v.gst_no || '').replace(/[^a-z0-9]/gi, '').toUpperCase() === vendorGstin)
-      : null
-    if (!linkedVendor) {
-      const nameMatches = vendors.filter(v => normalizeVendorName(v.name) === normalizeVendorName(vendorName))
-      if (nameMatches.length > 1) return toast.error('More than one vendor has this name. Enter the GSTIN to identify the correct vendor.')
-      linkedVendor = nameMatches[0] || null
+    // A vendor selected from the directory is authoritative: always use its
+    // saved GSTIN rather than the GSTIN read from the invoice.
+    let linkedVendor = findDirectoryVendor(vendors, vendorName, lineItems[itemMasterDraft.index]?.vendor_code)
+    if (!linkedVendor && vendorGstin) {
+      linkedVendor = vendors.find(v => normalizeGstin(v.gst_no) === vendorGstin) || null
     }
     const code = await codeApi.next('item', categoryPrefix)
     const itemData = {
@@ -818,13 +832,13 @@ const createGRN = async () => {
                 {!itemMasterDraft.uom && <span style={{ display:'block', marginTop:4, color:'#64748b' }}>No unit detected; you can still save this item.</span>}
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Vendor name *
-                <input required className="input" placeholder="Enter supplier/vendor name" value={itemMasterDraft.vendor_name} onChange={e=>setItemMasterDraft(d=>{ const vendorName=e.target.value; const directoryVendor=vendors.find(v=>normalizeVendorName(v.name)===normalizeVendorName(vendorName)); return {...d,vendor_name:vendorName,gst_no:directoryVendor ? normalizeGstin(directoryVendor.gst_no) : normalizeGstin(lineItems[d.index]?.vendor_gst_no)} })} style={{ marginTop:4 }} list="grn-item-vendor-options" />
+                <input required className="input" placeholder="Enter supplier/vendor name" value={itemMasterDraft.vendor_name} onChange={e=>setItemMasterDraft(d=>{ const vendorName=e.target.value; const directoryVendor=findDirectoryVendor(vendors,vendorName); return {...d,vendor_name:vendorName,gst_no:directoryVendor ? normalizeGstin(directoryVendor.gst_no) : normalizeGstin(lineItems[d.index]?.vendor_gst_no)} })} style={{ marginTop:4 }} list="grn-item-vendor-options" />
                 <datalist id="grn-item-vendor-options">
                   {vendors.map(v => <option key={v.code} value={v.name} />)}
                 </datalist>
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Vendor GSTIN
-                <input className="input" maxLength={15} autoComplete="off" spellCheck={false} value={itemMasterDraft.gst_no || ''} readOnly={vendors.some(v=>normalizeVendorName(v.name)===normalizeVendorName(itemMasterDraft.vendor_name))} onChange={e=>setItemMasterDraft(d=>({...d,gst_no:normalizeGstin(e.target.value)}))} style={{ marginTop:4, background:vendors.some(v=>normalizeVendorName(v.name)===normalizeVendorName(itemMasterDraft.vendor_name)) ? '#f8fafc' : '#fff' }} placeholder="15-character GSTIN" />
+                <input className="input" maxLength={15} autoComplete="off" spellCheck={false} value={itemMasterDraft.gst_no || ''} readOnly={Boolean(findDirectoryVendor(vendors,itemMasterDraft.vendor_name))} onChange={e=>setItemMasterDraft(d=>({...d,gst_no:normalizeGstin(e.target.value)}))} style={{ marginTop:4, background:findDirectoryVendor(vendors,itemMasterDraft.vendor_name) ? '#f8fafc' : '#fff' }} placeholder="15-character GSTIN" />
                 <span style={{ display:'block', marginTop:4, color:'#64748b', fontSize:11, textAlign:'right' }}>{normalizeGstin(itemMasterDraft.gst_no).length}/15 characters</span>
               </label>
             </div>
