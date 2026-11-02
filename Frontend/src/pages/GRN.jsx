@@ -796,7 +796,7 @@ const createGRN = async () => {
         <div role="presentation" style={{ position:'fixed', inset:0, zIndex:1200, background:'rgba(15,23,42,.55)', display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
           <div role="dialog" aria-modal="true" aria-labelledby="new-item-master-title" style={{ width:'min(560px, 100%)', maxHeight:'90vh', overflowY:'auto', background:'#fff', borderRadius:14, padding:22, boxShadow:'0 20px 60px rgba(0,0,0,.25)', fontFamily:"'DM Sans', sans-serif", color:'var(--ink)' }}>
             <div style={{ fontSize:11, color:'#64748b', fontWeight:700, letterSpacing:'.06em', textTransform:'uppercase' }}>Invoice item {itemMasterDraft.index + 1} of {lineItems.length}</div>
-            <h2 id="new-item-master-title" style={{ margin:'5px 0 6px', fontSize:20, fontFamily:"'DM Sans', sans-serif", fontWeight:600 }}>
+            <h2 id="new-item-master-title" style={{ margin:'5px 0 6px', fontSize:20, fontFamily:"'Fraunces', serif", fontWeight:600 }}>
               {itemMasterDraft.possible_matches?.length ? 'Review possible Item Master matches' : 'Add item to Item Master'}
             </h2>
             <p style={{ margin:'0 0 16px', color:'#64748b', fontSize:13 }}>
