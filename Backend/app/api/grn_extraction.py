@@ -2086,6 +2086,16 @@ async def extract_grn_document(
                     "One or more invoice descriptions could not be matched confidently to the item master."
                 )
 
+    # Temporary supplier-layout layer: isolated from the generic OCR/parser above.
+    # Remove this single call when the generic extractor fully supports these formats.
+    from app.api.grn_vendor_templates import apply_temporary_vendor_template
+    result = apply_temporary_vendor_template(
+        result,
+        "\\n".join(part for part in (text, supplemental_field_text) if part),
+        db,
+        file.filename or "",
+    )
+
     review_rows = [row for row in result.get("line_items", []) if row.get("needs_review")]
     if review_rows:
         result["warnings"] = list(dict.fromkeys(
