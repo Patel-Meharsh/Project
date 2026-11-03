@@ -147,6 +147,11 @@ def apply_temporary_vendor_template(
         fields = result.setdefault("fields", {})
         if not fields.get("vendor_name"):
             fields["vendor_name"] = "Kalyan Hardware"
+        # For a genuinely new vendor, capture the supplier GSTIN from the
+        # invoice. Existing vendors are still resolved by Vendor Directory code.
+        gstin = re.search(r"\\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z])\\b", text or "", re.I)
+        if gstin:
+            fields["vendor_gst_no"] = gstin.group(1).upper()
 
     if template == "shri_hari_electric":
         for index, row in enumerate(rows, start=1):
