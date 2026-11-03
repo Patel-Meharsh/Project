@@ -47,7 +47,9 @@ def _clean_serial(description: str, serial: int) -> str:
     value = re.sub(r"\s+", " ", str(description or "")).strip(" .:|-\t")
     # In the Shri Hari invoice the serial column and product number touch
     # (for example "1 15 W LED FITTING"). Remove only the expected row serial.
-    value = re.sub(rf"^\s*0?{serial}\s+(?=\d|[A-Za-z])", "", value, count=1, flags=re.I)
+    # The serial may be joined directly to the product number (e.g. 236 W CFL).
+    value = re.sub(rf"^\s*0?{serial}\s*(?=\d)", "", value, count=1, flags=re.I)
+    value = re.sub(rf"^\s*0?{serial}\s+(?=[A-Za-z])", "", value, count=1, flags=re.I)
     return value.strip(" .:|-\t")
 
 
