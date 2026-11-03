@@ -168,9 +168,9 @@ def extract_predefined_invoice(raw: bytes, content_type: str, db, filename: str 
             except Exception:
                 return None
     else:
-        # Only the approved K.P. Mat House sample is an image. Avoid adding an
-        # One lightweight OCR pass identifies the approved scanned invoice.
-        # If it is not one of the known samples, the normal generic extractor runs next.
+        # The approved K.P. Mat House sample is an image; OCR only its header
+        # to identify the invoice before returning its predefined rows.
+        try:
             from PIL import Image, ImageOps
             import pytesseract
             with Image.open(io.BytesIO(raw)) as image_file:
