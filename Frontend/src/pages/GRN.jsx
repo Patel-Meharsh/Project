@@ -361,8 +361,12 @@ const extractGRNDocument = async (file) => {
     // The extracted vendor_code is the single source of truth for the Add Item form.
     // Resolve the matching record from Vendor Directory by code only; never fall back
     // to invoice OCR text for the vendor name or GSTIN.
-    const matchedVendor = fields.vendor_code
-      ? vendors.find(v => String(v.code || '').trim().toUpperCase() === String(fields.vendor_code).trim().toUpperCase()) || null
+    const extractedRows = Array.isArray(result.line_items) ? result.line_items : []
+    const extractedVendorCode = String(
+      fields.vendor_code || extractedRows.find(row => row.vendor_code)?.vendor_code || ''
+    ).trim()
+    const matchedVendor = extractedVendorCode
+      ? vendors.find(v => String(v.code || '').trim().toUpperCase() === extractedVendorCode.toUpperCase()) || null
       : null
     const suggestedRows = (result.line_items || [])
       .map((row, idx) => ({ row, idx, cleanedName: cleanExtractedName(row.item_name) }))
@@ -430,10 +434,17 @@ const extractGRNDocument = async (file) => {
           uom: row.uom || row.unit || '',
           item_name: masterMatch?.name || cleanedName || '',
           vendor_code: matchedVendor?.code || row.vendor_code || '',
-          vendor_name: matchedVendor?.name || row.vendor_name || fields.vendor_name || '',
+          vendor_name: matchedVendor?.name || (extractedVendorCode ? '' : (row.vendor_name || fields.vendor_name || '')),
           // Existing vendors always use Vendor Directory GSTIN; a new vendor
           // may use the GSTIN read from its invoice until its master record exists.
-          vendor_gst_no: matchedVendor ? normalizeGstin(matchedVendor.gst_no) : normalizeGstin(fields.vendor_gst_no || ''),
+          // A resolved vendor code always requires the Vendor Directory GSTIN.
+          // Never fall back to invoice OCR when a code exists but its record is missing.
+          // Invoice GSTIN is used only for a genuinely new vendor with no directory code.
+          vendor_gst_no: matchedVendor
+            ? normalizeGstin(matchedVendor.gst_no)
+            : extractedVendorCode
+              ? ''
+              : normalizeGstin(fields.vendor_gst_no || ''),
           recd_qty: row.recd_qty ?? '',
           // Default accepted quantity to received quantity for GRN entry.
           accepted_qty: row.accepted_qty ?? row.recd_qty ?? '',
