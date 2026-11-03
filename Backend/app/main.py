@@ -95,6 +95,13 @@ with engine.begin() as conn:
     )).fetchone():
         conn.execute(text("CREATE INDEX ix_evt_entity ON event_log (entity, entity_id)"))
 
+    # Timestamp code reservations so abandoned item-code forms can expire safely.
+    has_reserved_at = conn.execute(text(
+        "SELECT 1 FROM information_schema.columns WHERE table_name='code_reservations' AND column_name='reserved_at'"
+    )).fetchone()
+    if not has_reserved_at:
+        conn.execute(text("ALTER TABLE public.code_reservations ADD COLUMN reserved_at VARCHAR"))
+
     # ── New column migrations ────────────────────────────────────────────────
     _new_cols = [
         ("inventory",              "last_grn_no",        "VARCHAR"),
