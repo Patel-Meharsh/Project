@@ -65,6 +65,16 @@ class PredefinedInvoiceTests(unittest.TestCase):
                 self.assertEqual(result["fields"]["invoice_no"], invoice_no)
                 self.assertEqual(len(result["line_items"]), expected_count)
                 self.assertTrue(all(row["source"] == "predefined_vendor_template" for row in result["line_items"]))
+                self.assertTrue(all(row.get("unit") is not None for row in result["line_items"]))
+                expected_totals = {
+                    "shri_hari_electric": 2550.00,
+                    "ideal_office_needs": 40470.00,
+                    "eco_care_solutions": 3300.00,
+                    "kp_mat_house": 4009.85,
+                    "kalyan_hardware": 1534.25,
+                }
+                item_total = sum(row["line_amount"] for row in result["line_items"])
+                self.assertAlmostEqual(item_total, expected_totals[template] - (150.00 if template == "shri_hari_electric" else 0.0), places=2)
 
     def test_shri_hari_uses_exact_36w_cfl_and_carting_charge(self):
         result = extract_predefined_invoice(
