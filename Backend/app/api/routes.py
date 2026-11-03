@@ -424,7 +424,15 @@ def update_service(code: str, svc_id: int, data: dict, db: Session = Depends(get
 # ─── VENDORS ──────────────────────────────────────────────────────────────────
 @router.get("/vendors")
 def get_vendors(db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
-    return db.query(models.VendorModel).all()
+    vendors = db.query(models.VendorModel).all()
+
+    def vendor_code_sort_key(vendor):
+        code = str(vendor.code or "").strip().upper()
+        match = re.fullmatch(r"VND-(\\d+)", code)
+        # Keep valid VND codes in numeric order; place any legacy/custom codes after them.
+        return (0, int(match.group(1))) if match else (1, code)
+
+    return sorted(vendors, key=vendor_code_sort_key)
 
 @router.post("/vendors")
 def create_vendor(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
