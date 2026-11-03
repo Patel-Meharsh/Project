@@ -51,6 +51,15 @@ class TemporaryVendorTemplateTests(unittest.TestCase):
         self.assertIsNone(charge["recd_qty"])
         self.assertIsNone(charge["rate"])
 
+    def test_shri_hari_removes_serial_joined_to_36w_cfl_description(self):
+        result = self.result([
+            {"item_name": "1 15 W LED FITTING", "recd_qty": 2, "rate": 320},
+            {"item_name": "236 W CFL", "recd_qty": 1, "rate": 180},
+        ])
+        output = apply_temporary_vendor_template(result, "SHRI HARI ELECTRIC", self.db)
+        self.assertEqual(output["line_items"][0]["item_name"], "15 W LED FITTING")
+        self.assertEqual(output["line_items"][1]["item_name"], "36 W CFL")
+
     def test_kalyan_keeps_vendor_creation_flow_and_marks_unreadable_rate(self):
         result = self.result([
             {"item_name": "COLLAPSIBLE WASTEPIPE", "rate": None},
