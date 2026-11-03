@@ -426,6 +426,22 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
 
     variants = _prepare_ocr_variants(image)
     plain_candidates: list[dict[str, Any]] = []
+
+    # Fast path: a single grayscale pass handles most clean invoices. Only run
+    # the slower contrast/threshold and alternate-layout passes when the first
+    # result is weak, keeping the detailed fallback for difficult scans.
+    fast_variant = variants[0]
+    try:
+        fast_text = pytesseract.image_to_string(
+            fast_variant, config="--oem 3 --psm 6"
+        ).strip()
+    except Exception:
+        fast_text = ""
+    if fast_text:
+        fast_text = re.sub(r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", fast_text, flags=re.I)
+        if _ocr_quality_score(fast_text) >= 70:
+            return fast_text
+
     for variant_index, variant in enumerate(variants):
         for mode in modes:
             config = f"--oem 3 --psm {mode}"
@@ -503,9 +519,9 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
             # Plain OCR remains available if TSV/bounding-box reconstruction fails.
             pass
 
-    paddle_text = _paddleocr_candidate(image)
-    if paddle_text:
-        candidates.append(paddle_text)
+    # PaddleOCR remains available as an explicit optional benchmark helper,
+    # but is not launched for every upload: model startup/inference is costly
+    # and Tesseract already supplies the normal and fallback paths.
 
     if not candidates:
         return ""
@@ -1392,6 +1408,12 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 best_score = candidate_score
                 best_rows = validated_rows
             all_candidate_rows.extend(validated_rows)
+
+            # Stop after a clearly coherent multi-row table is found. Arithmetic
+            # agreement is a strong signal; weaker scans still get all fallback
+            # variants and segmentation modes below.
+            if len(validated_rows) >= 3 and candidate_score / len(validated_rows) >= 17:
+                return validated_rows
 
     # Return one internally consistent OCR pass only. Merging numeric signatures
     # across preprocessing variants can combine unrelated rows (e.g. a qty/rate
