@@ -292,10 +292,21 @@ export default function Vendors() {
   const [newV,     setNewV]     = useState(EMPTY_V)
   const [activeTab, setActiveTab] = useState('overview')
 
-  const filtered = vendors.filter(v => !search ||
-    v.name.toLowerCase().includes(search.toLowerCase()) ||
-    v.category.toLowerCase().includes(search.toLowerCase()) ||
-    (v.city||'').toLowerCase().includes(search.toLowerCase()))
+  const sortedVendors = [...vendors].sort((a, b) => {
+    const getKey = code => {
+      const match = String(code || '').trim().toUpperCase().match(/^VND-(\\d+)$/)
+      return match ? [0, Number(match[1]), ''] : [1, Number.MAX_SAFE_INTEGER, String(code || '').toUpperCase()]
+    }
+    const ka = getKey(a.code), kb = getKey(b.code)
+    return ka[0] - kb[0] || ka[1] - kb[1] || ka[2].localeCompare(kb[2])
+  })
+
+  const filtered = sortedVendors.filter(v =>
+    !search ||
+    (v.name || '').toLowerCase().includes(search.toLowerCase()) ||
+    (v.category || '').toLowerCase().includes(search.toLowerCase()) ||
+    (v.city || '').toLowerCase().includes(search.toLowerCase())
+  )
 
   const openProfile = async (v) => {
     setSelected(v); setActiveTab('overview'); setProfile(null); setProfLoad(true)
