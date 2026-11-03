@@ -1303,8 +1303,11 @@ def get_grns(db: Session = Depends(get_db), current_user: models.UserModel = Dep
             "item_name": i.name if i else g.item_code,
             "item_summary": item_summary,
             "line_count": len(line_items),
-            "value": round(sum(float(li.get("accepted_qty") or 0) * float(li.get("rate") or effective_rate)
-            for li in line_items) if line_items else (g.accepted_qty or 0) * effective_rate,2),
+            "value": round(sum(
+                float(li.get("line_amount") or 0) if li.get("is_charge_line")
+                else float(li.get("accepted_qty") or 0) * float(li.get("rate") or effective_rate)
+                for li in line_items
+            ) if line_items else (g.accepted_qty or 0) * effective_rate, 2),
         })
     return result
 
