@@ -364,6 +364,11 @@ const extractGRNDocument = async (file) => {
   setItemMasterDraft(null)
   try {
     const result = await grnApi.extractDocument(file)
+    // Add a short, deliberate reveal delay only for the five exact predefined invoices.
+    // Generic invoices keep the current immediate result display.
+    if (result.predefined_invoice === true) {
+      await new Promise(resolve => window.setTimeout(resolve, 3250))
+    }
     setExtractionResult(result)
     const fields = result.fields || {}
     // This document is the source for the draft: clear missing extracted values
