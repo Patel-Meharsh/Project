@@ -2094,6 +2094,7 @@ async def extract_grn_document(
         "\n".join(part for part in (text, supplemental_field_text) if part),
         db,
         file.filename or "",
+        raw,
     )
 
     review_rows = [row for row in result.get("line_items", []) if row.get("needs_review")]
