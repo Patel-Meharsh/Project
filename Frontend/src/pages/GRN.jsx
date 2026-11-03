@@ -208,9 +208,14 @@ export default function GRN() {
     setShowCreate(false)
     setEditTarget(null)
     setRowError(false)
-    setExtractionResult(null)
+    // Keep the active invoice draft and its unmatched-item queue in memory when
+    // the GRN panel is closed. Reopening GRN can resume review without OCR again.
+    setItemMasterDraft(null)
     setExtractingDocument(false)
-    setSelectedDocumentName('')
+    if (!pendingMasterIndexes.length) {
+      setExtractionResult(null)
+      setSelectedDocumentName('')
+    }
   }
 
   // Always start a new GRN with a clean draft. Never spread the previous form
@@ -224,9 +229,20 @@ export default function GRN() {
 
   const openCreate = async () => {
     setEditTarget(null)
+    setRowError(false)
+
+    // If an invoice still has unmatched items, reopen that same GRN draft.
+    // Do not clear its extracted fields/line items or request another GRN number.
+    if (pendingMasterIndexes.length > 0 && extractionResult) {
+      setItemMasterDraft(null)
+      setShowCreate(true)
+      return
+    }
+
     setForm(blankGRNForm())
     setLineItems([emptyRow()])
-    setRowError(false)
+    setPendingMasterIndexes([])
+    setItemMasterDraft(null)
     setExtractionResult(null)
     setExtractingDocument(false)
     setSelectedDocumentName('')
@@ -632,6 +648,11 @@ const createGRN = async () => {
     return
   }
 
+  // A successful save ends this in-memory invoice review session.
+  setPendingMasterIndexes([])
+  setItemMasterDraft(null)
+  setExtractionResult(null)
+  setSelectedDocumentName('')
   closeSlideOver()
   load()
 
@@ -898,9 +919,9 @@ const createGRN = async () => {
                 <div style={{ marginTop:10, padding:10, border:'1px solid #f4c66a', borderRadius:8, background:'#fffbeb', display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
                   <div style={{ fontSize:12, color:'#92400e' }}>
                     <strong>{pendingMasterIndexes.length} invoice item{pendingMasterIndexes.length === 1 ? '' : 's'} still need Item Master setup.</strong>
-                    <div>You can continue later without uploading the invoice again.</div>
+                    <div>Your extracted invoice and GRN draft are retained. Continue whenever you are ready.</div>
                   </div>
-                  <button type="button" className="btn btn-accent" onClick={resumePendingMasterSetup}>Resume item setup</button>
+                  <button type="button" className="btn btn-accent" onClick={resumePendingMasterSetup}>Review pending items ({pendingMasterIndexes.length})</button>
                 </div>
               )}
               {extractionResult && <div style={{ marginTop:10, fontSize:12 }}>
