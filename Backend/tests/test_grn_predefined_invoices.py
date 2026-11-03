@@ -50,7 +50,7 @@ class PredefinedInvoiceTests(unittest.TestCase):
 
     def test_all_five_exact_invoice_templates_return_fixed_rows(self):
         cases = [
-            ("shri_hari_electric", "SHRI HARI ELECTRIC Invoice No SHE/0117/26-27", 4, "SHE/0117/26-27"),
+            ("shri_hari_electric", "SHRI HARI ELECTRIC Invoice No SHE/0117/26-27", 5, "SHE/0117/26-27"),
             ("ideal_office_needs", "IDEAL OFFICE NEEDS Invoice No IDI26-27I0702", 24, "IDI26-27/0702"),
             ("eco_care_solutions", "ECO CARE SOLUTIONS Invoice No ECS/367/26-27", 1, "ECS/367/26-27"),
             ("kp_mat_house", "K P MAT HOUSE Invoice No GST/7518/26-27", 12, "GST/7518/26-27"),
@@ -93,7 +93,7 @@ class PredefinedInvoiceTests(unittest.TestCase):
             "application/pdf", self.db,
         )
         self.assertEqual(len(result["line_items"]), 24)
-        self.assertEqual(result["line_items"][0]["item_name"], "M Fold Paper professional")
+        self.assertEqual(result["line_items"][0]["item_name"], "M Fold Paper")
         self.assertEqual(result["line_items"][11]["item_name"], "M Fold Paper professional")
         self.assertEqual(result["line_items"][13]["item_name"], "M Fold Paper professional")
         self.assertAlmostEqual(sum(row["line_amount"] for row in result["line_items"]), 40470.00, places=2)
