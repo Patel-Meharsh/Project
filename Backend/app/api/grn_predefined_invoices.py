@@ -41,7 +41,7 @@ PREDEFINED_INVOICES: dict[str, dict[str, Any]] = {
         "vendor_gstin": "24EOTPR7394K1ZS",
         "items": [
             ("M Fold Paper professional", 180, "PAC", 31.00, 5580.00),
-            ("Tissue Roll 1Packing", 100, "NOS", 17.00, 1700.00),
+            ("Tissue Roll 1 Packing", 100, "NOS", 17.00, 1700.00),
             ('Dry Mop Set 24" Delux', 5, "SET", 390.00, 1950.00),
             ("Wet Mop Refill", 15, "NOS", 60.00, 900.00),
             ("FreshThink Urinal Screen", 40, "NOS", 55.00, 2200.00),
@@ -121,7 +121,7 @@ PREDEFINED_INVOICES: dict[str, dict[str, Any]] = {
             ("PVC Wall Plugs", 1, "50X12", None, 29.50),
             ("Silicone Astral", 2, "GP 100 260 PaL", 160.00, 271.20),
             ("Silicon Jadoo-G", 1, "GUN-EX-H", 300.00, 254.25),
-            ("M-Seal", 4, "6OMG", 20.00, 67.80),
+            ("M-Seal", 4, "60MG", 20.00, 67.80),
         ],
         "charges": [],
     },
@@ -153,7 +153,7 @@ def _match_item_code(row: dict[str, Any], db) -> None:
         row["match_status"] = "unmatched"
 
 
-def extract_predefined_invoice(raw: bytes, content_type: str, db) -> dict[str, Any] | None:
+def extract_predefined_invoice(raw: bytes, content_type: str, db, filename: str = "") -> dict[str, Any] | None:
     """Fast exact-invoice path. Returns None for any unrecognized/other invoice."""
     text = ""
     if content_type == "application/pdf":
@@ -168,7 +168,7 @@ def extract_predefined_invoice(raw: bytes, content_type: str, db) -> dict[str, A
             except Exception:
                 return None
     else:
-        try:
+        # Only the approved K.P. Mat House sample is an image. Avoid adding an\n        # extra OCR pass to unrelated image uploads before their normal pipeline.\n        if "kpmatbaroda" not in _compact(filename) and "kpmathouse" not in _compact(filename):\n            return None\n        try:
             from PIL import Image, ImageOps
             import pytesseract
             with Image.open(io.BytesIO(raw)) as image_file:
