@@ -298,7 +298,7 @@ def apply_temporary_vendor_template(
     elif template == "ideal_office_needs":
         # This supplier's printed slash in the invoice ID is commonly read as
         # capital I by OCR. Normalize only this known ID pattern.
-        invoice_match = re.search(r"\\b(IDI\\d{2}-\\d{2})[Il|](\\d{4})\\b", text or "", re.I)
+        invoice_match = re.search(r"\b(IDI\d{2}-\d{2})[Il|](\d{4})\b", text or "", re.I)
         if invoice_match:
             result.setdefault("fields", {})["invoice_no"] = (
                 f"{invoice_match.group(1).upper()}/{invoice_match.group(2)}"
