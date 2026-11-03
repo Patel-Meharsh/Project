@@ -1518,6 +1518,8 @@ def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
     new_line_items = data.pop("line_items", None)  # list or None
     if new_line_items is not None:
         for li in new_line_items:
+            if li.get("is_charge_line"):
+                continue
             recd = float(li.get("recd_qty") or 0)
             accepted = float(li.get("accepted_qty") or 0)
             if recd <= 0 or accepted < 0 or accepted > recd:
