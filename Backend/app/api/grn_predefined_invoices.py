@@ -40,7 +40,7 @@ PREDEFINED_INVOICES: dict[str, dict[str, Any]] = {
         "vendor_name": "Ideal Office Needs",
         "vendor_gstin": "24EOTPR7394K1ZS",
         "items": [
-            ("M Fold Paper professional", 180, "PAC", 31.00, 5580.00),
+            ("M Fold Paper", 180, "PAC", 31.00, 5580.00),
             ("Tissue Roll 1 Packing", 100, "NOS", 17.00, 1700.00),
             ('Dry Mop Set 24" Delux', 5, "SET", 390.00, 1950.00),
             ("Wet Mop Refill", 15, "NOS", 60.00, 900.00),
@@ -103,7 +103,7 @@ PREDEFINED_INVOICES: dict[str, dict[str, Any]] = {
         "charges": [],
     },
     "kalyan_hardware": {
-        "match": lambda text: "invoice no468" in _compact(text) and "kalyanhardware" in _compact(text),
+        "match": lambda text: "invoiceno468" in _compact(text) and "kalyanhardware" in _compact(text),
         "invoice_no": "468",
         "date": "2026-07-25",
         "vendor_code": "",
