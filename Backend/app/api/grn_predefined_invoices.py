@@ -168,7 +168,8 @@ def extract_predefined_invoice(raw: bytes, content_type: str, db, filename: str 
             except Exception:
                 return None
     else:
-        # Only the approved K.P. Mat House sample is an image. Avoid adding an\n        # extra OCR pass to unrelated image uploads before their normal pipeline.\n        if "kpmatbaroda" not in _compact(filename) and "kpmathouse" not in _compact(filename):\n            return None\n        try:
+        # Only the approved K.P. Mat House sample is an image. Avoid adding an
+        # extra OCR pass to unrelated image uploads before their normal pipeline.\n        if "kpmatbaroda" not in _compact(filename) and "kpmathouse" not in _compact(filename):\n            return None\n        try:
             from PIL import Image, ImageOps
             import pytesseract
             with Image.open(io.BytesIO(raw)) as image_file:
