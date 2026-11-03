@@ -2472,9 +2472,14 @@ def next_code(entity: str, prefix: Optional[str] = None, db: Session = Depends(g
     if entity == "item":
         has_items = db.query(code_column).filter(code_column.like(f"{pfx}%")).first()
         if not has_items:
+            # Old reservations predate timestamps and can only be stale. New
+            # in-progress form reservations remain valid for 24 hours.
+            stale_before = (datetime.datetime.utcnow() - datetime.timedelta(hours=24)).isoformat()
             db.query(models.CodeReservationModel).filter(
                 models.CodeReservationModel.entity == entity,
                 models.CodeReservationModel.prefix == pfx,
+                (models.CodeReservationModel.reserved_at.is_(None)) |
+                (models.CodeReservationModel.reserved_at < stale_before),
             ).delete(synchronize_session=False)
             db.commit()
 
@@ -2497,7 +2502,7 @@ def next_code(entity: str, prefix: Optional[str] = None, db: Session = Depends(g
         next_n = max(nums, default=0) + 1
         candidate = f"{pfx}{next_n:03d}"
         try:
-            db.add(models.CodeReservationModel(code=candidate, entity=entity, prefix=pfx))
+            db.add(models.CodeReservationModel(code=candidate, entity=entity, prefix=pfx, reserved_at=datetime.datetime.utcnow().isoformat()))
             db.commit()
             return {"code": candidate}
         except IntegrityError:
