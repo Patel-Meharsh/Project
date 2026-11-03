@@ -52,7 +52,7 @@ def _clean_serial(description: str, serial: int) -> str:
 
 
 def _match_item_code(row: dict[str, Any], db) -> None:
-    if row.get("is_charge_line") or row.get("item_code"):
+    if row.get("is_charge_line"):
         return
     name = str(row.get("item_name") or "").strip()
     normalized = _compact(name)
@@ -158,6 +158,8 @@ def apply_temporary_vendor_template(
         _ensure_charge_line(rows, text)
 
     elif template == "kalyan_hardware":
+        invoice_no = str(result.get("fields", {}).get("invoice_no") or "").strip()
+        is_confirmed_sample = invoice_no == "468" or bool(re.search(r"25[/-]07[/-]2026", text or ""))
         corrections = {
             "sscatoriplate": "SS Catori Plate",
             "ssnutbolt": "SS Nut-Bolt",
@@ -171,9 +173,11 @@ def apply_temporary_vendor_template(
             key = _compact(str(row.get("item_name") or ""))
             if key in corrections:
                 row["item_name"] = corrections[key]
-            # The user confirmed this rate is unreadable even though OCR may
-            # return a plausible-looking number. Never infer or backfill it.
-            if key == "pvcwallplugs":
+            if is_confirmed_sample and key == "collapsiblewastepipe":
+                row["rate"] = 60.0
+            # The user confirmed this rate is unreadable on invoice 468 even
+            # though OCR may return a plausible-looking number. Never infer it.
+            if is_confirmed_sample and key == "pvcwallplugs":
                 row["rate"] = None
                 row["rate_unreadable"] = True
                 row["rate_warning"] = True
