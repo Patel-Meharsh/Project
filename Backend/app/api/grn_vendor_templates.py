@@ -149,7 +149,7 @@ def apply_temporary_vendor_template(
             fields["vendor_name"] = "Kalyan Hardware"
         # For a genuinely new vendor, capture the supplier GSTIN from the
         # invoice. Existing vendors are still resolved by Vendor Directory code.
-        gstin = re.search(r"\\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z])\\b", text or "", re.I)
+        gstin = re.search(r"\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z])\b", text or "", re.I)
         if gstin:
             fields["vendor_gst_no"] = gstin.group(1).upper()
 
