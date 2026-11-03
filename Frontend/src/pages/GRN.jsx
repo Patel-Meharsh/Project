@@ -165,6 +165,7 @@ export default function GRN() {
   const [itemMasterDraft, setItemMasterDraft] = useState(null)
   const [savingMasterItem, setSavingMasterItem] = useState(false)
   const [pendingMasterIndexes, setPendingMasterIndexes] = useState([])
+  const [showDraftChoice, setShowDraftChoice] = useState(false)
 
   const { user } = useAuth()
   const isAdmin = canDo(user?.role, 'admin')
@@ -227,18 +228,16 @@ export default function GRN() {
     store_location: 'STORE-CH', batch_lot: '', status: 'Stored', remarks: '',
   })
 
-  const openCreate = async () => {
+  const hasUnfinishedDraft = () => Boolean(
+    form.invoice_no || form.po_no || selectedDocumentName || extractionResult ||
+    pendingMasterIndexes.length ||
+    lineItems.some(row => row.item_code || row.item_name || row.vendor_code || Number(row.recd_qty) > 0)
+  )
+
+  const startNewGRN = async () => {
+    setShowDraftChoice(false)
     setEditTarget(null)
     setRowError(false)
-
-    // If an invoice still has unmatched items, reopen that same GRN draft.
-    // Do not clear its extracted fields/line items or request another GRN number.
-    if (pendingMasterIndexes.length > 0 && extractionResult) {
-      setItemMasterDraft(null)
-      setShowCreate(true)
-      return
-    }
-
     setForm(blankGRNForm())
     setLineItems([emptyRow()])
     setPendingMasterIndexes([])
@@ -254,6 +253,37 @@ export default function GRN() {
       return
     }
     setShowCreate(true)
+  }
+
+  const continueGRNDraft = () => {
+    setShowDraftChoice(false)
+    setEditTarget(null)
+    setRowError(false)
+    if (pendingMasterIndexes.length > 0) {
+      const index = pendingMasterIndexes[0]
+      const row = lineItems[index]
+      if (row) {
+        setItemMasterDraft({
+          index,
+          name: row.item_name || '',
+          ...suggestItemMasterDefaults(row.item_name || '', items),
+          uom: row.uom || '',
+          vendor_name: row.vendor_name || '',
+          gst_no: normalizeGstin(row.vendor_gst_no),
+          possible_matches: row.possible_matches || [],
+          needs_review: row.needs_review,
+        })
+      }
+    }
+    setShowCreate(true)
+  }
+
+  const openCreate = async () => {
+    if (hasUnfinishedDraft()) {
+      setShowDraftChoice(true)
+      return
+    }
+    await startNewGRN()
   }
 
   const [sortConfig, setSortConfig] = useState({ key: 'grn_no', direction: 'asc' })
@@ -845,6 +875,20 @@ const createGRN = async () => {
 
         {/* Create GRN SlideOver */}
   
+      {showDraftChoice && (
+        <div role="presentation" style={{ position:'fixed', inset:0, zIndex:1300, background:'rgba(15,23,42,.55)', display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="grn-draft-choice-title" style={{ width:'min(440px, 100%)', background:'#fff', borderRadius:14, padding:24, boxShadow:'0 20px 60px rgba(0,0,0,.25)' }}>
+            <h2 id="grn-draft-choice-title" style={{ margin:'0 0 8px', fontSize:20 }}>Unfinished GRN found</h2>
+            <p style={{ margin:'0 0 20px', color:'#64748b', fontSize:13, lineHeight:1.5 }}>You have an unfinished GRN draft. Would you like to continue where you left off or start a new GRN?</p>
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:8, flexWrap:'wrap' }}>
+              <button className="btn btn-outline" onClick={()=>setShowDraftChoice(false)}>Cancel</button>
+              <button className="btn btn-outline" onClick={startNewGRN}>Record New GRN</button>
+              <button className="btn btn-accent" onClick={continueGRNDraft}>Continue Draft</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {itemMasterDraft && (
         <div role="presentation" style={{ position:'fixed', inset:0, zIndex:1200, background:'rgba(15,23,42,.55)', display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
           <div role="dialog" aria-modal="true" aria-labelledby="new-item-master-title" style={{ width:'min(560px, 100%)', maxHeight:'90vh', overflowY:'auto', background:'#fff', borderRadius:14, padding:22, boxShadow:'0 20px 60px rgba(0,0,0,.25)', fontFamily:"'DM Sans', sans-serif", color:'var(--ink)' }}>
