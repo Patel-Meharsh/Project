@@ -294,7 +294,7 @@ export default function Vendors() {
 
   const sortedVendors = [...vendors].sort((a, b) => {
     const getKey = code => {
-      const match = String(code || '').trim().toUpperCase().match(/^VND-(\\d+)$/)
+      const match = String(code || '').trim().toUpperCase().match(/^VND-(\d+)$/)
       return match ? [0, Number(match[1]), ''] : [1, Number.MAX_SAFE_INTEGER, String(code || '').toUpperCase()]
     }
     const ka = getKey(a.code), kb = getKey(b.code)
