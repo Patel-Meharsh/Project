@@ -79,6 +79,10 @@ class TemporaryVendorTemplateTests(unittest.TestCase):
         kp = apply_temporary_vendor_template(self.result(), "K P MAT HOUSE\nGSTIN 24AAEFK4814G1ZM", self.db)
         self.assertEqual(ideal["fields"]["vendor_code"], "VND-012")
         self.assertEqual(kp["fields"]["vendor_code"], "VND-011")
+        ideal_invoice = apply_temporary_vendor_template(
+            self.result(), "IDEAL OFFICE NEEDS\\nInvoice No. IDI26-27I0702", self.db
+        )
+        self.assertEqual(ideal_invoice["fields"]["invoice_no"], "IDI26-27/0702")
 
     def test_kalyan_preserves_full_size_like_unit_column_value(self):
         import pymupdf
