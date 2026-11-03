@@ -2465,6 +2465,19 @@ def next_code(entity: str, prefix: Optional[str] = None, db: Session = Depends(g
     pfx = f"{clean_prefix}-"
     code_column = getattr(model_cls, pk_attr)
 
+    # If every item using this prefix has been deleted, old reservations
+    # must not keep the sequence stuck at its previous maximum. Clear only
+    # orphaned item reservations when the prefix has no remaining Item rows.
+    # Other entity sequences (vendors, GRNs, etc.) remain monotonic.
+    if entity == "item":
+        has_items = db.query(code_column).filter(code_column.like(f"{pfx}%")).first()
+        if not has_items:
+            db.query(models.CodeReservationModel).filter(
+                models.CodeReservationModel.entity == entity,
+                models.CodeReservationModel.prefix == pfx,
+            ).delete(synchronize_session=False)
+            db.commit()
+
     # A reservation row is the serialization point: the primary key ensures
     # that two requests racing for the same candidate cannot both receive it.
     for _attempt in range(20):
@@ -2731,12 +2744,25 @@ def delete_hk_item(code: str, db: Session = Depends(get_db), current_user: model
 def delete_items_bulk(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
     _require_role(current_user, "admin")
     codes = data.get("ids", [])
-    db.query(models.ItemModel).filter(models.ItemModel.code.in_(codes)).delete(synchronize_session=False); db.commit(); return {"deleted": len(codes)}
+    db.query(models.ItemModel).filter(models.ItemModel.code.in_(codes)).delete(synchronize_session=False)
+    if codes:
+        db.query(models.CodeReservationModel).filter(
+            models.CodeReservationModel.entity == "item",
+            models.CodeReservationModel.code.in_(codes),
+        ).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": len(codes)}
 
 @router.delete("/items/{code}")
 def delete_item(code: str, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
     _require_role(current_user, "admin")
-    db.query(models.ItemModel).filter(models.ItemModel.code == code).delete(); db.commit(); return {"deleted": code}
+    db.query(models.ItemModel).filter(models.ItemModel.code == code).delete()
+    db.query(models.CodeReservationModel).filter(
+        models.CodeReservationModel.entity == "item",
+        models.CodeReservationModel.code == code,
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": code}
 
 @router.delete("/vendors/bulk")
 def delete_vendors_bulk(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
