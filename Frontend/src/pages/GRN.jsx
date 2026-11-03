@@ -366,10 +366,27 @@ const extractGRNDocument = async (file) => {
       : null
     const suggestedRows = (result.line_items || [])
       .map((row, idx) => ({ row, idx, cleanedName: cleanExtractedName(row.item_name) }))
-      // Carting/freight/etc. are invoice charges, not stock items. They must not
-      // trigger the Item Master creation popup.
-      .filter(({ cleanedName }) => !/\\b(?:carting|freight|transport(?:ation)?|delivery\\s+charges?|packing\\s+charges?|handling\\s+charges?|loading|unloading|round\\s*off)\\b/i.test(cleanedName))
       .map(({ row, idx, cleanedName }) => {
+        const isChargeLine = Boolean(row.is_charge_line) ||
+          /\\b(?:carting|freight|transport(?:ation)?|delivery\\s+charges?|packing\\s+charges?|handling\\s+charges?|loading|unloading|round\\s*off)\\b/i.test(cleanedName)
+        // Keep invoice charges visible in the GRN draft, but never send them
+        // through Item Master matching or stock-item creation.
+        if (isChargeLine) return {
+          id: Date.now() + idx,
+          item_code: '',
+          item_name: cleanedName || row.item_name || 'Invoice charge',
+          vendor_code: matchedVendor?.code || row.vendor_code || '',
+          vendor_name: matchedVendor?.name || row.vendor_name || '',
+          uom: row.uom || row.unit || '',
+          recd_qty: row.recd_qty ?? '',
+          accepted_qty: row.accepted_qty ?? '',
+          rate: row.rate ?? '',
+          line_amount: row.line_amount ?? null,
+          is_charge_line: true,
+          needs_review: false,
+          extraction_warning: '',
+          possible_matches: [],
+        }
         const normalizedName = normalizeItemName(cleanedName)
         const validCodeMatch = items.find(item => row.item_code && item.code === row.item_code)
         const exactNameMatch = items.find(item =>
@@ -432,7 +449,7 @@ const extractGRNDocument = async (file) => {
     // Queue each unmatched invoice row for explicit user-confirmed Item Master creation.
     const unmatched = suggestedRows
       .map((row, index) => ({ row, index }))
-      .filter(({ row }) => !row.item_code && row.item_name.trim())
+      .filter(({ row }) => !row.is_charge_line && !row.item_code && row.item_name.trim())
       .map(({ index }) => index)
     setPendingMasterIndexes(unmatched)
     if (unmatched.length) {
@@ -601,17 +618,17 @@ const createGRN = async () => {
   if (!form.store_location) return toast.error('Store Location is required — stock cannot be updated without it.')
   if (!form.grn_no || !form.grn_date) return toast.error('GRN number and date are required.')
   if (lineItems.length === 0) return toast.error('Add at least one invoice line before saving.')
-  if (lineItems.some(r => !String(r.item_name || '').trim() || !String(r.item_code || '').trim())) {
+  if (lineItems.some(r => !r.is_charge_line && (!String(r.item_name || '').trim() || !String(r.item_code || '').trim()))) {
     setRowError(true)
     return alert('Every invoice line must be linked to an Item Master record. For unmatched items, complete the Add item to Item Master popup and click Save Item before saving the GRN.')
   }
-  if (lineItems.some(r => !Number.isFinite(Number(r.recd_qty)) || Number(r.recd_qty) <= 0)) {
+  if (lineItems.some(r => !r.is_charge_line && (!Number.isFinite(Number(r.recd_qty)) || Number(r.recd_qty) <= 0))) {
     return toast.error('Received quantity must be greater than 0 for every line item.')
   }
-  if (lineItems.some(r => !Number.isFinite(Number(r.accepted_qty)) || Number(r.accepted_qty) <= 0 || Number(r.accepted_qty) > Number(r.recd_qty))) {
+  if (lineItems.some(r => !r.is_charge_line && (!Number.isFinite(Number(r.accepted_qty)) || Number(r.accepted_qty) <= 0 || Number(r.accepted_qty) > Number(r.recd_qty)))) {
     return toast.error('Accepted quantity must be greater than 0 and cannot exceed received quantity.')
   }
-  if (lineItems.some(r => !Number.isFinite(Number(r.rate)) || Number(r.rate) < 0)) {
+  if (lineItems.some(r => !r.is_charge_line && !r.rate_unreadable && (!Number.isFinite(Number(r.rate)) || Number(r.rate) < 0))) {
     return toast.error('Rate must be a valid non-negative number.')
   }
   if (!window.confirm(`Save GRN ${form.grn_no} with ${lineItems.length} line item(s)? This will update inventory${form.po_no ? ' and the linked purchase order' : ''}.`)) {
@@ -631,7 +648,10 @@ const createGRN = async () => {
       vendor_name: String(r.vendor_name || '').trim(),
       recd_qty: Number(r.recd_qty),
       accepted_qty: Number(r.accepted_qty),
-      rate: Number(r.rate || 0),
+      rate: r.rate_unreadable ? 0 : Number(r.rate || 0),
+      rate_unreadable: Boolean(r.rate_unreadable),
+      is_charge_line: Boolean(r.is_charge_line),
+      line_amount: r.line_amount == null ? null : Number(r.line_amount),
     }))
   }
 
@@ -964,7 +984,11 @@ const createGRN = async () => {
                     <div style={{ display:'flex', gap:8, marginBottom:8 }}>
                       <div style={{ flex:1, minWidth:0 }}>
                         <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>Item *</div>
-                        <ComboSearch
+                        {row.is_charge_line ? (
+                          <div className="input" style={{ background:'#f8fafc', color:'#475569', minHeight:38, display:'flex', alignItems:'center' }}>
+                            {row.item_name}
+                          </div>
+                        ) : <ComboSearch
                           query={row.item_code}
                           onQueryChange={val => {
                             const updated = [...lineItems]
@@ -984,7 +1008,7 @@ const createGRN = async () => {
                           options={items.map(i => ({ code: i.code, name: i.name, rate: i.rate }))}
                           placeholder="HK-003 or item name…"
                           hasError={rowError && !row.item_code}
-                        />
+                        />}
                         {row.item_name && <div style={{ fontSize:11, color:'#94a3b8', marginTop:3, paddingLeft:2 }}>{row.item_name}</div>}
                         {row.needs_review && (
                           <div role="status" style={{ fontSize:11, color:'#b45309', marginTop:5, padding:'5px 7px', background:'#fffbeb', borderRadius:5 }}>
@@ -1059,6 +1083,11 @@ const createGRN = async () => {
                             setLineItems(updated)
                           }}
                         />
+                        {row.rate_warning && (
+                          <div role="status" style={{ fontSize:10.5, color:'#b45309', marginTop:4, lineHeight:1.35 }}>
+                            Warning - The rate for this line item is unreadable.
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
