@@ -114,11 +114,11 @@ class GRNPDFPageFallbackTests(unittest.TestCase):
 class GRNHeaderFallbackTests(unittest.TestCase):
     def test_vendor_name_fallback_ignores_phone_email_and_prefers_business_heading(self):
         text = (
-            "TAX INVOICE\\n"
-            "Phone: 9876543210\\n"
-            "sales@kalyanhardware.in\\n"
-            "KALYAN HARDWARE\\n"
-            "GSTIN: 24ABCDE1234F1Z5\\n"
+            "TAX INVOICE\n"
+            "Phone: 9876543210\n"
+            "sales@kalyanhardware.in\n"
+            "KALYAN HARDWARE\n"
+            "GSTIN: 24ABCDE1234F1Z5\n"
             "Invoice No. KH-102"
         )
         result = _extract_fields(text, EmptyItemMasterDB())
@@ -127,9 +127,9 @@ class GRNHeaderFallbackTests(unittest.TestCase):
 
     def test_vendor_name_fallback_rejects_ocr_contact_line(self):
         text = (
-            "TAX INVOICE\\n"
-            "(N): 9825851575. E-matt t Jtuapa\\n"
-            "KALYAN HARDWARE\\n"
+            "TAX INVOICE\n"
+            "(N): 9825851575. E-matt t Jtuapa\n"
+            "KALYAN HARDWARE\n"
             "Invoice No. KH-102"
         )
         result = _extract_fields(text, EmptyItemMasterDB())
@@ -137,8 +137,8 @@ class GRNHeaderFallbackTests(unittest.TestCase):
 
     def test_vendor_name_label_does_not_include_contact_details(self):
         text = (
-            "Supplier Name: Kalyan Hardware Phone: 9876543210\\n"
-            "Email: sales@kalyanhardware.in\\n"
+            "Supplier Name: Kalyan Hardware Phone: 9876543210\n"
+            "Email: sales@kalyanhardware.in\n"
             "Invoice No. KH-102"
         )
         result = _extract_fields(text, EmptyItemMasterDB())
