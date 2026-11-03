@@ -1491,22 +1491,20 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
     ], text)
     def clean_vendor_candidate(value: str | None) -> str:
         candidate = re.sub(r"\s+", " ", value or "").strip(" :|,-")
-        # Reject contact-only lines rather than turning OCR-corrupted
-        # phone/email text into a plausible-looking supplier name.
-        if re.search(r"\d{8,}", re.sub(r"\D", "", candidate)):
-            return ""
+        # Reject contact-only lines, but first remove contact details that may
+        # follow a legitimate supplier name on the same invoice line.
         if re.match(r"(?i)^\s*[([]?\s*(?:n|m|ph|mob|tel)\s*[)\].:-]", candidate):
             return ""
-        if re.search(r"(?i)e[- ]?m(?:ail|att|a1l)\b", candidate):
+        if re.search(r"(?i)e[- ]?m(?:ail|att|a1l)\b", candidate) and not re.search(r"(?i)\b(?:phone|mobile|mob|tel|email|e-mail|gstin)\b", candidate):
             return ""
-        # Contact details are often printed on the same line as the supplier.
-        # Keep the business-name portion and never treat an email/phone as a name.
         candidate = re.split(
             r"(?i)\b(?:phone|mobile|mob|tel|email|e-mail|website|web|www|gstin|gst\s*in)\b|@|https?://",
             candidate,
             maxsplit=1,
         )[0].strip(" :|,-")
         candidate = re.sub(r"\b\+?\d[\d ()-]{7,}\b", " ", candidate)
+        if re.search(r"\d{8,}", re.sub(r"\D", "", candidate)):
+            return ""
         candidate = re.sub(r"\s+", " ", candidate).strip(" :|,-")
         if not candidate or "@" in candidate or re.search(r"\d{8,}", re.sub(r"\D", "", candidate)):
             return ""
@@ -1579,12 +1577,19 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
         return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
 
     gstin_pattern = r"[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]"
+    # OCR/PDF text layers sometimes insert spaces or punctuation between GSTIN
+    # characters. Capture a bounded 15-character candidate, normalize it, then
+    # validate the canonical GSTIN shape before using it for vendor matching.
+    gstin_flexible = r"(?<![A-Z0-9])((?:[A-Z0-9][ .:/_-]*){14}[A-Z0-9])(?![A-Z0-9])"
     labelled_gstins = re.findall(
-        rf"(?i)\b(?:GSTIN(?:/UIN)?|GST\s*IN|UIN)\b\s*[:#\-]?\s*({gstin_pattern})",
+        rf"(?i)\b(?:GSTIN(?:/UIN)?|GST\s*IN|UIN)\b\s*[:#\-]?\s*{gstin_flexible}",
         text,
     )
-    all_gstins = re.findall(gstin_pattern, text, re.I)
-    ocr_gstins = {normalize_gstin(value) for value in labelled_gstins + all_gstins}
+    all_gstins = re.findall(gstin_flexible, text, re.I)
+    ocr_gstins = {
+        normalized for value in labelled_gstins + all_gstins
+        if (normalized := normalize_gstin(value)) and re.fullmatch(gstin_pattern, normalized, re.I)
+    }
     master_gstins: dict[str, list[Any]] = {}
     for vendor in vendors:
         gstin = normalize_gstin(vendor.gst_no)
