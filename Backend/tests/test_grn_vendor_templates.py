@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from app.api.grn_vendor_templates import apply_temporary_vendor_template
+from app.api.grn_vendor_templates import apply_temporary_vendor_template, _override_kalyan_unit_cells
 
 
 class Query:
@@ -79,6 +79,33 @@ class TemporaryVendorTemplateTests(unittest.TestCase):
         kp = apply_temporary_vendor_template(self.result(), "K P MAT HOUSE\nGSTIN 24AAEFK4814G1ZM", self.db)
         self.assertEqual(ideal["fields"]["vendor_code"], "VND-012")
         self.assertEqual(kp["fields"]["vendor_code"], "VND-011")
+
+    def test_kalyan_preserves_full_size_like_unit_column_value(self):
+        import pymupdf
+
+        document = pymupdf.open()
+        page = document.new_page(width=620, height=240)
+        for x, y, label in [
+            (40, 100, "Description"),
+            (280, 100, "Unit"),
+            (350, 100, "Qty"),
+            (430, 100, "Rate"),
+        ]:
+            page.insert_text((x, y), label, fontsize=9)
+        for x, y, value in [
+            (55, 130, "SS Nut-Bolt"),
+            (290, 130, "WASAR-3/16"),
+            (360, 130, "4.00"),
+            (440, 130, "15.00"),
+        ]:
+            page.insert_text((x, y), value, fontsize=9)
+        raw = document.tobytes()
+        document.close()
+
+        rows = [{"item_name": "SS Nut-Bolt"}]
+        _override_kalyan_unit_cells(raw, rows)
+        self.assertEqual(rows[0]["uom"], "WASAR-3/16")
+        self.assertEqual(rows[0]["unit"], "WASAR-3/16")
 
     def test_unrecognized_vendor_uses_generic_result_unchanged(self):
         original = self.result([{"item_name": "Generic item"}])
