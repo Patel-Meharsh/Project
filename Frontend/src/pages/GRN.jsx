@@ -342,7 +342,12 @@ const extractGRNDocument = async (file) => {
         const withoutSerial = whole.slice(prefix.length).trim()
         return items.some(item => normalizeItemName(item.name) === normalizeItemName(withoutSerial)) ? '' : prefix
       }).trim()
-    const matchedVendor = findDirectoryVendor(vendors, fields.vendor_name, fields.vendor_code)
+    // The extracted vendor_code is the single source of truth for the Add Item form.
+    // Resolve the matching record from Vendor Directory by code only; never fall back
+    // to invoice OCR text for the vendor name or GSTIN.
+    const matchedVendor = fields.vendor_code
+      ? vendors.find(v => String(v.code || '').trim().toUpperCase() === String(fields.vendor_code).trim().toUpperCase()) || null
+      : null
     const suggestedRows = (result.line_items || [])
       .map((row, idx) => ({ row, idx, cleanedName: cleanExtractedName(row.item_name) }))
       // Carting/freight/etc. are invoice charges, not stock items. They must not
@@ -391,9 +396,9 @@ const extractGRNDocument = async (file) => {
           item_code: masterMatch?.code || '',
           uom: row.uom || row.unit || '',
           item_name: masterMatch?.name || cleanedName || '',
-          vendor_code: fields.vendor_code || '',
-          vendor_name: matchedVendor?.name || fields.vendor_name || '',
-          vendor_gst_no: matchedVendor ? normalizeGstin(matchedVendor.gst_no) : normalizeGstin(fields.gst_no),
+          vendor_code: matchedVendor?.code || '',
+          vendor_name: matchedVendor?.name || '',
+          vendor_gst_no: matchedVendor ? normalizeGstin(matchedVendor.gst_no) : '',
           recd_qty: row.recd_qty ?? '',
           // Default accepted quantity to received quantity for GRN entry.
           accepted_qty: row.accepted_qty ?? row.recd_qty ?? '',
@@ -523,13 +528,21 @@ const saveNewMasterItem = async () => {
       general: 'GN',
     }[categoryKey] || itemMasterDraft.category
       .split(/[^A-Za-z0-9]+/).filter(Boolean).map(part => part[0]).join('').toUpperCase().slice(0, 3) || 'ITM')
-    // Reuse a vendor by normalized name. If it is new, create it only after
-    // the user explicitly clicks Save Item in this review popup.
-    // A vendor selected from the directory is authoritative: always use its
-    // saved GSTIN rather than the GSTIN read from the invoice.
-    let linkedVendor = findDirectoryVendor(vendors, vendorName, lineItems[itemMasterDraft.index]?.vendor_code)
-    if (!linkedVendor && vendorGstin) {
-      linkedVendor = vendors.find(v => normalizeGstin(v.gst_no) === vendorGstin) || null
+    // Link the new item to the exact vendor already resolved for this GRN row.
+    // Do not create a vendor or perform a second name/GSTIN match here.
+    const grnVendorCode = String(lineItems[itemMasterDraft.index]?.vendor_code || '').trim()
+    if (!grnVendorCode) {
+      return toast.error('A Vendor Code was not resolved for this invoice. Verify the vendor in Record GRN before adding this item.')
+    }
+    const linkedVendor = vendors.find(v => String(v.code || '').trim().toUpperCase() === grnVendorCode.toUpperCase())
+    if (!linkedVendor) {
+      return toast.error(`Vendor Code ${grnVendorCode} was not found in Vendor Directory. Refresh the vendor data and try again.`)
+    }
+    const directoryVendorName = String(linkedVendor.name || '').trim()
+    const directoryVendorGstin = normalizeGstin(linkedVendor.gst_no)
+    if (!directoryVendorName) return toast.error('The selected Vendor Directory record has no vendor name.')
+    if (directoryVendorGstin && (directoryVendorGstin.length !== 15 || !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(directoryVendorGstin))) {
+      return toast.error('The GSTIN stored in Vendor Directory is invalid. Please correct the vendor record before adding this item.')
     }
     const code = await codeApi.next('item', categoryPrefix)
     const itemData = {
@@ -537,38 +550,19 @@ const saveNewMasterItem = async () => {
       master_group: masterGroup,
       sub_category: subCategory,
       uom: invoiceUnit,
-      vendor_code: linkedVendor?.code || '',
+      vendor_code: linkedVendor.code,
       rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
       status: 'Active',
     }
-    let created
-    if (linkedVendor) {
-      created = await itemApi.create(itemData)
-    } else {
-      // The backend creates the new vendor and item in one transaction. If
-      // either insert fails, neither record is committed.
-      const vendorCode = await codeApi.next('vendor')
-      const result = await itemApi.createWithVendor({
-        item: itemData,
-        vendor: {
-          code: vendorCode,
-          name: vendorName,
-          category: masterGroup,
-          gst_no: vendorGstin,
-          status: 'Active',
-        },
-      })
-      created = result.item
-      linkedVendor = result.vendor
-    }
+    const created = await itemApi.create(itemData)
     const updated = [...lineItems]
     updated[itemMasterDraft.index] = {
       ...updated[itemMasterDraft.index],
       item_code: created.code,
       item_name: created.name,
       vendor_code: linkedVendor.code,
-      vendor_name: linkedVendor.name,
-      vendor_gst_no: normalizeGstin(linkedVendor.gst_no || vendorGstin),
+      vendor_name: directoryVendorName,
+      vendor_gst_no: directoryVendorGstin,
     }
     setLineItems(updated)
     await refetch()
