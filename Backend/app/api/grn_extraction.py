@@ -6,6 +6,7 @@ Scanned-image OCR requires the Tesseract binary to be installed on the server.
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
 from datetime import datetime
@@ -19,6 +20,7 @@ from app import models
 from app.api.routes import _get_current_user
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 ALLOWED_TYPES = {
     "application/pdf",
@@ -1794,8 +1796,14 @@ async def extract_grn_document(
     # This fast path identifies the invoice from its embedded PDF text (or one
     # lightweight OCR pass for the scanned K.P. Mat House image) and bypasses
     # the multi-variant generic OCR/table parser entirely.
-    from app.api.grn_predefined_invoices import extract_predefined_invoice
-    predefined_result = extract_predefined_invoice(raw, content_type, db, file.filename or '')
+    try:
+        from app.api.grn_predefined_invoices import extract_predefined_invoice
+        predefined_result = extract_predefined_invoice(raw, content_type, db, file.filename or '')
+    except Exception:
+        # A failure in the optional fixed-invoice fast path must never block
+        # the generic document extractor. Keep the traceback in backend logs.
+        logger.exception("Predefined GRN invoice extraction failed; using generic extraction")
+        predefined_result = None
     if predefined_result:
         predefined_result["filename"] = (file.filename or "document")[:160]
         predefined_result["document_type"] = "pdf" if content_type == "application/pdf" else "image"
