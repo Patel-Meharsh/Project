@@ -438,7 +438,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
     except Exception:
         fast_text = ""
     if fast_text:
-        fast_text = re.sub(r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", fast_text, flags=re.I)
+        fast_text = re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", fast_text, flags=re.I)
         if _ocr_quality_score(fast_text) >= 70:
             return fast_text
 
