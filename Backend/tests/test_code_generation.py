@@ -76,6 +76,13 @@ class CodeGenerationTests(unittest.TestCase):
             1,
         )
 
+    def test_new_item_reservations_are_not_cleared_while_no_items_exist(self):
+        first = next_code("item", "CL", self.db, None)
+        second = next_code("item", "CL", self.db, None)
+
+        self.assertEqual(first["code"], "CL-001")
+        self.assertEqual(second["code"], "CL-002")
+
     def test_item_sequence_continues_after_highest_existing_item(self):
         self.db.add_all([
             models.ItemModel(code="W-001", name="Cable"),
