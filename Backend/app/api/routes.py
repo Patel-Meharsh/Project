@@ -1374,6 +1374,10 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
     # Every line must already point to a real Item Master record. This prevents
     # unreviewed OCR text from becoming a permanent master item during GRN save.
     for li in line_items:
+        if li.get("is_charge_line"):
+            # Invoice charges are retained in the GRN record but never become
+            # stock items or Item Master records.
+            continue
         item_code = (li.get("item_code") or "").strip()
         item_name = (li.get("item_name") or "").strip()
         item = db.query(models.ItemModel).filter_by(code=item_code).first() if item_code else None
@@ -1393,6 +1397,8 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
             li["vendor_code"] = vendor.code
 
     for li in line_items:
+        if li.get("is_charge_line"):
+            continue
         recd = float(li.get("recd_qty") or 0)
         accepted = float(li.get("accepted_qty") or 0)
         if recd <= 0 or accepted < 0 or accepted > recd:
@@ -1411,7 +1417,7 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
 
     # Populate top-level item/qty fields from line items for backward compat
     if line_items:
-        first = line_items[0]
+        first = next((li for li in line_items if not li.get("is_charge_line")), line_items[0])
         if not data.get("item_code"):   data["item_code"]   = first.get("item_code", "")
         if not data.get("vendor_code"): data["vendor_code"] = first.get("vendor_code", "")
         data["recd_qty"]     = sum(float(li.get("recd_qty") or 0) for li in line_items)
@@ -1427,6 +1433,8 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
         return _item_cache[code]
 
     for li in (line_items or []):
+        if li.get("is_charge_line") or li.get("rate_unreadable"):
+            continue
         if not (float(li.get("rate") or 0) > 0):
             li["rate"] = _item_rate(li.get("item_code", ""))
 
@@ -1436,7 +1444,8 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
 
     data["line_items"] = _json.dumps(line_items) if line_items else None
     total_value = sum(
-        float(li.get("accepted_qty") or 0) * float(li.get("rate") or 0)
+        float(li.get("line_amount") or 0) if li.get("is_charge_line")
+        else float(li.get("accepted_qty") or 0) * float(li.get("rate") or 0)
         for li in line_items)
     data["total_value"] = total_value
 
