@@ -74,7 +74,7 @@ class PredefinedInvoiceTests(unittest.TestCase):
                     "kalyan_hardware": 1534.25,
                 }
                 item_total = sum(row["line_amount"] for row in result["line_items"])
-                self.assertAlmostEqual(item_total, expected_totals[template] - (150.00 if template == "shri_hari_electric" else 0.0), places=2)
+                self.assertAlmostEqual(item_total, expected_totals[template], places=2)
 
     def test_shri_hari_uses_exact_36w_cfl_and_carting_charge(self):
         result = extract_predefined_invoice(
