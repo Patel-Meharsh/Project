@@ -1795,7 +1795,7 @@ async def extract_grn_document(
     # lightweight OCR pass for the scanned K.P. Mat House image) and bypasses
     # the multi-variant generic OCR/table parser entirely.
     from app.api.grn_predefined_invoices import extract_predefined_invoice
-    predefined_result = extract_predefined_invoice(raw, content_type, db)
+    predefined_result = extract_predefined_invoice(raw, content_type, db, file.filename or '')
     if predefined_result:
         predefined_result["filename"] = (file.filename or "document")[:160]
         predefined_result["document_type"] = "pdf" if content_type == "application/pdf" else "image"
