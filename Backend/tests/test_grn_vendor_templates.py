@@ -52,13 +52,21 @@ class TemporaryVendorTemplateTests(unittest.TestCase):
         self.assertIsNone(charge["rate"])
 
     def test_kalyan_keeps_vendor_creation_flow_and_marks_unreadable_rate(self):
-        result = self.result([{"item_name": "PVC WALL PLUGS", "recd_qty": 1, "rate": 2, "line_amount": 2}])
-        output = apply_temporary_vendor_template(result, "KALYAN HARDWARE\nGSTIN 24ACYPP9230H1Z2", self.db)
-        row = output["line_items"][0]
+        result = self.result([
+            {"item_name": "COLLAPSIBLE WASTEPIPE", "rate": None},
+            {"item_name": "PVC WALL PLUGS", "recd_qty": 1, "rate": 2, "line_amount": 2},
+        ])
+        result["fields"]["invoice_no"] = "468"
+        output = apply_temporary_vendor_template(
+            result, "KALYAN HARDWARE\\nGSTIN 24ACYPP9230H1Z2\\n25/07/2026", self.db
+        )
+        self.assertEqual(output["line_items"][0]["rate"], 60.0)
+        row = output["line_items"][1]
         self.assertIsNone(row["rate"])
         self.assertTrue(row["rate_unreadable"])
         self.assertEqual(row["extraction_warning"], "Warning - The rate for this line item is unreadable.")
         self.assertNotIn("vendor_code", output["fields"])
+        self.assertEqual(output["fields"]["vendor_gst_no"], "24ACYPP9230H1Z2")
 
     def test_ecs_vendor_is_resolved_from_directory_and_description_is_normalized(self):
         result = self.result([{"item_name": "ECS LOSTION HAND WASH 5Ltr", "recd_qty": 6, "rate": 550}])
