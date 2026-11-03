@@ -240,7 +240,7 @@ def extract_predefined_invoice(raw: bytes, content_type: str, db) -> dict[str, A
         "grn_date": config["date"],
         "vendor_code": vendor.code if vendor else config["vendor_code"],
         "vendor_name": vendor.name if vendor else config["vendor_name"],
-        "gst_no": (vendor.gst_no if vendor else config["vendor_gstin"]),
+        "gst_no": ((getattr(vendor, "gst_no", "") or config["vendor_gstin"]) if vendor else config["vendor_gstin"]),
         "store_location": "",
     }
     if not vendor and template == "kalyan_hardware":
