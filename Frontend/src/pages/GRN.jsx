@@ -365,8 +365,11 @@ const extractGRNDocument = async (file) => {
     const extractedVendorCode = String(
       fields.vendor_code || extractedRows.find(row => row.vendor_code)?.vendor_code || ''
     ).trim()
+    // Refresh Vendor Directory for every invoice. GRN can remain open while a
+    // vendor is corrected in another tab, so the mount-time vendors state may be stale.
+    const latestVendors = await vendorApi.getAll().catch(() => vendors)
     const matchedVendor = extractedVendorCode
-      ? vendors.find(v => String(v.code || '').trim().toUpperCase() === extractedVendorCode.toUpperCase()) || null
+      ? latestVendors.find(v => String(v.code || '').trim().toUpperCase() === extractedVendorCode.toUpperCase()) || null
       : null
     const suggestedRows = (result.line_items || [])
       .map((row, idx) => ({ row, idx, cleanedName: cleanExtractedName(row.item_name) }))
