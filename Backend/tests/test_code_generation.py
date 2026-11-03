@@ -53,6 +53,41 @@ class CodeGenerationTests(unittest.TestCase):
             2,
         )
 
+
+    def test_item_sequence_restarts_at_001_when_prefix_has_no_items(self):
+        self.db.add_all([
+            models.CodeReservationModel(code="W-001", entity="item", prefix="W-"),
+            models.CodeReservationModel(code="W-002", entity="item", prefix="W-"),
+            models.CodeReservationModel(code="W-003", entity="item", prefix="W-"),
+            models.CodeReservationModel(code="W-004", entity="item", prefix="W-"),
+            models.CodeReservationModel(code="VND-030", entity="vendor", prefix="VND-"),
+        ])
+        self.db.commit()
+
+        result = next_code("item", "W", self.db, None)
+
+        self.assertEqual(result["code"], "W-001")
+        self.assertEqual(
+            self.db.query(models.CodeReservationModel).filter_by(entity="item", prefix="W-").count(),
+            1,
+        )
+        self.assertEqual(
+            self.db.query(models.CodeReservationModel).filter_by(code="VND-030").count(),
+            1,
+        )
+
+    def test_item_sequence_continues_after_highest_existing_item(self):
+        self.db.add_all([
+            models.ItemModel(code="W-001", name="Cable"),
+            models.CodeReservationModel(code="W-001", entity="item", prefix="W-"),
+            models.CodeReservationModel(code="W-002", entity="item", prefix="W-"),
+        ])
+        self.db.commit()
+
+        result = next_code("item", "W", self.db, None)
+
+        self.assertEqual(result["code"], "W-003")
+
     def test_vendor_codes_keep_vendor_prefix(self):
         result = next_code("vendor", None, self.db, None)
         self.assertEqual(result["code"], "VND-001")
