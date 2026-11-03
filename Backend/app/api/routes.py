@@ -1641,8 +1641,10 @@ def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
         data["rejected_qty"] = total_recd - total_accepted
 
         total_value = sum(
-        float(li.get("accepted_qty") or 0) * float(li.get("rate") or 0)
-        for li in new_line_items)
+            float(li.get("line_amount") or 0) if li.get("is_charge_line")
+            else float(li.get("accepted_qty") or 0) * float(li.get("rate") or 0)
+            for li in new_line_items
+        )
 
         data["total_value"] = total_value
 
