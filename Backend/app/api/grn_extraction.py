@@ -2091,7 +2091,7 @@ async def extract_grn_document(
     from app.api.grn_vendor_templates import apply_temporary_vendor_template
     result = apply_temporary_vendor_template(
         result,
-        "\\n".join(part for part in (text, supplemental_field_text) if part),
+        "\n".join(part for part in (text, supplemental_field_text) if part),
         db,
         file.filename or "",
     )
