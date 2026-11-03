@@ -4,6 +4,7 @@ from operator import inv
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header as FHeader, Body, Request
 from fastapi.responses import StreamingResponse, FileResponse, Response
 import os
+import re
 import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import func
