@@ -497,10 +497,6 @@ const saveNewMasterItem = async () => {
   // Unit of measurement is optional: use the invoice unit when detected,
   // otherwise allow the user to create the master item without blocking.
   const invoiceUnit = String(lineItems[itemMasterDraft.index]?.uom || itemMasterDraft.uom || '').trim()
-  const vendorName = (itemMasterDraft.vendor_name || '').trim()
-  const vendorGstin = String(itemMasterDraft.gst_no || '').normalize('NFKC').replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 15)
-  if (!vendorName) return toast.error('Enter the vendor name for this item.')
-  if (vendorGstin && (vendorGstin.length !== 15 || !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(vendorGstin))) return toast.error(`GSTIN must contain 15 valid characters (currently ${vendorGstin.length}). Check the GSTIN copied from the invoice.`)
   setSavingMasterItem(true)
   try {
     // Reuse the established code prefix for this category (for example,
@@ -845,14 +841,11 @@ const createGRN = async () => {
                 <input className="input" value={itemMasterDraft.uom || ''} readOnly aria-readonly="true" placeholder="Unit not detected in invoice" style={{ marginTop:4, background:'#f8fafc' }} />
                 {!itemMasterDraft.uom && <span style={{ display:'block', marginTop:4, color:'#64748b' }}>No unit detected; you can still save this item.</span>}
               </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Vendor name *
-                <input required className="input" placeholder="Enter supplier/vendor name" value={itemMasterDraft.vendor_name} onChange={e=>setItemMasterDraft(d=>{ const vendorName=e.target.value; const directoryVendor=findDirectoryVendor(vendors,vendorName); return {...d,vendor_name:vendorName,gst_no:directoryVendor ? normalizeGstin(directoryVendor.gst_no) : normalizeGstin(lineItems[d.index]?.vendor_gst_no)} })} style={{ marginTop:4 }} list="grn-item-vendor-options" />
-                <datalist id="grn-item-vendor-options">
-                  {vendors.map(v => <option key={v.code} value={v.name} />)}
-                </datalist>
+              <label style={{ fontSize:12, color:'#475569' }}>Vendor name
+                <input className="input" value={itemMasterDraft.vendor_name || ''} readOnly style={{ marginTop:4, background:'#f8fafc' }} placeholder="Fetched using Vendor Code" />
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Vendor GSTIN
-                <input className="input" maxLength={15} autoComplete="off" spellCheck={false} value={itemMasterDraft.gst_no || ''} readOnly={Boolean(findDirectoryVendor(vendors,itemMasterDraft.vendor_name))} onChange={e=>setItemMasterDraft(d=>({...d,gst_no:normalizeGstin(e.target.value)}))} style={{ marginTop:4, background:findDirectoryVendor(vendors,itemMasterDraft.vendor_name) ? '#f8fafc' : '#fff' }} placeholder="15-character GSTIN" />
+                <input className="input" maxLength={15} autoComplete="off" spellCheck={false} value={itemMasterDraft.gst_no || ''} readOnly style={{ marginTop:4, background:'#f8fafc' }} placeholder="Fetched using Vendor Code" />
                 <span style={{ display:'block', marginTop:4, color:'#64748b', fontSize:11, textAlign:'right' }}>{normalizeGstin(itemMasterDraft.gst_no).length}/15 characters</span>
               </label>
             </div>
