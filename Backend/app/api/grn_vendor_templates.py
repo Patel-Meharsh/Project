@@ -126,11 +126,105 @@ def _ensure_charge_line(rows: list[dict[str, Any]], text: str) -> None:
         break
 
 
+
+def _override_kalyan_unit_cells(raw: bytes | None, rows: list[dict[str, Any]]) -> None:
+    """Read the supplier's explicit Unit column without normalizing size-like values."""
+    if not raw or not rows:
+        return
+    try:
+        import pymupdf
+        document = pymupdf.open(stream=raw, filetype="pdf")
+    except Exception:
+        return
+
+    try:
+        for page in document:
+            words = [
+                {"text": str(word[4]).strip(), "x0": float(word[0]), "x1": float(word[2]),
+                 "y": (float(word[1]) + float(word[3])) / 2}
+                for word in page.get_text("words") if str(word[4]).strip()
+            ]
+            if not words:
+                continue
+            visual_rows: list[list[dict[str, Any]]] = []
+            for word in sorted(words, key=lambda item: (item["y"], item["x0"])):
+                if visual_rows and abs(
+                    sum(part["y"] for part in visual_rows[-1]) / len(visual_rows[-1]) - word["y"]
+                ) <= 4.0:
+                    visual_rows[-1].append(word)
+                else:
+                    visual_rows.append([word])
+
+            header_index = None
+            header_words = None
+            for index, visual in enumerate(visual_rows):
+                labels = {word["text"].strip(".:").lower(): word for word in visual}
+                unit_word = labels.get("unit") or labels.get("uom")
+                qty_word = labels.get("qty") or labels.get("quantity")
+                rate_word = labels.get("rate")
+                desc_words = [word for word in visual if word["text"].lower().startswith("description")]
+                if unit_word and qty_word and rate_word and desc_words:
+                    header_index, header_words = index, (desc_words[0], unit_word, qty_word)
+                    break
+            if header_index is None or header_words is None:
+                continue
+
+            desc_word, unit_word, qty_word = header_words
+            desc_x = (desc_word["x0"] + desc_word["x1"]) / 2
+            unit_x = (unit_word["x0"] + unit_word["x1"]) / 2
+            qty_x = (qty_word["x0"] + qty_word["x1"]) / 2
+            left = (desc_x + unit_x) / 2
+            right = (unit_x + qty_x) / 2
+            unit_rows = []
+            for visual in visual_rows[header_index + 1:]:
+                unit_parts = [
+                    word for word in visual
+                    if left <= (word["x0"] + word["x1"]) / 2 < right
+                ]
+                right_parts = [
+                    word for word in visual
+                    if (word["x0"] + word["x1"]) / 2 >= right
+                ]
+                description_parts = [
+                    word for word in visual
+                    if (word["x0"] + word["x1"]) / 2 < left
+                ]
+                unit_value = " ".join(word["text"] for word in sorted(unit_parts, key=lambda w: w["x0"])).strip()
+                description_value = " ".join(word["text"] for word in sorted(description_parts, key=lambda w: w["x0"])).strip()
+                right_value = " ".join(word["text"] for word in right_parts)
+                if unit_value and description_value and re.search(r"\d", right_value):
+                    unit_rows.append((_compact(description_value), unit_value))
+            if not unit_rows:
+                continue
+
+            used = set()
+            for row in rows:
+                target = _compact(str(row.get("item_name") or ""))
+                if not target:
+                    continue
+                ranked = [
+                    (SequenceMatcher(None, target, description).ratio(), index, value)
+                    for index, (description, value) in enumerate(unit_rows)
+                    if index not in used and description
+                ]
+                if ranked:
+                    score, index, value = max(ranked, key=lambda item: item[0])
+                    if score >= 0.50:
+                        row["uom"] = value
+                        row["unit"] = value
+                        used.add(index)
+            return
+    except Exception:
+        return
+    finally:
+        document.close()
+
 def apply_temporary_vendor_template(
     result: dict[str, Any],
     text: str,
     db,
     filename: str = "",
+    raw: bytes | None = None,
 ) -> dict[str, Any]:
     """Apply supplier-specific corrections without changing generic extraction."""
     template = _identify_template(text, filename)
@@ -174,6 +268,7 @@ def apply_temporary_vendor_template(
             "ssbrasswestcuplin": "S.S & BRASS WESTCUPLIN",
             "pvcwallplugs": "PVC Wall Plugs",
         }
+        _override_kalyan_unit_cells(raw, rows)
         for row in rows:
             key = _compact(str(row.get("item_name") or ""))
             if key in corrections:
