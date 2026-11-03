@@ -1267,10 +1267,17 @@ def _grn_item_summary(line_items: list) -> str:
     """Build a compact summary string for multi-line GRNs, e.g. 'HK-018 (435), HK-002 (10) +1 more'."""
     if not line_items:
         return ""
-    parts = [
-        f"{li.get('item_code','')} ({int(float(li.get('accepted_qty') or 0))})"
-        for li in line_items[:2]
-    ]
+    parts = []
+    for li in line_items:
+        if li.get("is_charge_line"):
+            amount = float(li.get("line_amount") or 0)
+            parts.append(f"{li.get('item_name') or 'Invoice charge'} (₹{amount:,.2f})")
+        else:
+            parts.append(
+                f"{li.get('item_code','')} ({int(float(li.get('accepted_qty') or 0))})"
+            )
+        if len(parts) == 2:
+            break
     s = ", ".join(parts)
     if len(line_items) > 2:
         s += f" +{len(line_items) - 2} more"
