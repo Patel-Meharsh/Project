@@ -368,7 +368,7 @@ const extractGRNDocument = async (file) => {
       .map((row, idx) => ({ row, idx, cleanedName: cleanExtractedName(row.item_name) }))
       .map(({ row, idx, cleanedName }) => {
         const isChargeLine = Boolean(row.is_charge_line) ||
-          /\\b(?:carting|freight|transport(?:ation)?|delivery\\s+charges?|packing\\s+charges?|handling\\s+charges?|loading|unloading|round\\s*off)\\b/i.test(cleanedName)
+          /\b(?:carting|freight|transport(?:ation)?|delivery\s+charges?|packing\s+charges?|handling\s+charges?|loading|unloading|round\s*off)\b/i.test(cleanedName)
         // Keep invoice charges visible in the GRN draft, but never send them
         // through Item Master matching or stock-item creation.
         if (isChargeLine) return {
@@ -436,6 +436,10 @@ const extractGRNDocument = async (file) => {
           // Default accepted quantity to received quantity for GRN entry.
           accepted_qty: row.accepted_qty ?? row.recd_qty ?? '',
           rate: row.rate ?? '',
+          rate_unreadable: Boolean(row.rate_unreadable),
+          rate_warning: Boolean(row.rate_warning),
+          line_amount: row.line_amount ?? null,
+          is_charge_line: false,
           needs_review: Boolean(row.needs_review || uncertainMatch),
           extraction_warning: row.extraction_warning || (uncertainMatch
             ? 'Possible existing Item Master matches need review before creating a new item.'
@@ -1113,7 +1117,7 @@ const createGRN = async () => {
 
           {/* Accepted value summary — uses line item totals */}
           {(() => {
-            const totalValue = lineItems.reduce((s, r) => s + Number(r.accepted_qty || 0) * Number(r.rate || 0), 0)
+            const totalValue = lineItems.reduce((s, r) => s + (r.is_charge_line ? Number(r.line_amount || 0) : Number(r.accepted_qty || 0) * Number(r.rate || 0)), 0)
             return totalValue > 0 ? (
               <div style={{ background:'#f0fdf4', borderRadius:10, padding:14, marginTop:8, display:'flex', gap:24 }}>
                 <div>
