@@ -429,9 +429,11 @@ const extractGRNDocument = async (file) => {
           item_code: masterMatch?.code || '',
           uom: row.uom || row.unit || '',
           item_name: masterMatch?.name || cleanedName || '',
-          vendor_code: matchedVendor?.code || '',
-          vendor_name: matchedVendor?.name || '',
-          vendor_gst_no: matchedVendor ? normalizeGstin(matchedVendor.gst_no) : '',
+          vendor_code: matchedVendor?.code || row.vendor_code || '',
+          vendor_name: matchedVendor?.name || row.vendor_name || fields.vendor_name || '',
+          // Existing vendors always use Vendor Directory GSTIN; a new vendor
+          // may use the GSTIN read from its invoice until its master record exists.
+          vendor_gst_no: matchedVendor ? normalizeGstin(matchedVendor.gst_no) : normalizeGstin(fields.vendor_gst_no || ''),
           recd_qty: row.recd_qty ?? '',
           // Default accepted quantity to received quantity for GRN entry.
           accepted_qty: row.accepted_qty ?? row.recd_qty ?? '',
