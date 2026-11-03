@@ -353,3 +353,4 @@ class CodeReservationModel(Base):
     code = Column(String, primary_key=True)
     entity = Column(String, nullable=False)
     prefix = Column(String, nullable=False)
+    reserved_at = Column(String)
