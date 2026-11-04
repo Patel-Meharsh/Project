@@ -927,21 +927,43 @@ const createGRN = async () => {
                 <input className="input" value={itemMasterDraft.name} onChange={e=>setItemMasterDraft(d=>({...d,name:e.target.value}))} style={{ marginTop:4 }} />
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Master group *
-                <input required className="input" value={itemMasterDraft.master_group || ''} onChange={e=>setItemMasterDraft(d=>({...d,master_group:e.target.value,category:''}))} style={{ marginTop:4 }} placeholder="e.g. Hardware or Electrical" list="grn-item-master-group-options" />
-                <datalist id="grn-item-master-group-options">
-                  {masterGroupNames.map(group=><option key={group} value={group} />)}
-                </datalist>
-                <span style={{ display:'block', marginTop:4, color:'#64748b' }}>A new group will be created automatically if it does not exist.</span>
+                {itemMasterDraft.master_group_is_new ? (
+                  <div style={{ marginTop:4 }}>
+                    <input required autoFocus className="input" value={itemMasterDraft.master_group || ''} onChange={e=>setItemMasterDraft(d=>({...d,master_group:e.target.value}))} placeholder="Enter new master group name" />
+                    <button type="button" className="btn btn-outline" style={{ marginTop:6, padding:'4px 9px', fontSize:11 }} onClick={()=>setItemMasterDraft(d=>({...d,master_group:'',master_group_is_new:false,category:'',category_is_new:false}))}>Choose an existing group</button>
+                  </div>
+                ) : (
+                  <select required className="input" value={itemMasterDraft.master_group || ''} onChange={e=>{
+                    if(e.target.value==='__create_new__') setItemMasterDraft(d=>({...d,master_group:'',master_group_is_new:true,category:'',category_is_new:false}))
+                    else setItemMasterDraft(d=>({...d,master_group:e.target.value,master_group_is_new:false,category:'',category_is_new:false}))
+                  }} style={{ marginTop:4 }}>
+                    <option value="">Select master group</option>
+                    {[...new Set([...masterGroupNames, itemMasterDraft.master_group].map(value=>String(value||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b)).map(group=><option key={group} value={group}>{group}</option>)}
+                    <option value="__create_new__">+ Create New Master Group</option>
+                  </select>
+                )}
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Category *
-                <input required className="input" value={itemMasterDraft.category || ''} onChange={e=>setItemMasterDraft(d=>({...d,category:e.target.value}))} style={{ marginTop:4 }} placeholder="e.g. Door Fittings or Lighting" list="grn-item-category-options" />
-                <datalist id="grn-item-category-options">
-                  {[...new Set([
-                    ...categories.filter(category => String(category.master_group || '').trim().toLowerCase() === String(itemMasterDraft.master_group || '').trim().toLowerCase()).map(category => category.name),
-                    ...(CATEGORY_SUGGESTIONS_BY_GROUP[String(itemMasterDraft.master_group || '').trim().toLowerCase()] || []),
-                  ])].sort().map(category=><option key={category} value={category} />)}
-                </datalist>
-                <span style={{ display:'block', marginTop:4, color:'#64748b' }}>Choose a suggestion or enter a new category; it will be created under this group if needed.</span>
+                {itemMasterDraft.category_is_new ? (
+                  <div style={{ marginTop:4 }}>
+                    <input required autoFocus className="input" value={itemMasterDraft.category || ''} onChange={e=>setItemMasterDraft(d=>({...d,category:e.target.value}))} placeholder="Enter new category name" />
+                    <button type="button" className="btn btn-outline" style={{ marginTop:6, padding:'4px 9px', fontSize:11 }} onClick={()=>setItemMasterDraft(d=>({...d,category:'',category_is_new:false}))}>Choose an existing category</button>
+                  </div>
+                ) : (
+                  <select required className="input" value={itemMasterDraft.category || ''} onChange={e=>{
+                    if(e.target.value==='__create_new__') setItemMasterDraft(d=>({...d,category:'',category_is_new:true}))
+                    else setItemMasterDraft(d=>({...d,category:e.target.value,category_is_new:false}))
+                  }} style={{ marginTop:4 }} disabled={!itemMasterDraft.master_group}>
+                    <option value="">Select category</option>
+                    {[...new Set([
+                      ...categories.filter(category => String(category.master_group || '').trim().toLowerCase() === String(itemMasterDraft.master_group || '').trim().toLowerCase()).map(category => category.name),
+                      ...items.filter(item => String(item.master_group_name || item.master_group || '').trim().toLowerCase() === String(itemMasterDraft.master_group || '').trim().toLowerCase()).map(item => item.category),
+                      ...(CATEGORY_SUGGESTIONS_BY_GROUP[String(itemMasterDraft.master_group || '').trim().toLowerCase()] || []),
+                      itemMasterDraft.category,
+                    ].map(value=>String(value||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b)).map(category=><option key={category} value={category}>{category}</option>)}
+                    <option value="__create_new__">+ Create New Category</option>
+                  </select>
+                )}
               </label>
               <label style={{ fontSize:12, color:'#475569' }}>Sub-category
                 <input className="input" value={itemMasterDraft.sub_category || ''} onChange={e=>setItemMasterDraft(d=>({...d,sub_category:e.target.value}))} style={{ marginTop:4 }} placeholder="Enter sub-category" list="grn-item-subcategory-options" />
