@@ -1204,14 +1204,29 @@ const createGRN = async () => {
             <FormRow label="Remarks"><textarea className="input" rows={2} value={form.remarks} onChange={e => setForm({...form, remarks:e.target.value})} placeholder="Quality notes, damage details, etc." /></FormRow>
           </FormGrid>
 
-          {/* Accepted value summary — uses line item totals */}
+          {/* Accepted value and GST summary — GST is calculated at 18% (9% CGST + 9% SGST) */}
           {(() => {
-            const totalValue = lineItems.reduce((s, r) => s + (r.is_charge_line ? Number(r.line_amount || 0) : Number(r.accepted_qty || 0) * Number(r.rate || 0)), 0)
-            return totalValue > 0 ? (
-              <div style={{ background:'#f0fdf4', borderRadius:10, padding:14, marginTop:8, display:'flex', gap:24 }}>
+            const acceptedValue = lineItems.reduce((sum, row) => sum + (row.is_charge_line ? Number(row.line_amount || 0) : Number(row.accepted_qty || 0) * Number(row.rate || 0)), 0)
+            const cgst = Math.round(acceptedValue * 0.09 * 100) / 100
+            const sgst = Math.round(acceptedValue * 0.09 * 100) / 100
+            const finalAmount = acceptedValue + cgst + sgst
+            return acceptedValue > 0 ? (
+              <div style={{ background:'#f0fdf4', borderRadius:10, padding:14, marginTop:8, display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(125px, 1fr))', gap:16 }}>
                 <div>
-                  <div style={{ fontSize:11, color:'#94a3b8' }}>Accepted Value</div>
-                  <div style={{ fontFamily:"'Fraunces',serif", fontWeight:700, color:'#16a34a', fontSize:18 }}>{fmtCurrency(totalValue)}</div>
+                  <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>Accepted Value</div>
+                  <div style={{ fontFamily:"'Fraunces',serif", fontWeight:700, color:'#16a34a', fontSize:18 }}>{fmtCurrency(acceptedValue)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>CGST (9%)</div>
+                  <div style={{ fontWeight:600, fontSize:16 }}>{fmtCurrency(cgst)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>SGST (9%)</div>
+                  <div style={{ fontWeight:600, fontSize:16 }}>{fmtCurrency(sgst)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>Final Amount (18% GST)</div>
+                  <div style={{ fontFamily:"'Fraunces',serif", fontWeight:700, color:'#0f766e', fontSize:20 }}>{fmtCurrency(finalAmount)}</div>
                 </div>
               </div>
             ) : null
