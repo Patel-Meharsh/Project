@@ -5,6 +5,8 @@ from app.api.grn_serial_cleanup import (
     resolve_description,
     strip_leading_serial,
     suggest_master_items,
+    clean_item_name,
+    correct_item_name_from_master,
 )
 
 
@@ -58,3 +60,41 @@ def test_suggestions_recover_ocr_misread():
     hits = suggest_master_items("CHOWNK PL", masters)
     assert hits and hits[0]["code"] == "A1" and hits[0]["score"] > 0.8
     assert all(hit["code"] != "B2" for hit in hits)
+
+
+
+def test_item_name_removes_all_prohibited_symbols_without_merging_words():
+    dirty = """!@#$%^&*(){}[],./?'";:\\<> CHOWK, PL."""
+    cleaned = clean_item_name(dirty)
+    assert cleaned == "CHOWK PL"
+    assert not any(char in cleaned for char in "!@#$%^&*(){}[],./?'\\\";:\\<>")
+
+
+def test_high_confidence_ocr_typo_suggests_unique_catalog_name():
+    masters = [
+        SimpleNamespace(code="A1", name="CHOWK PL"),
+        SimpleNamespace(code="B2", name="Floor Cleaner"),
+    ]
+    invoice_text, suggested, score = correct_item_name_from_master("CHOWNK PL.", masters)
+    assert invoice_text == "CHOWNK PL"
+    assert suggested == "CHOWK PL"
+    assert score >= 0.90
+
+
+def test_ambiguous_fuzzy_item_name_is_not_auto_corrected():
+    masters = [
+        SimpleNamespace(code="A1", name="CHOWK PL"),
+        SimpleNamespace(code="A2", name="CHOWK PLC"),
+    ]
+    _, suggested, _ = correct_item_name_from_master("CHOWNK PL", masters)
+    assert suggested is None
+
+
+def test_distinct_catalog_item_is_not_replaced_by_weak_similarity():
+    masters = [
+        SimpleNamespace(code="A1", name="WHITE CEMENT"),
+        SimpleNamespace(code="B2", name="WHITE PHYNIL"),
+    ]
+    invoice_text, suggested, score = correct_item_name_from_master("WHITE PHYNIL", masters)
+    assert invoice_text == "WHITE PHYNIL"
+    assert suggested in (None, "WHITE PHYNIL")
