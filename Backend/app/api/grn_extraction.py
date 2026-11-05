@@ -511,7 +511,7 @@ def _ocr_candidate_score(candidate: dict[str, Any]) -> float:
     return _ocr_quality_score(text_value) + confidence * 0.15
 
 
-def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
+def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11), include_paddle: bool = True, paddle_text_out: dict[str, str] | None = None) -> str:
     """Compare local Tesseract and PaddleOCR candidates; no cloud OCR is used."""
     import pytesseract
 
@@ -526,7 +526,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
     except Exception:
         fast_text = ""
     if fast_text:
-        fast_text = re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\\b)", "5", fast_text, flags=re.I)
+        fast_text = re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", fast_text, flags=re.I)
         candidates.append({
             "text": fast_text, "confidence": 0.0, "engine": "tesseract",
             "score": _ocr_quality_score(fast_text),
@@ -538,7 +538,12 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
     # Run PaddleOCR on the same preprocessed page as the first Tesseract pass.
     # Both engines return word positions; each engine's words are ordered into
     # visual rows before their text quality and recognition confidence are compared.
-    paddle_candidate = _paddleocr_candidate(fast_variant)
+    paddle_candidate = (
+        _paddleocr_candidate(fast_variant)
+        if include_paddle else {"text": "", "confidence": 0.0, "engine": "paddleocr"}
+    )
+    if paddle_text_out is not None:
+        paddle_text_out["text"] = paddle_candidate.get("text", "")
     if paddle_candidate["text"]:
         candidates.append(paddle_candidate)
 
@@ -558,7 +563,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
                     continue
                 if candidate:
                     candidate = re.sub(
-                        r"(?<![A-Za-z0-9])S(?=\s*BTL\\b)", "5", candidate, flags=re.I
+                        r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", candidate, flags=re.I
                     )
                     candidates.append({
                         "text": candidate,
@@ -596,13 +601,13 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
 
     best = max(candidates, key=lambda item: item.get("score", 0.0))
     best_text = str(best.get("text") or "")
-    return re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\\b)", "5", best_text, flags=re.I)
+    return re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", best_text, flags=re.I)
 
 
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
     """Extract invoice rows even when OCR breaks a table into uneven text lines."""
     from difflib import SequenceMatcher
-    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items, clean_item_name, correct_item_name_from_master, correct_item_spelling
+    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items, clean_item_name, correct_item_name_from_master, correct_item_spelling, correct_item_spelling
 
     raw_lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
     masters = db.query(models.ItemModel).all()
@@ -1162,7 +1167,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
     # deduplication silently removed those real lines.
     return extracted
 
-def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
+def _extract_image_table_line_items(image, db: Session, paddle_text: str | None = None) -> list[dict[str, Any]]:
     """Read invoice line items from image OCR boxes, using the invoice's own columns.
 
     Only rows below a detected item/description + quantity + rate header are
@@ -1175,9 +1180,15 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
         return []
 
     from difflib import SequenceMatcher
-    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items, clean_item_name, correct_item_name_from_master
+    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items, clean_item_name, correct_item_name_from_master, correct_item_spelling, correct_item_spelling
 
     masters = db.query(models.ItemModel).all()
+    # Parse PaddleOCR's independently recognised text as a second line-item
+    # candidate. The Tesseract box parser below supplies spatial column evidence;
+    # the shared row-quality scorer chooses between the two without merging values.
+    if paddle_text is None:
+        paddle_text = _paddleocr_candidate(_prepare_ocr_variants(image)[0]).get("text", "")
+    paddle_rows = _extract_item_rows(paddle_text, db) if paddle_text else []
     number_re = re.compile(r"(?<![A-Za-z])\d[\d,]*(?:\.\d{1,4})?")
     unit_re = re.compile(
         r"\b(BTL|BOTTLES?|PKT|PACKETS?|NOS?\.?|PCS?\.?|MILLIMETERS?|MILLIMETRES?|MM|CENTIMETERS?|CENTIMETRES?|CM|METERS?|METRES?|MTRS?|MTR|"
@@ -1511,13 +1522,13 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
             # agreement is a strong signal; weaker scans still get all fallback
             # variants and segmentation modes below.
             if len(validated_rows) >= 3 and candidate_score / len(validated_rows) >= 17:
-                return validated_rows
+                return _choose_line_item_candidate(validated_rows, paddle_rows)
 
     # Return one internally consistent OCR pass only. Merging numeric signatures
     # across preprocessing variants can combine unrelated rows (e.g. a qty/rate
     # pair from one pass with a misread description from another) and introduce
     # duplicate products. The selected pass is scored using row arithmetic above.
-    return best_rows
+    return _choose_line_item_candidate(best_rows, paddle_rows)
 
 
 def _parse_invoice_date(text: str):
@@ -1960,7 +1971,7 @@ async def extract_grn_document(
                         if pixmap.width * pixmap.height > 25_000_000:
                             raise HTTPException(413, "A rendered PDF page is too large to process.")
                         image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
-                        ocr_text = _run_ocr_candidates(image, modes=(6, 4, 11))
+                        ocr_text = _run_ocr_candidates(image, modes=(6, 4, 11), include_paddle=False)
                         if ocr_text:
                             # Preserve OCR text for shared field extraction even when embedded
                             # text wins item-row selection (or vice versa).
@@ -2005,7 +2016,10 @@ async def extract_grn_document(
             from PIL import Image
             image = Image.open(io.BytesIO(raw))
             # Handles phone rotation, contrast, upscaling, and several layout modes.
-            text = _run_ocr_candidates(image, modes=(6, 4, 11))
+            paddle_text_result: dict[str, str] = {}
+            text = _run_ocr_candidates(
+                image, modes=(6, 4, 11), paddle_text_out=paddle_text_result
+            )
         except HTTPException:
             raise
         except ImportError:
@@ -2085,7 +2099,10 @@ async def extract_grn_document(
         try:
             from PIL import Image
             with Image.open(io.BytesIO(raw)) as source_image:
-                image_items = _extract_image_table_line_items(source_image.convert("RGB"), db)
+                image_items = _extract_image_table_line_items(
+                    source_image.convert("RGB"), db,
+                    paddle_text=paddle_text_result.get("text", ""),
+                )
             if image_items:
                 # Compare independent parsers rather than always trusting a
                 # coordinate pass that may split one description across rows.
