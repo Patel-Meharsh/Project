@@ -178,7 +178,10 @@ def correct_item_spelling(
     Only unique, one-edit suggestions are applied; ambiguous or unknown words
     remain exactly as OCR read them.
     """
-    from symspellpy import Verbosity
+    try:
+        from symspellpy import Verbosity
+    except ImportError:
+        return _squash(description), []
 
     original = _squash(description)
     checker = _get_local_spell_checker()
