@@ -98,3 +98,47 @@ def test_distinct_catalog_item_is_not_replaced_by_weak_similarity():
     invoice_text, suggested, score = correct_item_name_from_master("WHITE PHYNIL", masters)
     assert invoice_text == "WHITE PHYNIL"
     assert suggested in (None, "WHITE PHYNIL")
+
+
+
+def test_local_spelling_correction_uses_dictionary_without_item_master(monkeypatch):
+    from types import SimpleNamespace
+    import app.api.grn_serial_cleanup as cleanup
+
+    class FakeChecker:
+        def create_dictionary_entry(self, term, count):
+            return True
+
+        def lookup(self, term, verbosity, max_edit_distance, include_unknown):
+            if term == "chownk":
+                return [
+                    SimpleNamespace(term="chowk", distance=1, count=120),
+                ]
+            return [SimpleNamespace(term=term, distance=0, count=100)]
+
+    monkeypatch.setattr(cleanup, "_get_local_spell_checker", lambda: FakeChecker())
+    corrected, changes = cleanup.correct_item_spelling("CHOWNK PL")
+    assert corrected == "CHOWK PL"
+    assert changes and changes[0]["original"] == "CHOWNK"
+
+
+def test_local_spelling_correction_keeps_ambiguous_words(monkeypatch):
+    from types import SimpleNamespace
+    import app.api.grn_serial_cleanup as cleanup
+
+    class FakeChecker:
+        def create_dictionary_entry(self, term, count):
+            return True
+
+        def lookup(self, term, verbosity, max_edit_distance, include_unknown):
+            if term == "nepkin":
+                return [
+                    SimpleNamespace(term="napkin", distance=1, count=100),
+                    SimpleNamespace(term="napkin", distance=1, count=90),
+                ]
+            return [SimpleNamespace(term=term, distance=0, count=100)]
+
+    monkeypatch.setattr(cleanup, "_get_local_spell_checker", lambda: FakeChecker())
+    corrected, changes = cleanup.correct_item_spelling("NEPKIN")
+    assert corrected == "NEPKIN"
+    assert changes == []
