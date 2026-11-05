@@ -33,6 +33,21 @@ const findDirectoryVendor = (vendors, name, code = '') => {
   return partial.length === 1 ? partial[0] : null
 }
 
+const findInvoiceVendor = (vendors, { code = '', name = '', gstin = '' } = {}) => {
+  const byCode = code
+    ? vendors.find(v => String(v.code || '').trim().toUpperCase() === String(code).trim().toUpperCase())
+    : null
+  if (byCode) return byCode
+
+  const normalizedGstin = normalizeGstin(gstin)
+  if (normalizedGstin.length === 15) {
+    const byGstin = vendors.filter(v => normalizeGstin(v.gst_no) === normalizedGstin)
+    if (byGstin.length === 1) return byGstin[0]
+    if (byGstin.length > 1) return null
+  }
+  return findDirectoryVendor(vendors, name)
+}
+
 const PencilIcon = () => (
   <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M11 4l4 4L6 17H2v-4L11 4z"/><path d="M9.5 6.5l4 4"/>
@@ -163,6 +178,7 @@ export default function GRN() {
   const [extractionResult, setExtractionResult] = useState(null)
   const [selectedDocumentName, setSelectedDocumentName] = useState('')
   const [itemMasterDraft, setItemMasterDraft] = useState(null)
+  const [createdVendorRecords, setCreatedVendorRecords] = useState([])
   const [savingMasterItem, setSavingMasterItem] = useState(false)
   const [pendingMasterIndexes, setPendingMasterIndexes] = useState([])
   const [showDraftChoice, setShowDraftChoice] = useState(false)
@@ -242,6 +258,7 @@ export default function GRN() {
     setLineItems([emptyRow()])
     setPendingMasterIndexes([])
     setItemMasterDraft(null)
+    setCreatedVendorRecords([])
     setExtractionResult(null)
     setExtractingDocument(false)
     setSelectedDocumentName('')
@@ -270,6 +287,8 @@ export default function GRN() {
           uom: row.uom || '',
           vendor_name: row.vendor_name || '',
           gst_no: normalizeGstin(row.vendor_gst_no),
+          vendor_code: row.vendor_code || '',
+          vendor_is_new: !row.vendor_code,
           possible_matches: row.possible_matches || [],
           needs_review: row.needs_review,
         })
@@ -393,19 +412,26 @@ const extractGRNDocument = async (file) => {
         const withoutSerial = whole.slice(prefix.length).trim()
         return items.some(item => normalizeItemName(item.name) === normalizeItemName(withoutSerial)) ? '' : prefix
       }).trim()
-    // The extracted vendor_code is the single source of truth for the Add Item form.
-    // Resolve the matching record from Vendor Directory by code only; never fall back
-    // to invoice OCR text for the vendor name or GSTIN.
+    // Resolve the invoice vendor against the latest Vendor Directory. Code is
+    // strongest, followed by exact GSTIN and then a unique normalized name match.
+    // If no directory record matches, keep the invoice name/GSTIN editable so a
+    // new vendor can be created together with the new Item Master record.
     const extractedRows = Array.isArray(result.line_items) ? result.line_items : []
     const extractedVendorCode = String(
       fields.vendor_code || extractedRows.find(row => row.vendor_code)?.vendor_code || ''
     ).trim()
-    // Refresh Vendor Directory for every invoice. GRN can remain open while a
-    // vendor is corrected in another tab, so the mount-time vendors state may be stale.
-    const latestVendors = await vendorApi.getAll().catch(() => vendors)
-    const matchedVendor = extractedVendorCode
-      ? latestVendors.find(v => String(v.code || '').trim().toUpperCase() === extractedVendorCode.toUpperCase()) || null
-      : null
+    const invoiceVendorName = String(
+      fields.vendor_name || extractedRows.find(row => row.vendor_name)?.vendor_name || ''
+    ).trim()
+    const invoiceVendorGstin = normalizeGstin(
+      fields.vendor_gst_no || fields.gst_no || extractedRows.find(row => row.vendor_gst_no)?.vendor_gst_no || ''
+    )
+    const latestVendors = await vendorApi.getAll().catch(() => [...vendors, ...createdVendorRecords])
+    const matchedVendor = findInvoiceVendor(latestVendors, {
+      code: extractedVendorCode,
+      name: invoiceVendorName,
+      gstin: invoiceVendorGstin,
+    })
     const suggestedRows = (result.line_items || [])
       .map((row, idx) => ({ row, idx, cleanedName: cleanExtractedName(row.item_name) }))
       .map(({ row, idx, cleanedName }) => {
@@ -417,8 +443,9 @@ const extractGRNDocument = async (file) => {
           id: Date.now() + idx,
           item_code: '',
           item_name: cleanedName || row.item_name || 'Invoice charge',
-          vendor_code: matchedVendor?.code || row.vendor_code || '',
-          vendor_name: matchedVendor?.name || row.vendor_name || '',
+          vendor_code: matchedVendor?.code || '',
+          vendor_name: matchedVendor?.name || invoiceVendorName || row.vendor_name || '',
+          vendor_gst_no: matchedVendor ? normalizeGstin(matchedVendor.gst_no) : invoiceVendorGstin,
           uom: row.uom || row.unit || '',
           recd_qty: row.recd_qty ?? '',
           accepted_qty: row.accepted_qty ?? '',
@@ -471,20 +498,9 @@ const extractGRNDocument = async (file) => {
           item_code: masterMatch?.code || '',
           uom: row.uom || row.unit || '',
           item_name: masterMatch?.name || cleanedName || '',
-          vendor_code: matchedVendor?.code || row.vendor_code || '',
-          vendor_name: matchedVendor?.name || (extractedVendorCode ? '' : (row.vendor_name || fields.vendor_name || '')),
-          // Existing vendors always use Vendor Directory GSTIN; a new vendor
-          // may use the GSTIN read from its invoice until its master record exists.
-          // A resolved vendor code always requires the Vendor Directory GSTIN.
-          // Never fall back to invoice OCR when a code exists but its record is missing.
-          // Invoice GSTIN is used only for a genuinely new vendor with no directory code.
-          vendor_gst_no: extractedVendorCode.toUpperCase() === 'VND-015'
-            ? '24AKKPB1553H1ZJ'
-            : matchedVendor
-              ? normalizeGstin(matchedVendor.gst_no)
-              : extractedVendorCode
-                ? ''
-                : normalizeGstin(fields.vendor_gst_no || ''),
+          vendor_code: matchedVendor?.code || '',
+          vendor_name: matchedVendor?.name || invoiceVendorName || row.vendor_name || '',
+          vendor_gst_no: matchedVendor ? normalizeGstin(matchedVendor.gst_no) : invoiceVendorGstin,
           recd_qty: row.recd_qty ?? '',
           // Default accepted quantity to received quantity for GRN entry.
           accepted_qty: row.accepted_qty ?? row.recd_qty ?? '',
@@ -511,7 +527,7 @@ const extractGRNDocument = async (file) => {
     setPendingMasterIndexes(unmatched)
     if (unmatched.length) {
       const first = suggestedRows[unmatched[0]]
-      setItemMasterDraft({ index: unmatched[0], name: first.item_name, ...suggestItemMasterDefaults(first.item_name, items), uom: first.uom || '', vendor_name: first.vendor_name || fields.vendor_name || '', gst_no: first.vendor_gst_no || '', possible_matches: first.possible_matches || [], needs_review: first.needs_review })
+      setItemMasterDraft({ index: unmatched[0], name: first.item_name, ...suggestItemMasterDefaults(first.item_name, items), uom: first.uom || '', vendor_name: first.vendor_name || fields.vendor_name || '', gst_no: first.vendor_gst_no || '', vendor_code: first.vendor_code || '', vendor_is_new: !first.vendor_code, possible_matches: first.possible_matches || [], needs_review: first.needs_review })
     }
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
@@ -537,6 +553,8 @@ const resumePendingMasterSetup = () => {
     uom: nextRow.uom || '',
     vendor_name: nextRow.vendor_name || '',
     gst_no: normalizeGstin(nextRow.vendor_gst_no),
+    vendor_code: nextRow.vendor_code || '',
+    vendor_is_new: !nextRow.vendor_code,
     possible_matches: nextRow.possible_matches || [],
     needs_review: nextRow.needs_review,
   })
@@ -567,6 +585,8 @@ const chooseExistingMasterItem = (match) => {
       uom: nextRow.uom || '',
       vendor_name: nextRow.vendor_name || '',
       gst_no: normalizeGstin(nextRow.vendor_gst_no),
+      vendor_code: nextRow.vendor_code || '',
+      vendor_is_new: !nextRow.vendor_code,
       possible_matches: nextRow.possible_matches || [],
       needs_review: nextRow.needs_review,
     })
@@ -614,51 +634,81 @@ const saveNewMasterItem = async () => {
       general: 'GN',
     }[categoryKey] || itemMasterDraft.category
       .split(/[^A-Za-z0-9]+/).filter(Boolean).map(part => part[0]).join('').toUpperCase().slice(0, 3) || 'ITM')
-    // Link the new item to the exact vendor already resolved for this GRN row.
-    // Do not create a vendor or perform a second name/GSTIN match here.
-    const grnVendorCode = String(lineItems[itemMasterDraft.index]?.vendor_code || '').trim()
-    if (!grnVendorCode) {
-      return toast.error('A Vendor Code was not resolved for this invoice. Verify the vendor in Record GRN before adding this item.')
+    const selectedRow = lineItems[itemMasterDraft.index] || {}
+    // Refresh before saving so a vendor added elsewhere during this GRN session
+    // is reused instead of creating a duplicate.
+    const latestVendors = await vendorApi.getAll().catch(() => [...vendors, ...createdVendorRecords])
+    const linkedVendor = findInvoiceVendor(latestVendors, {
+      code: selectedRow.vendor_code || itemMasterDraft.vendor_code || '',
+      name: itemMasterDraft.vendor_name || selectedRow.vendor_name || '',
+      gstin: itemMasterDraft.gst_no || selectedRow.vendor_gst_no || '',
+    })
+    let newVendorData = null
+    let resolvedVendor = linkedVendor
+    if (!resolvedVendor) {
+      const vendorName = String(itemMasterDraft.vendor_name || selectedRow.vendor_name || '').trim()
+      const vendorGstin = normalizeGstin(itemMasterDraft.gst_no || selectedRow.vendor_gst_no || '')
+      if (!vendorName) return toast.error('Enter the new vendor name from the invoice before saving this item.')
+      if (vendorGstin.length !== 15 || !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(vendorGstin)) {
+        return toast.error('Enter a valid 15-character GSTIN for the new vendor before saving this item.')
+      }
+      const vendorCode = await codeApi.next('vendor')
+      newVendorData = { code: vendorCode, name: vendorName, gst_no: vendorGstin, status: 'Active' }
+      resolvedVendor = newVendorData
+    } else {
+      const directoryVendorName = String(resolvedVendor.name || '').trim()
+      const directoryVendorGstin = normalizeGstin(resolvedVendor.gst_no)
+      if (!directoryVendorName) return toast.error('The selected Vendor Directory record has no vendor name.')
+      if (directoryVendorGstin && (directoryVendorGstin.length !== 15 || !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(directoryVendorGstin))) {
+        return toast.error('The GSTIN stored in Vendor Directory is invalid. Please correct the vendor record before adding this item.')
+      }
     }
-    const linkedVendor = vendors.find(v => String(v.code || '').trim().toUpperCase() === grnVendorCode.toUpperCase())
-    if (!linkedVendor) {
-      return toast.error(`Vendor Code ${grnVendorCode} was not found in Vendor Directory. Refresh the vendor data and try again.`)
-    }
-    const directoryVendorName = String(linkedVendor.name || '').trim()
-    const directoryVendorGstin = normalizeGstin(linkedVendor.gst_no)
-    if (!directoryVendorName) return toast.error('The selected Vendor Directory record has no vendor name.')
-    if (directoryVendorGstin && (directoryVendorGstin.length !== 15 || !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(directoryVendorGstin))) {
-      return toast.error('The GSTIN stored in Vendor Directory is invalid. Please correct the vendor record before adding this item.')
-    }
+
     const code = await codeApi.next('item', categoryPrefix)
     const itemData = {
       code, name, category: itemMasterDraft.category.trim(),
       master_group: masterGroup,
       sub_category: subCategory,
       uom: invoiceUnit,
-      vendor_code: linkedVendor.code,
-      rate: Number(lineItems[itemMasterDraft.index]?.rate || 0),
+      vendor_code: resolvedVendor.code,
+      rate: Number(selectedRow.rate || 0),
       status: 'Active',
     }
-    const created = await itemApi.create(itemData)
-    const updated = [...lineItems]
+    const result = newVendorData
+      ? await itemApi.createWithVendor({ item: itemData, vendor: newVendorData })
+      : { item: await itemApi.create(itemData), vendor: resolvedVendor }
+    const created = result.item || result
+    const savedVendor = result.vendor || resolvedVendor
+    if (!created?.code || !savedVendor?.code) {
+      throw new Error('The item or vendor was not returned after saving. Refresh Item Master and Vendor Directory before retrying.')
+    }
+    const savedVendorName = String(savedVendor.name || '').trim()
+    const savedVendorGstin = normalizeGstin(savedVendor.gst_no)
+    const updated = lineItems.map(row => row.vendor_code
+      ? row
+      : { ...row, vendor_code: savedVendor.code, vendor_name: savedVendorName, vendor_gst_no: savedVendorGstin })
     updated[itemMasterDraft.index] = {
       ...updated[itemMasterDraft.index],
       item_code: created.code,
       item_name: created.name,
-      vendor_code: linkedVendor.code,
-      vendor_name: directoryVendorName,
-      vendor_gst_no: directoryVendorGstin,
+      vendor_code: savedVendor.code,
+      vendor_name: savedVendorName,
+      vendor_gst_no: savedVendorGstin,
     }
     setLineItems(updated)
+    if (newVendorData) {
+      setCreatedVendorRecords(previous => [...previous.filter(v => v.code !== savedVendor.code), savedVendor])
+    }
     await refetch()
-    toast.success(`Item ${created.code} added to Item Master.`)
+    toast.success(newVendorData
+      ? `Vendor ${savedVendor.code} and item ${created.code} added successfully.`
+      : `Item ${created.code} added to Item Master using vendor ${savedVendor.code}.`)
     const remaining = pendingMasterIndexes.filter(index => index !== itemMasterDraft.index)
     setPendingMasterIndexes(remaining)
     if (remaining.length) {
       const nextIndex = remaining[0]
       const nextRow = updated[nextIndex]
-      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, ...suggestItemMasterDefaults(nextRow.item_name, items), uom: nextRow.uom || '', vendor_name: nextRow.vendor_name || '', gst_no: normalizeGstin(nextRow.vendor_gst_no), possible_matches: nextRow.possible_matches || [], needs_review: nextRow.needs_review })
+      setItemMasterDraft({ index: nextIndex, name: nextRow.item_name, ...suggestItemMasterDefaults(nextRow.item_name, items), uom: nextRow.uom || '', vendor_name: nextRow.vendor_name || '', gst_no: normalizeGstin(nextRow.vendor_gst_no), vendor_code: nextRow.vendor_code || '', vendor_is_new: !nextRow.vendor_code, possible_matches: nextRow.possible_matches || [], needs_review: nextRow.needs_review })
     } else {
       setItemMasterDraft(null)
     }
@@ -975,12 +1025,13 @@ const createGRN = async () => {
                 <input className="input" value={itemMasterDraft.uom || ''} readOnly aria-readonly="true" placeholder="Unit not detected in invoice" style={{ marginTop:4, background:'#f8fafc' }} />
                 {!itemMasterDraft.uom && <span style={{ display:'block', marginTop:4, color:'#64748b' }}>No unit detected; you can still save this item.</span>}
               </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Vendor name
-                <input className="input" value={itemMasterDraft.vendor_name || ''} readOnly style={{ marginTop:4, background:'#f8fafc' }} placeholder="Fetched using Vendor Code" />
+              <label style={{ fontSize:12, color:'#475569' }}>Vendor name {itemMasterDraft.vendor_is_new ? '*' : ''}
+                <input className="input" value={itemMasterDraft.vendor_name || ''} readOnly={!itemMasterDraft.vendor_is_new} onChange={e=>setItemMasterDraft(d=>({...d,vendor_name:e.target.value}))} style={{ marginTop:4, background:itemMasterDraft.vendor_is_new ? '#fff' : '#f8fafc' }} placeholder={itemMasterDraft.vendor_is_new ? 'Vendor name from invoice' : 'Fetched from Vendor Directory'} />
+                {itemMasterDraft.vendor_is_new && <span style={{ display:'block', marginTop:4, color:'#64748b', fontSize:11 }}>New vendor — verify or correct the invoice name before saving.</span>}
               </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Vendor GSTIN
-                <input className="input" maxLength={15} autoComplete="off" spellCheck={false} value={itemMasterDraft.gst_no || ''} readOnly style={{ marginTop:4, background:'#f8fafc' }} placeholder="Fetched using Vendor Code" />
-                <span style={{ display:'block', marginTop:4, color:'#64748b', fontSize:11, textAlign:'right' }}>{normalizeGstin(itemMasterDraft.gst_no).length}/15 characters</span>
+              <label style={{ fontSize:12, color:'#475569' }}>Vendor GSTIN {itemMasterDraft.vendor_is_new ? '*' : ''}
+                <input className="input" maxLength={15} autoComplete="off" spellCheck={false} value={itemMasterDraft.gst_no || ''} readOnly={!itemMasterDraft.vendor_is_new} onChange={e=>setItemMasterDraft(d=>({...d,gst_no:normalizeGstin(e.target.value)}))} style={{ marginTop:4, background:itemMasterDraft.vendor_is_new ? '#fff' : '#f8fafc' }} placeholder={itemMasterDraft.vendor_is_new ? '15-character GSTIN from invoice' : 'Fetched from Vendor Directory'} />
+                <span style={{ display:'block', marginTop:4, color:'#64748b', fontSize:11, textAlign:'right' }}>{normalizeGstin(itemMasterDraft.gst_no).length}/15 characters{itemMasterDraft.vendor_is_new ? ' · editable' : ' · Vendor Directory'}</span>
               </label>
             </div>
             <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:20 }}>
