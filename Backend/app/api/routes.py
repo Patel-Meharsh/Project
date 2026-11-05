@@ -2772,13 +2772,41 @@ def delete_item(code: str, db: Session = Depends(get_db), current_user: models.U
 @router.delete("/vendors/bulk")
 def delete_vendors_bulk(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
     _require_role(current_user, "admin")
-    codes = data.get("ids", [])
-    db.query(models.VendorModel).filter(models.VendorModel.code.in_(codes)).delete(synchronize_session=False); db.commit(); return {"deleted": len(codes)}
+    codes = list(dict.fromkeys(str(code).strip() for code in data.get("ids", []) if str(code).strip()))
+    try:
+        deleted = db.query(models.VendorModel).filter(models.VendorModel.code.in_(codes)).delete(synchronize_session=False) if codes else 0
+        # Release the matching vendor reservations as well. This lets next-code
+        # reuse the highest deleted VND number instead of advancing past it.
+        if codes:
+            db.query(models.CodeReservationModel).filter(
+                models.CodeReservationModel.entity == "vendor",
+                models.CodeReservationModel.code.in_(codes),
+            ).delete(synchronize_session=False)
+        db.commit()
+        return {"deleted": deleted}
+    except Exception:
+        db.rollback()
+        raise
 
 @router.delete("/vendors/{code}")
 def delete_vendor(code: str, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
     _require_role(current_user, "admin")
-    db.query(models.VendorModel).filter(models.VendorModel.code == code).delete(); db.commit(); return {"deleted": code}
+    try:
+        deleted = db.query(models.VendorModel).filter(models.VendorModel.code == code).delete(synchronize_session=False)
+        db.query(models.CodeReservationModel).filter(
+            models.CodeReservationModel.entity == "vendor",
+            models.CodeReservationModel.code == code,
+        ).delete(synchronize_session=False)
+        db.commit()
+        if not deleted:
+            raise HTTPException(404, "Vendor not found")
+        return {"deleted": code}
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
 
 @router.delete("/locations/bulk")
 def delete_locations_bulk(data: dict, db: Session = Depends(get_db), current_user: models.UserModel = Depends(_get_current_user)):
