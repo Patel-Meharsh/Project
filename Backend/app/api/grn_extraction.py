@@ -143,6 +143,23 @@ def _line_item_quality(rows: list[dict[str, Any]]) -> float:
     return score
 
 
+def _choose_line_item_candidate(
+    primary: list[dict[str, Any]],
+    alternative: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Choose the more complete invoice-row candidate without rewarding noisy row counts."""
+    if not alternative:
+        return primary
+    if not primary:
+        return alternative
+
+    primary_score = _line_item_quality(primary)
+    alternative_score = _line_item_quality(alternative)
+    # Prefer the primary parser on ties: it is the document's native text/coordinate
+    # representation, while alternate OCR can split one description into duplicates.
+    return alternative if alternative_score > primary_score else primary
+
+
 def _append_pdf_description_continuation(
     rows: list[dict[str, Any]],
     description: str,
@@ -1792,23 +1809,6 @@ async def extract_grn_document(
     else:
         raise HTTPException(415, "Upload a receipt in JPG, JPEG, PNG, or PDF format.")
 
-    # Exact approved sample invoices use their verified line-item master data.
-    # This fast path identifies the invoice from its embedded PDF text (or one
-    # lightweight OCR pass for the scanned K.P. Mat House image) and bypasses
-    # the multi-variant generic OCR/table parser entirely.
-    try:
-        from app.api.grn_predefined_invoices import extract_predefined_invoice
-        predefined_result = extract_predefined_invoice(raw, content_type, db, file.filename or '')
-    except Exception:
-        # A failure in the optional fixed-invoice fast path must never block
-        # the generic document extractor. Keep the traceback in backend logs.
-        logger.exception("Predefined GRN invoice extraction failed; using generic extraction")
-        predefined_result = None
-    if predefined_result:
-        predefined_result["filename"] = (file.filename or "document")[:160]
-        predefined_result["document_type"] = "pdf" if content_type == "application/pdf" else "image"
-        return predefined_result
-
     text = ""
     # Keep alternative header text separately from the candidate chosen for item parsing.
     # A candidate that reads table rows well can still miss supplier/date header text.
@@ -2016,21 +2016,7 @@ async def extract_grn_document(
                     row for row in _extract_item_rows(text, db)
                     if row.get("source") == "receipt_text"
                 ]
-                def row_quality(rows):
-                    score = len(rows) * 10
-                    for row in rows:
-                        qty = row.get("recd_qty")
-                        rate = row.get("rate")
-                        amount = row.get("line_amount")
-                        if qty is not None and rate is not None and amount is not None:
-                            if abs(qty * rate - amount) <= max(0.05, abs(amount) * 0.015):
-                                score += 5
-                            else:
-                                score -= 8
-                        if not row.get("item_name") or len(_norm(row.get("item_name", ""))) < 4:
-                            score -= 4
-                    return score
-                chosen_items = text_items if text_items and row_quality(text_items) > row_quality(image_items) else image_items
+                chosen_items = _choose_line_item_candidate(text_items, image_items)
                 result["line_items"] = chosen_items
                 result["warnings"] = [
                     warning for warning in result.get("warnings", [])
@@ -2109,6 +2095,11 @@ async def extract_grn_document(
         except Exception:
             # Text extraction still returns its available rows if OCR is unavailable.
             pass
+        text_items = [
+            row for row in result.get("line_items", [])
+            if row.get("source") == "receipt_text"
+        ]
+        coordinate_items = _choose_line_item_candidate(text_items, coordinate_items)
         if coordinate_items:
             # Internal page markers are only used to merge mixed PDF page types.
             for row in coordinate_items:
@@ -2127,18 +2118,15 @@ async def extract_grn_document(
                     "One or more invoice descriptions could not be matched confidently to the item master."
                 )
 
-    # Temporary supplier-layout layer: isolated from the generic OCR/parser above.
-    # Remove this single call when the generic extractor fully supports these formats.
-    from app.api.grn_vendor_templates import apply_temporary_vendor_template
-    result = apply_temporary_vendor_template(
-        result,
-        "\n".join(part for part in (text, supplemental_field_text) if part),
-        db,
-        file.filename or "",
-        raw,
-    )
+    extracted_rows = result.get("line_items", [])
+    if not extracted_rows:
+        result["warnings"] = list(dict.fromkeys(
+            result.get("warnings", []) + [
+                "No invoice line items could be extracted confidently. Check the scan quality and enter the line items manually; no catalog items were guessed."
+            ]
+        ))
 
-    review_rows = [row for row in result.get("line_items", []) if row.get("needs_review")]
+    review_rows = [row for row in extracted_rows if row.get("needs_review")]
     if review_rows:
         result["warnings"] = list(dict.fromkeys(
             result.get("warnings", []) + [
