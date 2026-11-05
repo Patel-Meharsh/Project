@@ -111,3 +111,34 @@ def suggest_master_items(
             scored.append({"code": code, "name": name, "score": round(score, 3)})
     scored.sort(key=lambda entry: entry["score"], reverse=True)
     return scored[:limit]
+
+
+# Symbols that are not valid in an Item Master item name. Keep hyphens and
+# plus signs because they can be meaningful in product names/specifications.
+_INVALID_ITEM_NAME_CHARS = re.compile(r"""[!@#$%^&*(){}\\[\\],./?'";:\\\\<>]+""")
+
+
+def clean_item_name(value: str) -> str:
+    """Remove prohibited punctuation and normalize whitespace in an item name."""
+    cleaned = _INVALID_ITEM_NAME_CHARS.sub(" ", value or "")
+    return re.sub(r"\\s+", " ", cleaned).strip()
+
+
+def correct_item_name_from_master(
+    description: str,
+    masters: Iterable[Any],
+    min_score: float = 0.90,
+    min_margin: float = 0.10,
+) -> tuple[str, str | None, float]:
+    """Suggest a catalog spelling only for a strong, clearly unique fuzzy match.
+
+    Returns (cleaned invoice text, suggested catalog name, similarity score).
+    The invoice description is never replaced by this helper.
+    """
+    cleaned = clean_item_name(description)
+    candidates = suggest_master_items(cleaned, masters, limit=2, min_score=min_score)
+    if not candidates or candidates[0]["score"] < min_score:
+        return cleaned, None, 0.0
+    if len(candidates) > 1 and candidates[0]["score"] - candidates[1]["score"] < min_margin:
+        return cleaned, None, candidates[0]["score"]
+    return cleaned, candidates[0]["name"], candidates[0]["score"]
