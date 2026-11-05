@@ -137,3 +137,91 @@ def correct_item_name_from_master(
     if len(candidates) > 1 and candidates[0]["score"] - candidates[1]["score"] < min_margin:
         return cleaned, None, candidates[0]["score"]
     return cleaned, candidates[0]["name"], candidates[0]["score"]
+
+
+
+_spell_checker = None
+_spell_dictionary_loaded = False
+
+
+def _get_local_spell_checker():
+    """Load SymSpell's bundled English frequency dictionary locally, once."""
+    global _spell_checker, _spell_dictionary_loaded
+    if _spell_dictionary_loaded:
+        return _spell_checker
+    _spell_dictionary_loaded = True
+    try:
+        from importlib.resources import files
+        from symspellpy import SymSpell
+
+        dictionary_path = files("symspellpy").joinpath("frequency_dictionary_en_82_765.txt")
+        if not dictionary_path.is_file():
+            return None
+        checker = SymSpell(max_dictionary_edit_distance=1, prefix_length=7)
+        if not checker.load_dictionary(str(dictionary_path), term_index=0, count_index=1):
+            return None
+        _spell_checker = checker
+    except Exception:
+        # Spelling assistance is optional; OCR extraction must remain available.
+        _spell_checker = None
+    return _spell_checker
+
+
+def correct_item_spelling(
+    description: str,
+    known_terms: Iterable[str] = (),
+) -> tuple[str, list[dict[str, Any]]]:
+    """Conservatively correct individual OCR words using a bundled local dictionary.
+
+    This is independent of Item Master matching. Known catalog terms are added
+    to the in-memory dictionary so technical/product vocabulary is protected.
+    Only unique, one-edit suggestions are applied; ambiguous or unknown words
+    remain exactly as OCR read them.
+    """
+    from symspellpy import Verbosity
+
+    original = _squash(description)
+    checker = _get_local_spell_checker()
+    if checker is None or not original:
+        return original, []
+
+    for phrase in known_terms:
+        for term in re.findall(r"[A-Za-z]{3,}", str(phrase or "")):
+            checker.create_dictionary_entry(term.lower(), 10000)
+
+    corrections: list[dict[str, Any]] = []
+
+    def replace_token(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if len(token) < 4 or token.isdigit():
+            return token
+        suggestions = checker.lookup(
+            token.lower(),
+            Verbosity.ALL,
+            max_edit_distance=1,
+            include_unknown=True,
+        )
+        candidates = [
+            item for item in suggestions
+            if item.term != token.lower() and item.distance == 1 and item.count >= 2
+        ]
+        if not candidates:
+            return token
+        candidates.sort(key=lambda item: (item.count, -item.distance), reverse=True)
+        best = candidates[0]
+        second_count = candidates[1].count if len(candidates) > 1 else 0
+        if second_count and best.count < second_count * 2:
+            return token
+        corrected = best.term.upper() if token.isupper() else (
+            best.term.capitalize() if token.istitle() else best.term
+        )
+        corrections.append({
+            "original": token,
+            "corrected": corrected,
+            "distance": best.distance,
+            "frequency": best.count,
+        })
+        return corrected
+
+    corrected = re.sub(r"[A-Za-z]+", replace_token, original)
+    return corrected, corrections
