@@ -7,7 +7,7 @@ import os
 import re
 import uuid
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app import models
@@ -2461,7 +2461,7 @@ def next_code(entity: str, prefix: Optional[str] = None, db: Session = Depends(g
         "return": (models.ReturnLogModel, "return_id", "RET-"),
         "pr": (models.PurchaseRequisitionModel, "pr_no", "PR-"),
         "po": (models.PurchaseOrderModel, "po_no", "PO-"),
-        }
+    }
     if entity == "grn":
         raise HTTPException(400, "GRN numbers are assigned only when a GRN is saved.")
     if entity not in prefixes:
@@ -2477,7 +2477,7 @@ def next_code(entity: str, prefix: Optional[str] = None, db: Session = Depends(g
     # If every item using this prefix has been deleted, old reservations
     # must not keep the sequence stuck at its previous maximum. Clear only
     # orphaned item reservations when the prefix has no remaining Item rows.
-    # Other entity sequences (vendors, GRNs, etc.) remain monotonic.
+    # Other entity reservations remain monotonic; GRNs use their own save-time counter.
     if entity == "item":
         has_items = db.query(code_column).filter(code_column.like(f"{pfx}%")).first()
         if not has_items:
