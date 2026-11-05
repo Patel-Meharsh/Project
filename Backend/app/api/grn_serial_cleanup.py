@@ -131,7 +131,7 @@ def correct_item_name_from_master(
 ) -> tuple[str, str | None, float]:
     """Suggest a catalog spelling only for a strong, clearly unique fuzzy match."""
     cleaned = clean_item_name(description)
-    candidates = suggest_master_items(cleaned, masters, limit=2, min_score=min_score)
+    candidates = suggest_master_items(cleaned, masters, limit=2, min_score=0.5)
     if not candidates or candidates[0]["score"] < min_score:
         return cleaned, None, 0.0
     if len(candidates) > 1 and candidates[0]["score"] - candidates[1]["score"] < min_margin:
