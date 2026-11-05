@@ -356,9 +356,10 @@ export default function GRN() {
         item_name:    li.item_name,
         vendor_code:  data.vendor_code,
         vendor_name:  data.vendor_name,
-        recd_qty:     li.remaining_qty,
-        accepted_qty: li.remaining_qty,
-        rate:         li.rate,
+        uom:          li.unit || li.uom || '',
+        recd_qty:     li.recd_qty ?? li.remaining_qty ?? '',
+        accepted_qty: li.recd_qty ?? li.remaining_qty ?? '',
+        rate:         li.rate ?? '',
       })))
     } catch (err) {
       toast.error('Failed to load PO details: ' + (err.response?.data?.detail || err.message))
@@ -383,11 +384,6 @@ const extractGRNDocument = async (file) => {
   setItemMasterDraft(null)
   try {
     const result = await grnApi.extractDocument(file)
-    // Add a short, deliberate reveal delay only for the five exact predefined invoices.
-    // Generic invoices keep the current immediate result display.
-    if (result.predefined_invoice === true) {
-      await new Promise(resolve => window.setTimeout(resolve, 3250))
-    }
     setExtractionResult(result)
     const fields = result.fields || {}
     // This document is the source for the draft: clear missing extracted values
