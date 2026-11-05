@@ -262,7 +262,6 @@ export default function GRN() {
     setExtractionResult(null)
     setExtractingDocument(false)
     setSelectedDocumentName('')
-    try {
     setShowCreate(true)
   }
 
@@ -712,7 +711,7 @@ const createGRN = async () => {
 
   // validation
   if (!form.store_location) return toast.error('Store Location is required — stock cannot be updated without it.')
-  if (!form.grn_no || !form.grn_date) return toast.error('GRN number and date are required.')
+  if (!form.grn_date) return toast.error('GRN date is required.')
   if (lineItems.length === 0) return toast.error('Add at least one invoice line before saving.')
   if (lineItems.some(r => !r.is_charge_line && (!String(r.item_name || '').trim() || !String(r.item_code || '').trim()))) {
     setRowError(true)
@@ -727,7 +726,7 @@ const createGRN = async () => {
   if (lineItems.some(r => !r.is_charge_line && !r.rate_unreadable && (!Number.isFinite(Number(r.rate)) || Number(r.rate) < 0))) {
     return toast.error('Rate must be a valid non-negative number.')
   }
-  if (!window.confirm(`Save GRN ${form.grn_no} with ${lineItems.length} line item(s)? This will update inventory${form.po_no ? ' and the linked purchase order' : ''}.`)) {
+  if (!window.confirm(`Save this GRN with ${lineItems.length} line item(s)? The GRN number will be assigned only after a successful save. This will update inventory${form.po_no ? ' and the linked purchase order' : ''}.`)) {
     return
   }
 
