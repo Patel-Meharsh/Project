@@ -764,6 +764,8 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
     Column positions are inferred from each document's own header words. No
     supplier-specific x coordinates or fixed invoice layout are assumed.
     """
+    from app.api.grn_serial_cleanup import clean_item_name, correct_item_name_from_master
+
     try:
         import pymupdf
     except ImportError:
