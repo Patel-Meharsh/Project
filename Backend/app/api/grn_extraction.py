@@ -607,7 +607,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11), include_padd
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
     """Extract invoice rows even when OCR breaks a table into uneven text lines."""
     from difflib import SequenceMatcher
-    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items, clean_item_name, correct_item_name_from_master, correct_item_spelling, correct_item_spelling
+    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items, clean_item_name, correct_item_name_from_master, correct_item_spelling
 
     raw_lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
     masters = db.query(models.ItemModel).all()
@@ -1180,7 +1180,7 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
         return []
 
     from difflib import SequenceMatcher
-    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items, clean_item_name, correct_item_name_from_master, correct_item_spelling, correct_item_spelling
+    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items, clean_item_name, correct_item_name_from_master, correct_item_spelling
 
     masters = db.query(models.ItemModel).all()
     # Parse PaddleOCR's independently recognised text as a second line-item
