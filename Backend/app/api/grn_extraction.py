@@ -2111,7 +2111,7 @@ async def extract_grn_document(
                 and "One or more PO line items could not be matched" not in warning
             ]
             result["warnings"].append(
-                "Line items were read from PDF table positions. Verify item mapping, quantities, and rates before saving."
+                "Line items were extracted from the strongest available PDF text/table candidate. Verify item mapping, quantities, and rates before saving."
             )
             if any(row.get("match_status") == "unmatched" for row in coordinate_items):
                 result["warnings"].append(
