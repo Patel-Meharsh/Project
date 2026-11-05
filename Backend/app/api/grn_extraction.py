@@ -391,8 +391,8 @@ def _prepare_ocr_variants(image):
 _paddle_ocr_engine = None
 
 
-def _paddleocr_candidate(image) -> str:
-    """Use PaddleOCR as an optional local OCR candidate; no cloud services."""
+def _paddleocr_candidate(image) -> dict[str, Any]:
+    """Return PaddleOCR text, mean confidence and position-ordered word rows."""
     global _paddle_ocr_engine
     try:
         import numpy as np
@@ -402,15 +402,23 @@ def _paddleocr_candidate(image) -> str:
             _paddle_ocr_engine = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
         result = _paddle_ocr_engine.ocr(np.asarray(image.convert("RGB")), cls=True) or []
         words = []
+        confidences = []
         for page_result in result:
             for entry in page_result or []:
                 try:
                     box, recognition = entry
                     label, confidence = recognition
-                    if label and float(confidence) >= 0.25:
+                    confidence = float(confidence)
+                    if label and confidence >= 0.25:
                         xs = [point[0] for point in box]
                         ys = [point[1] for point in box]
-                        words.append({"text": str(label).strip(), "x": sum(xs) / len(xs), "y": sum(ys) / len(ys)})
+                        words.append({
+                            "text": str(label).strip(),
+                            "x": sum(xs) / len(xs),
+                            "y": sum(ys) / len(ys),
+                            "confidence": confidence * 100,
+                        })
+                        confidences.append(confidence * 100)
                 except (TypeError, ValueError, IndexError):
                     continue
         words.sort(key=lambda word: (word["y"], word["x"]))
@@ -427,29 +435,90 @@ def _paddleocr_candidate(image) -> str:
                 rows.append([word])
             else:
                 target.append(word)
-        return "\n".join(
+        text = "\\n".join(
             " ".join(item["text"] for item in sorted(row, key=lambda item: item["x"]))
             for row in rows
         ).strip()
+        return {
+            "text": text,
+            "confidence": sum(confidences) / len(confidences) if confidences else 0.0,
+            "word_count": len(words),
+            "engine": "paddleocr",
+        }
     except ImportError:
-        # PaddleOCR is optional because its model runtime is large.
-        return ""
+        logger.info("PaddleOCR is not installed; continuing with Tesseract only.")
+        return {"text": "", "confidence": 0.0, "word_count": 0, "engine": "paddleocr"}
     except Exception:
-        # A PaddleOCR/model-version issue must not break the Tesseract path.
-        return ""
+        logger.exception("PaddleOCR candidate failed; continuing with Tesseract.")
+        return {"text": "", "confidence": 0.0, "word_count": 0, "engine": "paddleocr"}
+
+
+def _tesseract_box_candidate(image, mode: int = 6) -> dict[str, Any]:
+    """Reconstruct Tesseract words in visual order and retain TSV confidence."""
+    try:
+        import pytesseract
+        from pytesseract import Output
+
+        data = pytesseract.image_to_data(
+            image, config=f"--oem 3 --psm {mode}", output_type=Output.DICT
+        )
+        words = []
+        confidences = []
+        for index, raw_word in enumerate(data.get("text", [])):
+            word = (raw_word or "").strip()
+            try:
+                confidence = float(data["conf"][index])
+            except (ValueError, TypeError, KeyError, IndexError):
+                confidence = -1
+            if word and confidence >= 15:
+                words.append({
+                    "text": word,
+                    "x": int(data["left"][index]),
+                    "y": int(data["top"][index]) + int(data["height"][index]) // 2,
+                })
+                confidences.append(confidence)
+        words.sort(key=lambda word: (word["y"], word["x"]))
+        rows = []
+        for word in words:
+            target = None
+            for row in reversed(rows[-4:]):
+                centre = sum(item["y"] for item in row) / len(row)
+                if abs(word["y"] - centre) <= max(10, int(image.height * 0.006)):
+                    target = row
+                    break
+            if target is None:
+                rows.append([word])
+            else:
+                target.append(word)
+        text = "\\n".join(
+            " ".join(item["text"] for item in sorted(row, key=lambda item: item["x"]))
+            for row in rows
+        ).strip()
+        return {
+            "text": text,
+            "confidence": sum(confidences) / len(confidences) if confidences else 0.0,
+            "word_count": len(words),
+            "engine": "tesseract",
+        }
+    except Exception:
+        return {"text": "", "confidence": 0.0, "word_count": 0, "engine": "tesseract"}
+
+
+def _ocr_candidate_score(candidate: dict[str, Any]) -> float:
+    """Combine invoice-text quality with the OCR engine's own word confidence."""
+    text_value = str(candidate.get("text") or "")
+    confidence = max(0.0, min(100.0, float(candidate.get("confidence") or 0.0)))
+    return _ocr_quality_score(text_value) + confidence * 0.15
 
 
 def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
-    """Compare Tesseract and optional PaddleOCR candidates after local preprocessing."""
+    """Compare local Tesseract and PaddleOCR candidates; no cloud OCR is used."""
     import pytesseract
 
     variants = _prepare_ocr_variants(image)
-    plain_candidates: list[dict[str, Any]] = []
-
-    # Fast path: a single grayscale pass handles most clean invoices. Only run
-    # the slower contrast/threshold and alternate-layout passes when the first
-    # result is weak, keeping the detailed fallback for difficult scans.
     fast_variant = variants[0]
+    candidates: list[dict[str, Any]] = []
+
     try:
         fast_text = pytesseract.image_to_string(
             fast_variant, config="--oem 3 --psm 6"
@@ -457,102 +526,83 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
     except Exception:
         fast_text = ""
     if fast_text:
-        fast_text = re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", fast_text, flags=re.I)
-        if _ocr_quality_score(fast_text) >= 70:
-            return fast_text
+        fast_text = re.sub(r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", fast_text, flags=re.I)
+        candidates.append({
+            "text": fast_text, "confidence": 0.0, "engine": "tesseract",
+            "score": _ocr_quality_score(fast_text),
+        })
+        fast_boxes = _tesseract_box_candidate(fast_variant, 6)
+        if fast_boxes["text"]:
+            candidates.append(fast_boxes)
 
-    for variant_index, variant in enumerate(variants):
-        for mode in modes:
-            config = f"--oem 3 --psm {mode}"
-            candidate = pytesseract.image_to_string(variant, config=config).strip()
-            if candidate:
-                # Correct high-confidence, common OCR confusion in quantities.
-                candidate = re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", candidate, flags=re.I)
-                plain_candidates.append({
-                    "text": candidate,
-                    "variant": variant,
-                    "variant_index": variant_index,
-                    "mode": mode,
-                    "score": _ocr_quality_score(candidate),
-                })
+    # Run PaddleOCR on the same preprocessed page as the first Tesseract pass.
+    # Both engines return word positions; each engine's words are ordered into
+    # visual rows before their text quality and recognition confidence are compared.
+    paddle_candidate = _paddleocr_candidate(fast_variant)
+    if paddle_candidate["text"]:
+        candidates.append(paddle_candidate)
 
-    # Keep every inexpensive plain-text candidate, but run the more expensive TSV
-    # word-box pass only for the best candidate from each page-segmentation mode.
-    # Two strong box reconstructions usually preserve table alignment without
-    # tripling OCR work across every threshold/contrast variant.
-    candidates = [record["text"] for record in plain_candidates]
-    best_by_mode: dict[int, dict[str, Any]] = {}
-    for record in plain_candidates:
-        mode = record["mode"]
-        if mode not in best_by_mode or record["score"] > best_by_mode[mode]["score"]:
-            best_by_mode[mode] = record
-    selected_box_candidates = sorted(
-        best_by_mode.values(), key=lambda record: record["score"], reverse=True
-    )[:2]
-
-    for record in selected_box_candidates:
-        try:
-            from pytesseract import Output
-            data = pytesseract.image_to_data(
-                record["variant"],
-                config=f"--oem 3 --psm {record['mode']}",
-                output_type=Output.DICT,
-            )
-            words = []
-            for index, raw_word in enumerate(data.get("text", [])):
-                word = (raw_word or "").strip()
+    best_fast_score = max(
+        (_ocr_candidate_score(item) for item in candidates), default=0.0
+    )
+    # A clean first pass still gets the independent PaddleOCR reading above.
+    # Only difficult pages pay for the additional Tesseract variants and layouts.
+    if best_fast_score < 70:
+        for variant_index, variant in enumerate(variants):
+            for mode in modes:
                 try:
-                    confidence = float(data["conf"][index])
-                except (ValueError, TypeError, KeyError):
-                    confidence = -1
-                if word and confidence >= 15:
-                    words.append({
-                        "text": word,
-                        "x": int(data["left"][index]),
-                        "y": int(data["top"][index]) + int(data["height"][index]) // 2,
+                    candidate = pytesseract.image_to_string(
+                        variant, config=f"--oem 3 --psm {mode}"
+                    ).strip()
+                except Exception:
+                    continue
+                if candidate:
+                    candidate = re.sub(
+                        r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", candidate, flags=re.I
+                    )
+                    candidates.append({
+                        "text": candidate,
+                        "confidence": 0.0,
+                        "engine": "tesseract",
+                        "variant": variant_index,
+                        "mode": mode,
                     })
-            # Cluster words by vertical centre, then order each row left-to-right.
-            words.sort(key=lambda word: (word["y"], word["x"]))
-            rows = []
-            for word in words:
-                best_row = None
-                best_distance = None
-                for row in rows[-4:]:
-                    centre = sum(item["y"] for item in row) / len(row)
-                    distance = abs(word["y"] - centre)
-                    if distance <= max(10, int(record["variant"].height * 0.006)) and (
-                        best_distance is None or distance < best_distance
-                    ):
-                        best_row, best_distance = row, distance
-                if best_row is None:
-                    rows.append([word])
-                else:
-                    best_row.append(word)
-            reconstructed = "\n".join(
-                " ".join(item["text"] for item in sorted(row, key=lambda item: item["x"]))
-                for row in rows
-            ).strip()
-            if reconstructed:
-                candidates.append(reconstructed)
-        except Exception:
-            # Plain OCR remains available if TSV/bounding-box reconstruction fails.
-            pass
-
-    # PaddleOCR remains available as an explicit optional benchmark helper,
-    # but is not launched for every upload: model startup/inference is costly
-    # and Tesseract already supplies the normal and fallback paths.
+            # TSV is expensive; retain one position/confidence reconstruction
+            # for the first two useful variants rather than repeating every pass.
+            if variant_index < 2:
+                box_candidate = _tesseract_box_candidate(variant, 6)
+                if box_candidate["text"]:
+                    candidates.append(box_candidate)
 
     if not candidates:
         return ""
-    best_text = max(candidates, key=_ocr_quality_score)
-    # Apply the same quantity correction to both plain OCR and reconstructed TSV text.
-    return re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", best_text, flags=re.I)
+
+    # Agreement between the two independent engines is useful evidence, but it
+    # is not treated as proof: a candidate still needs readable invoice structure
+    # and its own recognition confidence. Avoid counting repeated Tesseract modes
+    # as independent votes.
+    paddle_text = next(
+        (item["text"] for item in candidates if item.get("engine") == "paddleocr"),
+        "",
+    )
+    for candidate in candidates:
+        candidate["score"] = _ocr_candidate_score(candidate)
+        if paddle_text and candidate.get("engine") == "tesseract":
+            from difflib import SequenceMatcher
+            similarity = SequenceMatcher(
+                None, _norm(candidate["text"]), _norm(paddle_text)
+            ).ratio()
+            candidate["score"] += similarity * 8.0
+
+    best = max(candidates, key=lambda item: item.get("score", 0.0))
+    best_text = str(best.get("text") or "")
+    return re.sub(r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", best_text, flags=re.I)
 
 
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
     """Extract invoice rows even when OCR breaks a table into uneven text lines."""
     from difflib import SequenceMatcher
-    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items, clean_item_name, correct_item_name_from_master
+    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items, clean_item_name, correct_item_name_from_master, correct_item_spelling
 
     raw_lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
     masters = db.query(models.ItemModel).all()
@@ -721,7 +771,10 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
                 if suggest_master_items(candidate, masters, limit=1, min_score=0.0) else 0.0
             ),
         )
-        matched_description = clean_item_name(description)
+        ocr_original_description = clean_item_name(description)
+        matched_description, spelling_changes = correct_item_spelling(
+            ocr_original_description, [item.name or "" for item in masters]
+        )
         _, fuzzy_name, _ = correct_item_name_from_master(matched_description, masters)
         description = matched_description
         matched = match_master(description)
@@ -734,6 +787,8 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
         found.append(_mark_row_for_review({
             "item_code": code,
             "item_name": ((matched.name or description) if matched else description),
+                    "ocr_original_name": ocr_original_description if spelling_changes else "",
+            "ocr_original_name": ocr_original_description if spelling_changes else "",
             "vendor_code": "",
             "vendor_name": "",
             "recd_qty": qty,
@@ -764,7 +819,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
     Column positions are inferred from each document's own header words. No
     supplier-specific x coordinates or fixed invoice layout are assumed.
     """
-    from app.api.grn_serial_cleanup import clean_item_name, correct_item_name_from_master
+    from app.api.grn_serial_cleanup import clean_item_name, correct_item_name_from_master, correct_item_spelling
 
     try:
         import pymupdf
@@ -1076,7 +1131,10 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                         # Preserve the source values for human review, and mark
                         # uncertainty in the warning rather than silently blanking.
                         pass
-                matched_description = clean_item_name(description)
+                ocr_original_description = clean_item_name(description)
+                matched_description, spelling_changes = correct_item_spelling(
+                    ocr_original_description, [item.name or "" for item in masters]
+                )
                 _, fuzzy_name, _ = correct_item_name_from_master(matched_description, masters)
                 description = matched_description
                 matched = match_master(description)
@@ -1085,6 +1143,8 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 extracted.append(_mark_row_for_review({
                     "item_code": (matched.code or "") if matched else "",
                     "item_name": ((matched.name or description) if matched else description),
+                    "ocr_original_name": ocr_original_description if spelling_changes else "",
+            "ocr_original_name": ocr_original_description if spelling_changes else "",
                     "vendor_code": "",
                     "vendor_name": "",
                     "recd_qty": qty,
@@ -1388,7 +1448,10 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                     continue
                 if re.fullmatch(r"[\d\s.,/-]+", description):
                     continue
-                matched_description = clean_item_name(description)
+                ocr_original_description = clean_item_name(description)
+                matched_description, spelling_changes = correct_item_spelling(
+                    ocr_original_description, [item.name or "" for item in masters]
+                )
                 _, fuzzy_name, _ = correct_item_name_from_master(matched_description, masters)
                 description = matched_description
                 matched = match_master(description)
@@ -1397,6 +1460,8 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                 current_rows.append(_mark_row_for_review({
                     "item_code": (matched.code or "") if matched else "",
                     "item_name": ((matched.name or description) if matched else description),
+                    "ocr_original_name": ocr_original_description if spelling_changes else "",
+            "ocr_original_name": ocr_original_description if spelling_changes else "",
                     "vendor_code": "",
                     "vendor_name": "",
                     "recd_qty": qty,
