@@ -435,7 +435,7 @@ def _paddleocr_candidate(image) -> dict[str, Any]:
                 rows.append([word])
             else:
                 target.append(word)
-        text = "\\n".join(
+        text = "\n".join(
             " ".join(item["text"] for item in sorted(row, key=lambda item: item["x"]))
             for row in rows
         ).strip()
@@ -490,7 +490,7 @@ def _tesseract_box_candidate(image, mode: int = 6) -> dict[str, Any]:
                 rows.append([word])
             else:
                 target.append(word)
-        text = "\\n".join(
+        text = "\n".join(
             " ".join(item["text"] for item in sorted(row, key=lambda item: item["x"]))
             for row in rows
         ).strip()
@@ -526,7 +526,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
     except Exception:
         fast_text = ""
     if fast_text:
-        fast_text = re.sub(r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", fast_text, flags=re.I)
+        fast_text = re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\\b)", "5", fast_text, flags=re.I)
         candidates.append({
             "text": fast_text, "confidence": 0.0, "engine": "tesseract",
             "score": _ocr_quality_score(fast_text),
@@ -558,7 +558,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
                     continue
                 if candidate:
                     candidate = re.sub(
-                        r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", candidate, flags=re.I
+                        r"(?<![A-Za-z0-9])S(?=\s*BTL\\b)", "5", candidate, flags=re.I
                     )
                     candidates.append({
                         "text": candidate,
@@ -596,7 +596,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
 
     best = max(candidates, key=lambda item: item.get("score", 0.0))
     best_text = str(best.get("text") or "")
-    return re.sub(r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", best_text, flags=re.I)
+    return re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\\b)", "5", best_text, flags=re.I)
 
 
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
@@ -787,7 +787,6 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
         found.append(_mark_row_for_review({
             "item_code": code,
             "item_name": ((matched.name or description) if matched else description),
-                    "ocr_original_name": ocr_original_description if spelling_changes else "",
             "ocr_original_name": ocr_original_description if spelling_changes else "",
             "vendor_code": "",
             "vendor_name": "",
@@ -1144,7 +1143,6 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                     "item_code": (matched.code or "") if matched else "",
                     "item_name": ((matched.name or description) if matched else description),
                     "ocr_original_name": ocr_original_description if spelling_changes else "",
-            "ocr_original_name": ocr_original_description if spelling_changes else "",
                     "vendor_code": "",
                     "vendor_name": "",
                     "recd_qty": qty,
@@ -1461,7 +1459,6 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                     "item_code": (matched.code or "") if matched else "",
                     "item_name": ((matched.name or description) if matched else description),
                     "ocr_original_name": ocr_original_description if spelling_changes else "",
-            "ocr_original_name": ocr_original_description if spelling_changes else "",
                     "vendor_code": "",
                     "vendor_name": "",
                     "recd_qty": qty,
