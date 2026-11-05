@@ -354,3 +354,10 @@ class CodeReservationModel(Base):
     entity = Column(String, nullable=False)
     prefix = Column(String, nullable=False)
     reserved_at = Column(String)
+
+
+class GRNSequenceModel(Base):
+    """Transactional counter for GRN numbers; survives GRN deletion."""
+    __tablename__ = "grn_sequences"
+    id = Column(Integer, primary_key=True)
+    last_number = Column(Integer, nullable=False, default=0)
