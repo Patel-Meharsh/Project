@@ -356,10 +356,9 @@ export default function GRN() {
         item_name:    li.item_name,
         vendor_code:  data.vendor_code,
         vendor_name:  data.vendor_name,
-        uom:          li.unit || li.uom || '',
-        recd_qty:     li.recd_qty ?? li.remaining_qty ?? '',
-        accepted_qty: li.recd_qty ?? li.remaining_qty ?? '',
-        rate:         li.rate ?? '',
+        recd_qty:     li.remaining_qty,
+        accepted_qty: li.remaining_qty,
+        rate:         li.rate,
       })))
     } catch (err) {
       toast.error('Failed to load PO details: ' + (err.response?.data?.detail || err.message))
