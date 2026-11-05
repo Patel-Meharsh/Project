@@ -263,12 +263,6 @@ export default function GRN() {
     setExtractingDocument(false)
     setSelectedDocumentName('')
     try {
-      const code = await codeApi.next('grn')
-      setForm(blank => ({ ...blank, grn_no: code }))
-    } catch (err) {
-      toast.error('Could not generate a GRN number. Please try again.')
-      return
-    }
     setShowCreate(true)
   }
 
@@ -1094,7 +1088,7 @@ const createGRN = async () => {
               </div>}
             </div>
             {/* ── Top fields ── */}
-            <FormRow label="GRN Number" half><input className="input" value={form.grn_no} readOnly style={{ background:'#f8f9fc', color:'#64748b' }} /></FormRow>
+            <FormRow label="GRN Number" half><input className="input" value={form.grn_no} readOnly placeholder="Assigned when saved" style={{ background:'#f8f9fc', color:'#64748b' }} /></FormRow>
             <FormRow label="GRN Date" half><input className="input" type="date" value={form.grn_date} onChange={e => setForm({...form, grn_date:e.target.value})} /></FormRow>
             <FormRow label="Purchase Order (auto-fills details)">
               <select className="select" value={form.po_no} onChange={e => selectPO(e.target.value)}>
