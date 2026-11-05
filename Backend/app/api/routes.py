@@ -7,7 +7,7 @@ import os
 import re
 import uuid
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app import models
@@ -1265,12 +1265,23 @@ table.items tbody tr:nth-child(even) {{ background: #f5f5f5; }}
 
 # ─── GRNs ─────────────────────────────────────────────────────────────────────
 def _next_grn_no(db) -> str:
-    rows = db.query(models.GRNModel.grn_no).all()
-    nums = []
-    for (val,) in rows:
-        try: nums.append(int(str(val).replace("GRN-", "").split("-")[-1]))
-        except Exception: pass
-    return f"GRN-{str((max(nums) + 1) if nums else 1).zfill(3)}"
+    """Advance the GRN counter inside the caller's transaction.
+
+    The row lock serializes concurrent GRN saves. Because the counter update
+    commits with the GRN, rollback/cancelled requests do not consume a number.
+    The counter is independent of GRN rows, so deleting a GRN never reuses it.
+    """
+    sequence = (
+        db.query(models.GRNSequenceModel)
+        .filter_by(id=1)
+        .with_for_update()
+        .first()
+    )
+    if sequence is None:
+        raise RuntimeError("GRN sequence is not initialized; restart the backend to run migrations.")
+    sequence.last_number = int(sequence.last_number or 0) + 1
+    db.flush()
+    return f"GRN-{sequence.last_number:03d}"
 
 def _grn_item_summary(line_items: list) -> str:
     """Build a compact summary string for multi-line GRNs, e.g. 'HK-018 (435), HK-002 (10) +1 more'."""
@@ -1344,9 +1355,6 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
     location = db.query(models.LocationModel).filter_by(code=store_location).first()
     if not location:
         raise HTTPException(422, f"Store location '{store_location}' does not exist.")
-    requested_grn_no = str(data.get("grn_no") or "").strip()
-    if requested_grn_no and db.query(models.GRNModel).filter_by(grn_no=requested_grn_no).first():
-        raise HTTPException(409, f"GRN number '{requested_grn_no}' already exists. Generate a new GRN number.")
     requested_po_no = str(data.get("po_no") or "").strip()
     if requested_po_no and not db.query(models.PurchaseOrderModel).filter_by(po_no=requested_po_no).first():
         raise HTTPException(422, f"Purchase order '{requested_po_no}' does not exist.")
@@ -1430,9 +1438,9 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
         if recd <= 0 or accepted < 0 or accepted > recd:
             raise HTTPException(400, "GRN quantities must be positive and accepted quantity cannot exceed received quantity.")
 
-    # Auto-generate GRN number server-side if not provided
-    if not data.get("grn_no"):
-        data["grn_no"] = _next_grn_no(db)
+    # Always assign the number on the server at save time. Ignore any draft
+    # number supplied by the browser so opening/cancelling a form cannot reserve it.
+    data["grn_no"] = _next_grn_no(db)
 
     # Populate top-level item/qty fields from line items for backward compat
     if line_items:
@@ -2453,8 +2461,9 @@ def next_code(entity: str, prefix: Optional[str] = None, db: Session = Depends(g
         "return": (models.ReturnLogModel, "return_id", "RET-"),
         "pr": (models.PurchaseRequisitionModel, "pr_no", "PR-"),
         "po": (models.PurchaseOrderModel, "po_no", "PO-"),
-        "grn": (models.GRNModel, "grn_no", "GRN-"),
-    }
+        }
+    if entity == "grn":
+        raise HTTPException(400, "GRN numbers are assigned only when a GRN is saved.")
     if entity not in prefixes:
         raise HTTPException(400, f"Unknown entity: {entity}")
 
