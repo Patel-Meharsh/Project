@@ -27,7 +27,16 @@ with engine.begin() as conn:
         INSERT INTO grn_sequences (id, last_number)
         SELECT 1, COALESCE(MAX(
             CASE
-                WHEN grn_no ~ '^GRN-[0-9]+    has_col = conn.execute(text(
+                WHEN grn_no ~ '^GRN-[0-9]+$' THEN substring(grn_no from 5)::INTEGER
+                ELSE NULL
+            END
+        ), 0)
+        FROM grns
+        ON CONFLICT (id) DO NOTHING
+    """))
+
+    # Add line_items column to grns if missing
+    has_col = conn.execute(text(
         "SELECT 1 FROM information_schema.columns WHERE table_name='grns' AND column_name='line_items'"
     )).fetchone()
     if not has_col:
