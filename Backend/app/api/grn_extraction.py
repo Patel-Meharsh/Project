@@ -722,11 +722,11 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             ),
         )
         matched_description = clean_item_name(description)
-                _, fuzzy_name, _ = correct_item_name_from_master(matched_description, masters)
-                description = matched_description
-                matched = match_master(description)
-                if matched is None and fuzzy_name:
-                    matched = next((item for item in masters if (item.name or '').strip() == fuzzy_name), None)
+        _, fuzzy_name, _ = correct_item_name_from_master(matched_description, masters)
+        description = matched_description
+        matched = match_master(description)
+        if matched is None and fuzzy_name:
+            matched = next((item for item in masters if (item.name or '').strip() == fuzzy_name), None)
         code = (matched.code or "") if matched else ""
         # Do not deduplicate invoice rows by item code: a supplier may list the
         # same catalog item on multiple lines with different quantities, variants,
