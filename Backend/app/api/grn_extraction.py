@@ -552,7 +552,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11)) -> str:
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
     """Extract invoice rows even when OCR breaks a table into uneven text lines."""
     from difflib import SequenceMatcher
-    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items
+    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items, clean_item_name, correct_item_name_from_master
 
     raw_lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
     masters = db.query(models.ItemModel).all()
@@ -721,7 +721,12 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
                 if suggest_master_items(candidate, masters, limit=1, min_score=0.0) else 0.0
             ),
         )
-        matched = match_master(description)
+        matched_description = clean_item_name(description)
+                _, fuzzy_name, _ = correct_item_name_from_master(matched_description, masters)
+                description = matched_description
+                matched = match_master(description)
+                if matched is None and fuzzy_name:
+                    matched = next((item for item in masters if (item.name or '').strip() == fuzzy_name), None)
         code = (matched.code or "") if matched else ""
         # Do not deduplicate invoice rows by item code: a supplier may list the
         # same catalog item on multiple lines with different quantities, variants,
@@ -1069,7 +1074,12 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                         # Preserve the source values for human review, and mark
                         # uncertainty in the warning rather than silently blanking.
                         pass
+                matched_description = clean_item_name(description)
+                _, fuzzy_name, _ = correct_item_name_from_master(matched_description, masters)
+                description = matched_description
                 matched = match_master(description)
+                if matched is None and fuzzy_name:
+                    matched = next((item for item in masters if (item.name or '').strip() == fuzzy_name), None)
                 extracted.append(_mark_row_for_review({
                     "item_code": (matched.code or "") if matched else "",
                     "item_name": ((matched.name or description) if matched else description),
@@ -1105,7 +1115,7 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
         return []
 
     from difflib import SequenceMatcher
-    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items
+    from app.api.grn_serial_cleanup import resolve_description, suggest_master_items, clean_item_name, correct_item_name_from_master
 
     masters = db.query(models.ItemModel).all()
     number_re = re.compile(r"(?<![A-Za-z])\d[\d,]*(?:\.\d{1,4})?")
@@ -1376,7 +1386,12 @@ def _extract_image_table_line_items(image, db: Session) -> list[dict[str, Any]]:
                     continue
                 if re.fullmatch(r"[\d\s.,/-]+", description):
                     continue
+                matched_description = clean_item_name(description)
+                _, fuzzy_name, _ = correct_item_name_from_master(matched_description, masters)
+                description = matched_description
                 matched = match_master(description)
+                if matched is None and fuzzy_name:
+                    matched = next((item for item in masters if (item.name or '').strip() == fuzzy_name), None)
                 current_rows.append(_mark_row_for_review({
                     "item_code": (matched.code or "") if matched else "",
                     "item_name": ((matched.name or description) if matched else description),
