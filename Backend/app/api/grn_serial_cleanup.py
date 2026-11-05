@@ -119,7 +119,7 @@ _INVALID_ITEM_NAME_CHARS = "!@#$%^&*(){}[],./?'\\\";:\\\\<>"
 
 def clean_item_name(value: str) -> str:
     """Remove prohibited punctuation and normalize whitespace in an item name."""
-    cleaned = (value or "").translate(str.maketrans("", "", _INVALID_ITEM_NAME_CHARS))
+    cleaned = (value or "").translate(str.maketrans({char: " " for char in _INVALID_ITEM_NAME_CHARS}))
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
