@@ -297,15 +297,7 @@ _logger.info("Total routes registered: %d", _route_count)
 _critical = ["/api/master-groups/seed-from-excel", "/api/purchase-orders/{po_no}/pdf", "/api/purchase-orders/from-pr/{pr_no}"]
 for _cp in _critical:
     _found = any(hasattr(r, 'path') and r.path == _cp for r in app.routes)
-    _logger.info("Route %s: %s", _cp, "REGISTERED" if _found else "MISSING") THEN substring(grn_no from 5)::INTEGER
-                ELSE NULL
-            END
-        ), 0)
-        FROM grns
-        ON CONFLICT (id) DO NOTHING
-    """))
-
-    # Add line_items column to grns if missing
+    _logger.info("Route %s: %s", _cp, "REGISTERED" if _found else "MISSING")
     has_col = conn.execute(text(
         "SELECT 1 FROM information_schema.columns WHERE table_name='grns' AND column_name='line_items'"
     )).fetchone()
