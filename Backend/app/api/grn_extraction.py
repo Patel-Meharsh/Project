@@ -1407,8 +1407,10 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                     word_center_x = (word["x0"] + word["x1"]) / 2
                     if word_center_x >= description_header_x:
                         continue
+                    if not re.fullmatch(r"[^A-Za-z0-9]*\\d{1,2}[^A-Za-z0-9]*", word["text"]):
+                        continue
                     digits = re.sub(r"\\D", "", word["text"])
-                    if not digits or len(digits) > 2:
+                    if not digits:
                         continue
                     serial_number = int(digits)
                     if 1 <= serial_number <= 99:
