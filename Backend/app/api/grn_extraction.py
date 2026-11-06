@@ -9,6 +9,7 @@ import io
 import logging
 import os
 import re
+import time
 from datetime import datetime
 from typing import Any
 
@@ -1921,6 +1922,7 @@ def extract_grn_document(
     else:
         raise HTTPException(415, "Upload a receipt in JPG, JPEG, PNG, or PDF format.")
 
+    extraction_started = time.perf_counter()
     # Run this synchronous endpoint in FastAPI's worker pool. The worker
     # owns its database session, so request teardown cannot close a connection
     # while OCR or item/vendor matching is still using it.
@@ -1990,7 +1992,7 @@ def extract_grn_document(
     
                             page = pdf_document.load_page(index)
                             # Render at 300 DPI-equivalent for small invoice print.
-                            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(3, 3), alpha=False)
+                            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
                             if pixmap.width * pixmap.height > 25_000_000:
                                 # Keep the page within the image safety cap.
                                 pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
@@ -2191,7 +2193,7 @@ def extract_grn_document(
                     )
                     for page_index in pages_to_ocr:
                         page = pdf_document.load_page(page_index)
-                        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2.5, 2.5), alpha=False)
+                        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
                         if pixmap.width * pixmap.height > 25_000_000:
                             pixmap = page.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5), alpha=False)
                         if pixmap.width * pixmap.height > 25_000_000:
@@ -2258,5 +2260,11 @@ def extract_grn_document(
     
         result["filename"] = (file.filename or "document")[:160]
         result["document_type"] = "pdf" if content_type == "application/pdf" else "image"
+        logger.info(
+            "GRN document extraction completed in %.2fs (type=%s, bytes=%d)",
+            time.perf_counter() - extraction_started,
+            result["document_type"],
+            len(raw),
+        )
         return result
     
