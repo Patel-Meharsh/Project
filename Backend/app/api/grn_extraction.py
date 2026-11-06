@@ -350,43 +350,93 @@ def _ocr_quality_score(text: str) -> float:
 
 
 def _prepare_ocr_variants(image):
-    """Return lightweight image variants that help Tesseract read scans and photos."""
+    """Create aligned grayscale, denoised, Otsu and adaptive OCR image variants."""
     from PIL import Image, ImageEnhance, ImageOps, ImageFilter
 
     image = ImageOps.exif_transpose(image)
     if image.width * image.height > 25_000_000:
         raise HTTPException(413, "Image dimensions are too large to process.")
 
-    gray = ImageOps.grayscale(image)
-    gray = ImageOps.autocontrast(gray)
-    # Small phone uploads and 150-DPI PDF renders often need more pixels for
-    # character recognition. Keep the existing 25MP safety cap in place.
-    longest = max(gray.size)
+    gray_image = ImageOps.autocontrast(ImageOps.grayscale(image))
+    # Upscale small phone images / low-DPI scans before OCR. Respect the
+    # existing pixel safety cap, including after resizing.
+    longest = max(gray_image.size)
     if longest < 2600:
         scale = min(2.0, 2600 / max(1, longest))
-        target = (int(gray.width * scale), int(gray.height * scale))
+        target = (int(gray_image.width * scale), int(gray_image.height * scale))
         if target[0] * target[1] <= 25_000_000:
-            gray = gray.resize(target, Image.Resampling.LANCZOS)
+            gray_image = gray_image.resize(target, Image.Resampling.LANCZOS)
 
-    sharp = ImageEnhance.Sharpness(gray).enhance(1.6).filter(ImageFilter.SHARPEN)
-    # A thresholded variant can improve faint photocopies; retain grayscale too,
-    # because thresholding can erase thin fonts and decimal points.
-    threshold = gray.point(lambda pixel: 255 if pixel > 175 else 0)
-    variants = [gray, sharp, threshold]
-
-    # OpenCV adaptive thresholding helps with uneven lighting and shaded paper.
     try:
         import cv2
         import numpy as np
 
+        gray = np.asarray(gray_image, dtype=np.uint8)
+
+        # Remove only narrow, consistently dark scan borders. Do not trim the
+        # invoice's printed table/grid lines or crop meaningful page content.
+        height, width = gray.shape[:2]
+        max_crop_x, max_crop_y = int(width * 0.025), int(height * 0.025)
+        left, right, top, bottom = 0, width, 0, height
+
+        def is_dark_edge(values):
+            return float(np.mean(values)) < 72 and float(np.mean(values < 100)) > 0.60
+
+        while left < max_crop_x and right - left > width * 0.90 and is_dark_edge(gray[top:bottom, left]):
+            left += 1
+        while right > width - max_crop_x and right - left > width * 0.90 and is_dark_edge(gray[top:bottom, right - 1]):
+            right -= 1
+        while top < max_crop_y and bottom - top > height * 0.90 and is_dark_edge(gray[top, left:right]):
+            top += 1
+        while bottom > height - max_crop_y and bottom - top > height * 0.90 and is_dark_edge(gray[bottom - 1, left:right]):
+            bottom -= 1
+        if left or top or right < width or bottom < height:
+            gray = gray[top:bottom, left:right]
+
+        # Estimate skew from long horizontal rules/lines, not the whole page
+        # rectangle. This avoids mistaking a portrait page for a -90° rotation.
+        inverse = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+        horizontal_kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT, (max(30, gray.shape[1] // 12), 1)
+        )
+        horizontal_lines = cv2.morphologyEx(inverse, cv2.MORPH_OPEN, horizontal_kernel)
+        points = cv2.findNonZero(horizontal_lines)
+        if points is not None and len(points) >= 20:
+            angle = cv2.minAreaRect(points)[-1]
+            angle = -(90 + angle) if angle < -45 else -angle
+            if 0.35 <= abs(angle) <= 7.0:
+                center = (gray.shape[1] / 2, gray.shape[0] / 2)
+                matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+                gray = cv2.warpAffine(
+                    gray, matrix, (gray.shape[1], gray.shape[0]),
+                    flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE,
+                )
+
+        # Light median denoising removes isolated speckles without heavily
+        # blurring decimal points and thin invoice characters.
+        denoised = cv2.medianBlur(gray, 3)
+        gaussian = cv2.GaussianBlur(denoised, (3, 3), 0)
+        otsu = cv2.threshold(
+            gaussian, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )[1]
         adaptive = cv2.adaptiveThreshold(
-            np.asarray(gray), 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY, 31, 11,
         )
-        variants.append(Image.fromarray(adaptive))
+
+        # Keep all variants geometrically aligned: the table parser uses their
+        # OCR word coordinates to infer the same invoice columns.
+        return [
+            Image.fromarray(gray),
+            Image.fromarray(denoised),
+            Image.fromarray(otsu),
+            Image.fromarray(adaptive),
+        ]
     except ImportError:
-        pass
-    return variants
+        # Pillow fallback keeps extraction available when OpenCV is absent.
+        sharp = ImageEnhance.Sharpness(gray_image).enhance(1.6).filter(ImageFilter.SHARPEN)
+        threshold = gray_image.point(lambda pixel: 255 if pixel > 175 else 0)
+        return [gray_image, sharp, threshold]
 
 
 _paddle_ocr_engine = None
