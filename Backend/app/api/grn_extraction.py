@@ -1569,7 +1569,16 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
 
             for row_index in confirmed_serial_rows:
                 item = current_rows[row_index]
+                raw_name = str(item.get("_ocr_description_raw") or "").strip()
                 cleaned_name = serial_candidates[row_index][1]
+
+                # Preserve a leading number when the complete text is already a
+                # confident catalog match but the serial-stripped text is not.
+                raw_match = match_master(raw_name)
+                cleaned_match = match_master(cleaned_name)
+                if raw_match is not None and cleaned_match is None:
+                    continue
+
                 original_name = clean_item_name(cleaned_name)
                 corrected_name, spelling_changes = correct_item_spelling(
                     original_name, [master.name or "" for master in masters]
