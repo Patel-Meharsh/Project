@@ -1995,7 +1995,7 @@ def extract_grn_document(
                             pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
                             if pixmap.width * pixmap.height > 25_000_000:
                                 # Keep the page within the image safety cap.
-                                pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
+                                pixmap = page.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5), alpha=False)
                             if pixmap.width * pixmap.height > 25_000_000:
                                 raise HTTPException(413, "A rendered PDF page is too large to process.")
                             image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
