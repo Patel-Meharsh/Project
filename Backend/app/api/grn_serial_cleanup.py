@@ -113,14 +113,14 @@ def suggest_master_items(
     return scored[:limit]
 
 
-# Characters explicitly prohibited in item names. Hyphens and plus signs remain valid.
-_INVALID_ITEM_NAME_CHARS = "!@#$%^&*(){}[],./?'\\\";:\\\\<>"
-
-
 def clean_item_name(value: str) -> str:
-    """Remove prohibited punctuation and normalize whitespace in an item name."""
-    cleaned = (value or "").translate(str.maketrans({char: " " for char in _INVALID_ITEM_NAME_CHARS}))
-    return re.sub(r"\s+", " ", cleaned).strip()
+    """Keep only letters, digits, spaces, hyphens and plus signs in item names."""
+    # OCR injects pipes, underscores, equals signs, brackets and punctuation
+    # into descriptions. A whitelist prevents unhandled symbols from leaking
+    # into the GRN form while preserving product notation such as 36W, 25-MM,
+    # 2ltr and 3+1.
+    cleaned = re.sub(r"[^A-Za-z0-9\\s+\\-]", " ", value or "")
+    return re.sub(r"\\s+", " ", cleaned).strip(" -+")
 
 
 def correct_item_name_from_master(
