@@ -1344,7 +1344,10 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
             # quantity and rate baselines can differ by 15-25 px even on the
             # same printed row. Use a wider but capped tolerance so they stay
             # associated, while adjacent item rows remain separate.
-            tolerance = max(12, min(28, median_height * 1.5))
+            # Keep neighboring invoice baselines separate. The previous 1.5x
+            # median-height tolerance could combine adjacent item rows when
+            # description and numeric cells were vertically misaligned.
+            tolerance = max(7, min(18, median_height * 0.95))
             visual_rows: list[list[dict[str, Any]]] = []
             for word in sorted(words, key=lambda w: (w["y"], w["x0"])):
                 possible = [(abs(sum(item["y"] for item in row) / len(row) - word["y"]), row)
@@ -1546,13 +1549,13 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
             # extracted descriptions independently prove a consecutive sequence.
             serial_candidates: dict[int, tuple[int, str]] = {}
             for row_index, item in enumerate(current_rows):
-                raw_name = re.sub(r"\\s+", " ", str(item.get("_ocr_description_raw") or "")).strip()
-                match = re.match(r"^(\\d{1,3})\\s+(.+)$", raw_name)
+                raw_name = re.sub(r"\s+", " ", str(item.get("_ocr_description_raw") or "")).strip()
+                match = re.match(r"^(\d{1,3})\s+(.+)$", raw_name)
                 if not match:
                     continue
                 remainder = match.group(2).strip()
                 if re.match(
-                    r"^(?:W|WATT|WATTS|V|VOLT|VOLTS|L|LTR|LITRE|LITER|ML|MM|CM|MTR|KG|GM|GMS|PCS|PC|NOS|INCH|FT|PIN)\\b",
+                    r"^(?:W|WATT|WATTS|V|VOLT|VOLTS|L|LTR|LITRE|LITER|ML|MM|CM|MTR|KG|GM|GMS|PCS|PC|NOS|INCH|FT|PIN)\b",
                     remainder,
                     re.I,
                 ):
