@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app import models
 from app.api.routes import _get_current_user
 
@@ -399,7 +399,24 @@ def _paddleocr_candidate(image) -> dict[str, Any]:
         from paddleocr import PaddleOCR
 
         if _paddle_ocr_engine is None:
-            _paddle_ocr_engine = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+            det_dir = os.getenv("GRN_PADDLEOCR_DET_MODEL_DIR")
+            rec_dir = os.getenv("GRN_PADDLEOCR_REC_MODEL_DIR")
+            cls_dir = os.getenv("GRN_PADDLEOCR_CLS_MODEL_DIR")
+            if not all(path and os.path.isdir(path) for path in (det_dir, rec_dir, cls_dir)):
+                logger.info(
+                    "PaddleOCR skipped: configure local GRN_PADDLEOCR_DET_MODEL_DIR, "
+                    "GRN_PADDLEOCR_REC_MODEL_DIR and GRN_PADDLEOCR_CLS_MODEL_DIR "
+                    "to use cached models without network downloads."
+                )
+                return {"text": "", "confidence": 0.0, "word_count": 0, "engine": "paddleocr"}
+            _paddle_ocr_engine = PaddleOCR(
+                det_model_dir=det_dir,
+                rec_model_dir=rec_dir,
+                cls_model_dir=cls_dir,
+                use_angle_cls=True,
+                lang="en",
+                show_log=False,
+            )
         result = _paddle_ocr_engine.ocr(np.asarray(image.convert("RGB")), cls=True) or []
         words = []
         confidences = []
@@ -1187,7 +1204,9 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
     # candidate. The Tesseract box parser below supplies spatial column evidence;
     # the shared row-quality scorer chooses between the two without merging values.
     if paddle_text is None:
-        paddle_text = _paddleocr_candidate(_prepare_ocr_variants(image)[0]).get("text", "")
+        # PaddleOCR is invoked only by the shared OCR stage, where its result
+        # can be reused. Never initialize/download a model from this parser.
+        paddle_text = ""
     paddle_rows = _extract_item_rows(paddle_text, db) if paddle_text else []
     number_re = re.compile(r"(?<![A-Za-z])\d[\d,]*(?:\.\d{1,4})?")
     unit_re = re.compile(
@@ -1274,8 +1293,11 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
     # Evaluate multiple segmentation modes and image variants. Selecting the
     # candidate with the largest raw row count alone is unsafe: a noisy pass can
     # create extra rows by splitting descriptions from their numeric columns.
-    for variant in _prepare_ocr_variants(image)[:3]:
-        for psm in (4, 6, 11):
+    # The shared OCR stage has already evaluated the image. Reuse one
+    # normalized grayscale variant here instead of repeating OCR over three
+    # variants (nine Tesseract passes). Keep alternate layout modes as fallbacks.
+    for variant in _prepare_ocr_variants(image)[:1]:
+        for psm in (6, 4, 11):
             try:
                 data = pytesseract.image_to_data(
                     variant, config=f"--oem 3 --psm {psm}", output_type=Output.DICT
@@ -1871,7 +1893,7 @@ def _extract_fields(text: str, db: Session) -> dict[str, Any]:
 
 
 @router.post("/grns/extract-document")
-async def extract_grn_document(
+def extract_grn_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: models.UserModel = Depends(_get_current_user),
@@ -1881,7 +1903,7 @@ async def extract_grn_document(
     # Detect the real format from both the filename and the file signature.
     supplied_type = (file.content_type or "").lower().split(";")[0].strip()
     filename = (file.filename or "").lower()
-    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    raw = file.file.read(MAX_UPLOAD_BYTES + 1)
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "Document exceeds the 10 MB upload limit.")
     if not raw:
@@ -1899,337 +1921,342 @@ async def extract_grn_document(
     else:
         raise HTTPException(415, "Upload a receipt in JPG, JPEG, PNG, or PDF format.")
 
-    text = ""
-    # Keep alternative header text separately from the candidate chosen for item parsing.
-    # A candidate that reads table rows well can still miss supplier/date header text.
-    supplemental_field_text = ""
-    if content_type == "application/pdf":
-        try:
-            from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(raw))
-            if len(reader.pages) > 30:
-                raise HTTPException(413, "PDFs are limited to 30 pages.")
-            if not reader.pages:
-                raise HTTPException(400, "The PDF contains no readable pages.")
-
-            # Read embedded text first; scanned pages commonly return empty text.
-            page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
-            supplemental_page_texts = list(page_texts)
-            table_text_by_page: list[str] = ["" for _ in page_texts]
-
-            # Extract table cells as row-shaped text where possible.
+    # Run this synchronous endpoint in FastAPI's worker pool. The worker
+    # owns its database session, so request teardown cannot close a connection
+    # while OCR or item/vendor matching is still using it.
+    with SessionLocal() as processing_db:
+        text = ""
+        # Keep alternative header text separately from the candidate chosen for item parsing.
+        # A candidate that reads table rows well can still miss supplier/date header text.
+        supplemental_field_text = ""
+        if content_type == "application/pdf":
             try:
-                import pdfplumber
-                with pdfplumber.open(io.BytesIO(raw)) as pdf:
-                    for index, page in enumerate(pdf.pages[:len(page_texts)]):
-                        rows = []
-                        for table in (page.extract_tables() or []):
-                            for row in table:
-                                cells = [re.sub(r"\s+", " ", (cell or "")).strip() for cell in row]
-                                if any(cells):
-                                    rows.append(" | ".join(cells))
-                        if rows:
-                            table_text_by_page[index] = "\n".join(rows)
-                supplemental_field_text = "\n".join(
-                    part for part in (
-                        "\n".join(supplemental_page_texts),
-                        "\n".join(value for value in table_text_by_page if value),
-                    ) if part
+                from pypdf import PdfReader
+                reader = PdfReader(io.BytesIO(raw))
+                if len(reader.pages) > 30:
+                    raise HTTPException(413, "PDFs are limited to 30 pages.")
+                if not reader.pages:
+                    raise HTTPException(400, "The PDF contains no readable pages.")
+    
+                # Read embedded text first; scanned pages commonly return empty text.
+                page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
+                supplemental_page_texts = list(page_texts)
+                table_text_by_page: list[str] = ["" for _ in page_texts]
+    
+                # Extract table cells as row-shaped text where possible.
+                try:
+                    import pdfplumber
+                    with pdfplumber.open(io.BytesIO(raw)) as pdf:
+                        for index, page in enumerate(pdf.pages[:len(page_texts)]):
+                            rows = []
+                            for table in (page.extract_tables() or []):
+                                for row in table:
+                                    cells = [re.sub(r"\s+", " ", (cell or "")).strip() for cell in row]
+                                    if any(cells):
+                                        rows.append(" | ".join(cells))
+                            if rows:
+                                table_text_by_page[index] = "\n".join(rows)
+                    supplemental_field_text = "\n".join(
+                        part for part in (
+                            "\n".join(supplemental_page_texts),
+                            "\n".join(value for value in table_text_by_page if value),
+                        ) if part
+                    ).strip()
+                except Exception:
+                    # Table extraction is optional; OCR/text extraction must still run.
+                    pass
+    
+                # Crucial fallback: a page is OCR'd if it has little embedded text OR
+                # embedded/table text produces no actual receipt-text line rows.
+                # Do not use the item-master fallback here; it can make a bad PDF look parsed.
+                try:
+                    import pymupdf
+                    from PIL import Image
+                    with pymupdf.open(stream=raw, filetype="pdf") as pdf_document:
+                        for index in range(len(page_texts)):
+                            embedded = page_texts[index]
+                            table_text = table_text_by_page[index]
+                            digital_candidate = "\n".join(part for part in (embedded, table_text) if part).strip()
+                            parsed_rows = [
+                                row for row in _extract_item_rows(digital_candidate, processing_db)
+                                if row.get("source") == "receipt_text"
+                            ] if digital_candidate else []
+                            needs_ocr = (
+                                len(re.sub(r"\s+", "", embedded)) < 80
+                                or len(parsed_rows) == 0
+                            )
+                            if not needs_ocr:
+                                continue
+    
+                            page = pdf_document.load_page(index)
+                            # Render at 300 DPI-equivalent for small invoice print.
+                            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(3, 3), alpha=False)
+                            if pixmap.width * pixmap.height > 25_000_000:
+                                # Keep the page within the image safety cap.
+                                pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
+                            if pixmap.width * pixmap.height > 25_000_000:
+                                raise HTTPException(413, "A rendered PDF page is too large to process.")
+                            image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
+                            ocr_text = _run_ocr_candidates(image, modes=(6, 4, 11), include_paddle=False)
+                            if ocr_text:
+                                # Preserve OCR text for shared field extraction even when embedded
+                                # text wins item-row selection (or vice versa).
+                                supplemental_field_text = "\n".join(
+                                    part for part in (supplemental_field_text, ocr_text) if part
+                                ).strip()
+                                ocr_rows = [
+                                    row for row in _extract_item_rows(ocr_text, processing_db)
+                                    if row.get("source") == "receipt_text"
+                                ]
+                                # Prefer OCR when it recovers more invoice rows or a
+                                # higher-quality text candidate; avoid blindly appending
+                                # duplicate headers and rows to embedded PDF text.
+                                if len(ocr_rows) > len(parsed_rows) or not parsed_rows:
+                                    page_texts[index] = ocr_text
+                                    table_text_by_page[index] = ""
+                                elif not embedded.strip():
+                                    page_texts[index] = ocr_text
+                except HTTPException:
+                    raise
+                except ImportError as exc:
+                    raise HTTPException(
+                        503,
+                        "PDF processing needs PyMuPDF, Pillow, pytesseract, and the Tesseract OCR engine installed on the backend.",
+                    ) from exc
+                except Exception as exc:
+                    raise HTTPException(
+                        400,
+                        "The PDF could not be processed. Ensure it is a valid PDF and Tesseract OCR is installed for scanned pages.",
+                    ) from exc
+    
+                text = "\n".join(
+                    "\n".join(part for part in (page_texts[index], table_text_by_page[index]) if part)
+                    for index in range(len(page_texts))
                 ).strip()
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(400, "The PDF could not be read. Please upload a valid PDF.") from exc
+        else:
+            try:
+                from PIL import Image
+                image = Image.open(io.BytesIO(raw))
+                # Handles phone rotation, contrast, upscaling, and several layout modes.
+                paddle_text_result: dict[str, str] = {}
+                text = _run_ocr_candidates(
+                    image, modes=(6, 4, 11), paddle_text_out=paddle_text_result
+                )
+            except HTTPException:
+                raise
+            except ImportError:
+                raise HTTPException(
+                    503,
+                    "Image OCR is not configured. Install Pillow, pytesseract, and the Tesseract OCR engine on the server.",
+                )
+            except Exception as exc:
+                raise HTTPException(400, "The image could not be processed. Try a clear PNG or JPG scan.") from exc
+    
+        # Use the selected text for item parsing, but let the common field extractor
+        # inspect every available text source. This prevents choosing a table-focused
+        # candidate from accidentally discarding a better-read supplier/date header.
+        # Shared keyword parser receives the same combined text regardless of PDF/image input.
+        from app.api.grn_keyword_parser import extract_header_fields
+        combined_header_text = "\n".join(part for part in (text, supplemental_field_text) if part)
+        keyword_fields = extract_header_fields(combined_header_text, processing_db)
+        result = _extract_fields(text, processing_db)
+        fields = result.get("fields", {})
+    
+        # If the invoice cannot be matched to a vendor master record, use the
+        # uploaded document's filename (without .pdf/.jpg/.jpeg/.png) as a safer
+        # vendor-name suggestion than an uncertain OCR line from the address block.
+        # Ignore generic filenames such as "invoice", "scan", or "document".
+        filename_stem = os.path.splitext(os.path.basename(file.filename or ""))[0]
+        filename_vendor_name = re.sub(r"[._-]+", " ", filename_stem)
+        filename_vendor_name = re.sub(r"\s+", " ", filename_vendor_name).strip(" _-")
+        generic_filename = re.fullmatch(
+            r"(?i)(?:invoice|tax invoice|bill|receipt|document|scan|image|photo|img|"
+            r"whatsapp image|untitled|download|file|\d{1,8})",
+            filename_vendor_name,
+        )
+        if (
+            not fields.get("vendor_code")
+            and len(filename_vendor_name) >= 4
+            and not generic_filename
+            and not re.fullmatch(r"[\W\d_]+", filename_vendor_name)
+        ):
+            fields["vendor_name"] = filename_vendor_name
+        for key in ("invoice_no", "po_no", "grn_date"):
+            if keyword_fields.get(key) and (key != "invoice_no" or not fields.get(key)):
+                # Keep a validated, explicitly labelled invoice ID from the primary
+                # extractor; use the shared keyword parser only when it was not found.
+                fields[key] = keyword_fields[key]
+        if keyword_fields.get("vendor_code"):
+            fields["vendor_code"] = keyword_fields["vendor_code"]
+            fields["vendor_name"] = keyword_fields.get("vendor_name") or fields.get("vendor_name", "")
+        elif keyword_fields.get("vendor_name") and not fields.get("vendor_name"):
+            fields["vendor_name"] = keyword_fields["vendor_name"]
+        if supplemental_field_text:
+            supplemental_result = _extract_fields(
+                "\n".join(part for part in (text, supplemental_field_text) if part), processing_db
+            )
+            # Keep keyword-parser values already applied above. Resetting this dict to
+            # result["fields"] here discarded successful invoice/PO/vendor matches.
+            supplemental_fields = supplemental_result.get("fields", {})
+            # Only replace missing header fields; never overwrite a populated field
+            # with a blank or an unmatched supplier candidate.
+            if not fields.get("grn_date") and supplemental_fields.get("grn_date"):
+                fields["grn_date"] = supplemental_fields["grn_date"]
+            if not fields.get("vendor_code") and supplemental_fields.get("vendor_code"):
+                fields["vendor_code"] = supplemental_fields["vendor_code"]
+                fields["vendor_name"] = supplemental_fields.get("vendor_name", fields.get("vendor_name", ""))
+            if not fields.get("invoice_no") and supplemental_fields.get("invoice_no"):
+                fields["invoice_no"] = supplemental_fields["invoice_no"]
+            if not fields.get("po_no") and supplemental_fields.get("po_no"):
+                fields["po_no"] = supplemental_fields["po_no"]
+            result["fields"] = fields
+            result["warnings"] = list(dict.fromkeys(
+                result.get("warnings", []) + supplemental_result.get("warnings", [])
+            ))
+    
+        # Photos/scans need the same column-aware strategy as digital PDFs. If the
+        # OCR bounding boxes identify a table, use only those rows rather than
+        # unrelated text matches elsewhere on the page.
+        if content_type != "application/pdf":
+            try:
+                from PIL import Image
+                with Image.open(io.BytesIO(raw)) as source_image:
+                    image_items = _extract_image_table_line_items(
+                        source_image.convert("RGB"), processing_db,
+                        paddle_text=paddle_text_result.get("text", ""),
+                    )
+                if image_items:
+                    # Compare independent parsers rather than always trusting a
+                    # coordinate pass that may split one description across rows.
+                    # Keep the candidate with more complete invoice rows, with
+                    # arithmetic consistency as the tie-breaker.
+                    text_items = [
+                        row for row in _extract_item_rows(text, processing_db)
+                        if row.get("source") == "receipt_text"
+                    ]
+                    chosen_items = _choose_line_item_candidate(text_items, image_items)
+                    result["line_items"] = chosen_items
+                    result["warnings"] = [
+                        warning for warning in result.get("warnings", [])
+                        if "Line items were detected from receipt text" not in warning
+                        and "One or more PO line items could not be matched" not in warning
+                        and "Line items were read from image-table" not in warning
+                    ]
+                    result["warnings"].append(
+                        "Line items were extracted using the highest-scoring OCR parser. Verify item names, quantities, and rates before saving."
+                    )
+                    if any(row.get("match_status") == "unmatched" for row in chosen_items):
+                        result["warnings"].append(
+                            "One or more invoice descriptions could not be matched confidently to the item master."
+                        )
             except Exception:
-                # Table extraction is optional; OCR/text extraction must still run.
+                # Existing local OCR text extraction remains the fallback if
+                # bounding-box table detection cannot confidently find the headers.
                 pass
-
-            # Crucial fallback: a page is OCR'd if it has little embedded text OR
-            # embedded/table text produces no actual receipt-text line rows.
-            # Do not use the item-master fallback here; it can make a bad PDF look parsed.
+    
+        # For PDFs with embedded text, use the table's actual word coordinates when
+        # available. This avoids treating header fragments (e.g. "SHE/") as products
+        # and keeps description, quantity, rate, and amount from separate columns
+        # attached to the same invoice row. Scanned PDFs still use the OCR parser.
+        if content_type == "application/pdf":
+            coordinate_items = _extract_pdf_table_line_items(raw, processing_db)
+            # A PDF can mix digital-text pages with scanned pages. Previously, finding
+            # even one digital table row disabled OCR for the entire document, silently
+            # losing scanned pages. OCR only pages with no coordinate-extracted rows;
+            # this also avoids spending OCR time on pages already handled successfully.
             try:
                 import pymupdf
                 from PIL import Image
                 with pymupdf.open(stream=raw, filetype="pdf") as pdf_document:
-                    for index in range(len(page_texts)):
-                        embedded = page_texts[index]
-                        table_text = table_text_by_page[index]
-                        digital_candidate = "\n".join(part for part in (embedded, table_text) if part).strip()
-                        parsed_rows = [
-                            row for row in _extract_item_rows(digital_candidate, db)
+                    # Count independent text-parser candidates per page as a second
+                    # signal for missing rows. This is only a trigger for OCR; it never
+                    # adds text-parser rows directly or overrides coordinate evidence.
+                    expected_row_counts: dict[int, int] = {}
+                    for index, page in enumerate(pdf_document):
+                        page_text = page.get_text("text") or ""
+                        text_candidates = [
+                            row for row in _extract_item_rows(page_text, processing_db)
                             if row.get("source") == "receipt_text"
-                        ] if digital_candidate else []
-                        needs_ocr = (
-                            len(re.sub(r"\s+", "", embedded)) < 80
-                            or len(parsed_rows) == 0
-                        )
-                        if not needs_ocr:
+                        ] if page_text.strip() else []
+                        expected_row_counts[index] = len(text_candidates)
+    
+                    pages_to_ocr = _pdf_pages_needing_image_fallback(
+                        len(pdf_document),
+                        coordinate_items,
+                        expected_row_counts=expected_row_counts,
+                    )
+                    for page_index in pages_to_ocr:
+                        page = pdf_document.load_page(page_index)
+                        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2.5, 2.5), alpha=False)
+                        if pixmap.width * pixmap.height > 25_000_000:
+                            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5), alpha=False)
+                        if pixmap.width * pixmap.height > 25_000_000:
                             continue
-
-                        page = pdf_document.load_page(index)
-                        # Render at 300 DPI-equivalent for small invoice print.
-                        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(3, 3), alpha=False)
-                        if pixmap.width * pixmap.height > 25_000_000:
-                            # Keep the page within the image safety cap.
-                            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
-                        if pixmap.width * pixmap.height > 25_000_000:
-                            raise HTTPException(413, "A rendered PDF page is too large to process.")
-                        image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
-                        ocr_text = _run_ocr_candidates(image, modes=(6, 4, 11), include_paddle=False)
-                        if ocr_text:
-                            # Preserve OCR text for shared field extraction even when embedded
-                            # text wins item-row selection (or vice versa).
-                            supplemental_field_text = "\n".join(
-                                part for part in (supplemental_field_text, ocr_text) if part
-                            ).strip()
-                            ocr_rows = [
-                                row for row in _extract_item_rows(ocr_text, db)
-                                if row.get("source") == "receipt_text"
+                        page_image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
+                        candidates = _extract_image_table_line_items(page_image, processing_db)
+                        for row in candidates:
+                            row["_source_page_index"] = page_index
+                        existing = [
+                            row for row in coordinate_items
+                            if row.get("_source_page_index") == page_index
+                        ]
+                        # Prefer the OCR candidate only when it is measurably better;
+                        # otherwise retain the coordinate parser's source values.
+                        chosen_page_rows = _choose_pdf_page_rows(existing, candidates)
+                        if chosen_page_rows is not existing:
+                            coordinate_items = [
+                                row for row in coordinate_items
+                                if row.get("_source_page_index") != page_index
                             ]
-                            # Prefer OCR when it recovers more invoice rows or a
-                            # higher-quality text candidate; avoid blindly appending
-                            # duplicate headers and rows to embedded PDF text.
-                            if len(ocr_rows) > len(parsed_rows) or not parsed_rows:
-                                page_texts[index] = ocr_text
-                                table_text_by_page[index] = ""
-                            elif not embedded.strip():
-                                page_texts[index] = ocr_text
-            except HTTPException:
-                raise
-            except ImportError as exc:
-                raise HTTPException(
-                    503,
-                    "PDF processing needs PyMuPDF, Pillow, pytesseract, and the Tesseract OCR engine installed on the backend.",
-                ) from exc
-            except Exception as exc:
-                raise HTTPException(
-                    400,
-                    "The PDF could not be processed. Ensure it is a valid PDF and Tesseract OCR is installed for scanned pages.",
-                ) from exc
-
-            text = "\n".join(
-                "\n".join(part for part in (page_texts[index], table_text_by_page[index]) if part)
-                for index in range(len(page_texts))
-            ).strip()
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(400, "The PDF could not be read. Please upload a valid PDF.") from exc
-    else:
-        try:
-            from PIL import Image
-            image = Image.open(io.BytesIO(raw))
-            # Handles phone rotation, contrast, upscaling, and several layout modes.
-            paddle_text_result: dict[str, str] = {}
-            text = _run_ocr_candidates(
-                image, modes=(6, 4, 11), paddle_text_out=paddle_text_result
-            )
-        except HTTPException:
-            raise
-        except ImportError:
-            raise HTTPException(
-                503,
-                "Image OCR is not configured. Install Pillow, pytesseract, and the Tesseract OCR engine on the server.",
-            )
-        except Exception as exc:
-            raise HTTPException(400, "The image could not be processed. Try a clear PNG or JPG scan.") from exc
-
-    # Use the selected text for item parsing, but let the common field extractor
-    # inspect every available text source. This prevents choosing a table-focused
-    # candidate from accidentally discarding a better-read supplier/date header.
-    # Shared keyword parser receives the same combined text regardless of PDF/image input.
-    from app.api.grn_keyword_parser import extract_header_fields
-    combined_header_text = "\n".join(part for part in (text, supplemental_field_text) if part)
-    keyword_fields = extract_header_fields(combined_header_text, db)
-    result = _extract_fields(text, db)
-    fields = result.get("fields", {})
-
-    # If the invoice cannot be matched to a vendor master record, use the
-    # uploaded document's filename (without .pdf/.jpg/.jpeg/.png) as a safer
-    # vendor-name suggestion than an uncertain OCR line from the address block.
-    # Ignore generic filenames such as "invoice", "scan", or "document".
-    filename_stem = os.path.splitext(os.path.basename(file.filename or ""))[0]
-    filename_vendor_name = re.sub(r"[._-]+", " ", filename_stem)
-    filename_vendor_name = re.sub(r"\s+", " ", filename_vendor_name).strip(" _-")
-    generic_filename = re.fullmatch(
-        r"(?i)(?:invoice|tax invoice|bill|receipt|document|scan|image|photo|img|"
-        r"whatsapp image|untitled|download|file|\d{1,8})",
-        filename_vendor_name,
-    )
-    if (
-        not fields.get("vendor_code")
-        and len(filename_vendor_name) >= 4
-        and not generic_filename
-        and not re.fullmatch(r"[\W\d_]+", filename_vendor_name)
-    ):
-        fields["vendor_name"] = filename_vendor_name
-    for key in ("invoice_no", "po_no", "grn_date"):
-        if keyword_fields.get(key) and (key != "invoice_no" or not fields.get(key)):
-            # Keep a validated, explicitly labelled invoice ID from the primary
-            # extractor; use the shared keyword parser only when it was not found.
-            fields[key] = keyword_fields[key]
-    if keyword_fields.get("vendor_code"):
-        fields["vendor_code"] = keyword_fields["vendor_code"]
-        fields["vendor_name"] = keyword_fields.get("vendor_name") or fields.get("vendor_name", "")
-    elif keyword_fields.get("vendor_name") and not fields.get("vendor_name"):
-        fields["vendor_name"] = keyword_fields["vendor_name"]
-    if supplemental_field_text:
-        supplemental_result = _extract_fields(
-            "\n".join(part for part in (text, supplemental_field_text) if part), db
-        )
-        # Keep keyword-parser values already applied above. Resetting this dict to
-        # result["fields"] here discarded successful invoice/PO/vendor matches.
-        supplemental_fields = supplemental_result.get("fields", {})
-        # Only replace missing header fields; never overwrite a populated field
-        # with a blank or an unmatched supplier candidate.
-        if not fields.get("grn_date") and supplemental_fields.get("grn_date"):
-            fields["grn_date"] = supplemental_fields["grn_date"]
-        if not fields.get("vendor_code") and supplemental_fields.get("vendor_code"):
-            fields["vendor_code"] = supplemental_fields["vendor_code"]
-            fields["vendor_name"] = supplemental_fields.get("vendor_name", fields.get("vendor_name", ""))
-        if not fields.get("invoice_no") and supplemental_fields.get("invoice_no"):
-            fields["invoice_no"] = supplemental_fields["invoice_no"]
-        if not fields.get("po_no") and supplemental_fields.get("po_no"):
-            fields["po_no"] = supplemental_fields["po_no"]
-        result["fields"] = fields
-        result["warnings"] = list(dict.fromkeys(
-            result.get("warnings", []) + supplemental_result.get("warnings", [])
-        ))
-
-    # Photos/scans need the same column-aware strategy as digital PDFs. If the
-    # OCR bounding boxes identify a table, use only those rows rather than
-    # unrelated text matches elsewhere on the page.
-    if content_type != "application/pdf":
-        try:
-            from PIL import Image
-            with Image.open(io.BytesIO(raw)) as source_image:
-                image_items = _extract_image_table_line_items(
-                    source_image.convert("RGB"), db,
-                    paddle_text=paddle_text_result.get("text", ""),
-                )
-            if image_items:
-                # Compare independent parsers rather than always trusting a
-                # coordinate pass that may split one description across rows.
-                # Keep the candidate with more complete invoice rows, with
-                # arithmetic consistency as the tie-breaker.
-                text_items = [
-                    row for row in _extract_item_rows(text, db)
-                    if row.get("source") == "receipt_text"
-                ]
-                chosen_items = _choose_line_item_candidate(text_items, image_items)
-                result["line_items"] = chosen_items
+                            coordinate_items.extend(chosen_page_rows)
+                coordinate_items.sort(key=lambda row: row.get("_source_page_index", 0))
+            except Exception:
+                # Text extraction still returns its available rows if OCR is unavailable.
+                pass
+            text_items = [
+                row for row in result.get("line_items", [])
+                if row.get("source") == "receipt_text"
+            ]
+            coordinate_items = _choose_line_item_candidate(text_items, coordinate_items)
+            if coordinate_items:
+                # Internal page markers are only used to merge mixed PDF page types.
+                for row in coordinate_items:
+                    row.pop("_source_page_index", None)
+                result["line_items"] = coordinate_items
                 result["warnings"] = [
                     warning for warning in result.get("warnings", [])
                     if "Line items were detected from receipt text" not in warning
                     and "One or more PO line items could not be matched" not in warning
-                    and "Line items were read from image-table" not in warning
                 ]
                 result["warnings"].append(
-                    "Line items were extracted using the highest-scoring OCR parser. Verify item names, quantities, and rates before saving."
+                    "Line items were extracted from the strongest available PDF text/table candidate. Verify item mapping, quantities, and rates before saving."
                 )
-                if any(row.get("match_status") == "unmatched" for row in chosen_items):
+                if any(row.get("match_status") == "unmatched" for row in coordinate_items):
                     result["warnings"].append(
                         "One or more invoice descriptions could not be matched confidently to the item master."
                     )
-        except Exception:
-            # Existing local OCR text extraction remains the fallback if
-            # bounding-box table detection cannot confidently find the headers.
-            pass
-
-    # For PDFs with embedded text, use the table's actual word coordinates when
-    # available. This avoids treating header fragments (e.g. "SHE/") as products
-    # and keeps description, quantity, rate, and amount from separate columns
-    # attached to the same invoice row. Scanned PDFs still use the OCR parser.
-    if content_type == "application/pdf":
-        coordinate_items = _extract_pdf_table_line_items(raw, db)
-        # A PDF can mix digital-text pages with scanned pages. Previously, finding
-        # even one digital table row disabled OCR for the entire document, silently
-        # losing scanned pages. OCR only pages with no coordinate-extracted rows;
-        # this also avoids spending OCR time on pages already handled successfully.
-        try:
-            import pymupdf
-            from PIL import Image
-            with pymupdf.open(stream=raw, filetype="pdf") as pdf_document:
-                # Count independent text-parser candidates per page as a second
-                # signal for missing rows. This is only a trigger for OCR; it never
-                # adds text-parser rows directly or overrides coordinate evidence.
-                expected_row_counts: dict[int, int] = {}
-                for index, page in enumerate(pdf_document):
-                    page_text = page.get_text("text") or ""
-                    text_candidates = [
-                        row for row in _extract_item_rows(page_text, db)
-                        if row.get("source") == "receipt_text"
-                    ] if page_text.strip() else []
-                    expected_row_counts[index] = len(text_candidates)
-
-                pages_to_ocr = _pdf_pages_needing_image_fallback(
-                    len(pdf_document),
-                    coordinate_items,
-                    expected_row_counts=expected_row_counts,
-                )
-                for page_index in pages_to_ocr:
-                    page = pdf_document.load_page(page_index)
-                    pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2.5, 2.5), alpha=False)
-                    if pixmap.width * pixmap.height > 25_000_000:
-                        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5), alpha=False)
-                    if pixmap.width * pixmap.height > 25_000_000:
-                        continue
-                    page_image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
-                    candidates = _extract_image_table_line_items(page_image, db)
-                    for row in candidates:
-                        row["_source_page_index"] = page_index
-                    existing = [
-                        row for row in coordinate_items
-                        if row.get("_source_page_index") == page_index
-                    ]
-                    # Prefer the OCR candidate only when it is measurably better;
-                    # otherwise retain the coordinate parser's source values.
-                    chosen_page_rows = _choose_pdf_page_rows(existing, candidates)
-                    if chosen_page_rows is not existing:
-                        coordinate_items = [
-                            row for row in coordinate_items
-                            if row.get("_source_page_index") != page_index
-                        ]
-                        coordinate_items.extend(chosen_page_rows)
-            coordinate_items.sort(key=lambda row: row.get("_source_page_index", 0))
-        except Exception:
-            # Text extraction still returns its available rows if OCR is unavailable.
-            pass
-        text_items = [
-            row for row in result.get("line_items", [])
-            if row.get("source") == "receipt_text"
-        ]
-        coordinate_items = _choose_line_item_candidate(text_items, coordinate_items)
-        if coordinate_items:
-            # Internal page markers are only used to merge mixed PDF page types.
-            for row in coordinate_items:
-                row.pop("_source_page_index", None)
-            result["line_items"] = coordinate_items
-            result["warnings"] = [
-                warning for warning in result.get("warnings", [])
-                if "Line items were detected from receipt text" not in warning
-                and "One or more PO line items could not be matched" not in warning
-            ]
-            result["warnings"].append(
-                "Line items were extracted from the strongest available PDF text/table candidate. Verify item mapping, quantities, and rates before saving."
-            )
-            if any(row.get("match_status") == "unmatched" for row in coordinate_items):
-                result["warnings"].append(
-                    "One or more invoice descriptions could not be matched confidently to the item master."
-                )
-
-    extracted_rows = result.get("line_items", [])
-    if not extracted_rows:
-        result["warnings"] = list(dict.fromkeys(
-            result.get("warnings", []) + [
-                "No invoice line items could be extracted confidently. Check the scan quality and enter the line items manually; no catalog items were guessed."
-            ]
-        ))
-
-    review_rows = [row for row in extracted_rows if row.get("needs_review")]
-    if review_rows:
-        result["warnings"] = list(dict.fromkeys(
-            result.get("warnings", []) + [
-                f"{len(review_rows)} extracted line(s) need manual review because one or more values are incomplete or inconsistent."
-            ]
-        ))
-
-    result["filename"] = (file.filename or "document")[:160]
-    result["document_type"] = "pdf" if content_type == "application/pdf" else "image"
-    return result
+    
+        extracted_rows = result.get("line_items", [])
+        if not extracted_rows:
+            result["warnings"] = list(dict.fromkeys(
+                result.get("warnings", []) + [
+                    "No invoice line items could be extracted confidently. Check the scan quality and enter the line items manually; no catalog items were guessed."
+                ]
+            ))
+    
+        review_rows = [row for row in extracted_rows if row.get("needs_review")]
+        if review_rows:
+            result["warnings"] = list(dict.fromkeys(
+                result.get("warnings", []) + [
+                    f"{len(review_rows)} extracted line(s) need manual review because one or more values are incomplete or inconsistent."
+                ]
+            ))
+    
+        result["filename"] = (file.filename or "document")[:160]
+        result["document_type"] = "pdf" if content_type == "application/pdf" else "image"
+        return result
+    
