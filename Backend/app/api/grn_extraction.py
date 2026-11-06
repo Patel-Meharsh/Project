@@ -1425,7 +1425,8 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                     return " ".join(w["text"] for w in sorted(cells.get(kind, []), key=lambda w: w["x0"]))
 
                 serial_text = cell("ignore_serial")
-                description = _clean_item_description(cell("description"), len(current_rows) + 1)
+                raw_description = cell("description")
+                description = _clean_item_description(raw_description, len(current_rows) + 1)
                 description, serial_warning = resolve_description(
                     description,
                     expected_serial=len(current_rows) + 1,
@@ -1512,6 +1513,10 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                 if matched is None and fuzzy_name:
                     matched = next((item for item in masters if (item.name or '').strip() == fuzzy_name), None)
                 current_rows.append(_mark_row_for_review({
+                    # Keep the unmodified OCR description temporarily. A serial
+                    # number without a dedicated header can only be removed after
+                    # neighboring rows confirm an increasing serial sequence.
+                    "_ocr_description_raw": raw_description,
                     "item_code": (matched.code or "") if matched else "",
                     "item_name": ((matched.name or description) if matched else description),
                     "ocr_original_name": ocr_original_description if spelling_changes else "",
@@ -1534,6 +1539,58 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                         ) if warning
                     ),
                 }))
+            # When an invoice omits a recognizable serial-number header, OCR may
+            # place the serial at the start of the description (e.g. "5 Godrej
+            # AerSpray"). Do not strip a number based on row position alone: missed
+            # rows make that ordinal unreliable. Strip it only when two neighboring
+            # extracted descriptions independently prove a consecutive sequence.
+            serial_candidates: dict[int, tuple[int, str]] = {}
+            for row_index, item in enumerate(current_rows):
+                raw_name = re.sub(r"\\s+", " ", str(item.get("_ocr_description_raw") or "")).strip()
+                match = re.match(r"^(\\d{1,3})\\s+(.+)$", raw_name)
+                if not match:
+                    continue
+                remainder = match.group(2).strip()
+                if re.match(
+                    r"^(?:W|WATT|WATTS|V|VOLT|VOLTS|L|LTR|LITRE|LITER|ML|MM|CM|MTR|KG|GM|GMS|PCS|PC|NOS|INCH|FT|PIN)\\b",
+                    remainder,
+                    re.I,
+                ):
+                    continue
+                if not re.search(r"[A-Za-z]{2,}", remainder):
+                    continue
+                serial_candidates[row_index] = (int(match.group(1)), remainder)
+
+            confirmed_serial_rows: set[int] = set()
+            for row_index in range(len(current_rows) - 1):
+                first = serial_candidates.get(row_index)
+                second = serial_candidates.get(row_index + 1)
+                if first and second and second[0] == first[0] + 1:
+                    confirmed_serial_rows.update((row_index, row_index + 1))
+
+            for row_index in confirmed_serial_rows:
+                item = current_rows[row_index]
+                cleaned_name = serial_candidates[row_index][1]
+                original_name = clean_item_name(cleaned_name)
+                corrected_name, spelling_changes = correct_item_spelling(
+                    original_name, [master.name or "" for master in masters]
+                )
+                _, fuzzy_name, _ = correct_item_name_from_master(corrected_name, masters)
+                final_name = corrected_name
+                matched = match_master(final_name)
+                if matched is None and fuzzy_name:
+                    matched = next(
+                        (master for master in masters if (master.name or "").strip() == fuzzy_name),
+                        None,
+                    )
+                item["item_code"] = (matched.code or "") if matched else ""
+                item["item_name"] = (matched.name or final_name) if matched else final_name
+                item["ocr_original_name"] = original_name if spelling_changes else ""
+                item["match_status"] = "matched" if matched else "unmatched"
+
+            for item in current_rows:
+                item.pop("_ocr_description_raw", None)
+
             # Score row integrity, not just count. Invoice line amount should agree
             # with quantity × rate within rounding tolerance. Wrong column assignments
             # are penalized; missing amounts remain usable but lower-confidence.
