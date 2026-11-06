@@ -175,6 +175,7 @@ export default function GRN() {
   const [editTarget, setEditTarget] = useState(null)
   const [viewGrn, setViewGrn] = useState(null)
   const [extractingDocument, setExtractingDocument] = useState(false)
+  const extractionAbortControllerRef = useRef(null)
   const [extractionResult, setExtractionResult] = useState(null)
   const [selectedDocumentName, setSelectedDocumentName] = useState('')
   const [itemMasterDraft, setItemMasterDraft] = useState(null)
@@ -185,6 +186,10 @@ export default function GRN() {
 
   const { user } = useAuth()
   const isAdmin = canDo(user?.role, 'admin')
+
+  useEffect(() => () => {
+    extractionAbortControllerRef.current?.abort()
+  }, [])
 
   const load = () => refetch()
 
@@ -222,6 +227,8 @@ export default function GRN() {
   }
 
   const closeSlideOver = () => {
+    extractionAbortControllerRef.current?.abort()
+    extractionAbortControllerRef.current = null
     setShowCreate(false)
     setEditTarget(null)
     setRowError(false)
@@ -251,6 +258,8 @@ export default function GRN() {
   )
 
   const startNewGRN = async () => {
+    extractionAbortControllerRef.current?.abort()
+    extractionAbortControllerRef.current = null
     setShowDraftChoice(false)
     setEditTarget(null)
     setRowError(false)
@@ -361,6 +370,9 @@ export default function GRN() {
 
 const extractGRNDocument = async (file) => {
   if (!file) return
+  extractionAbortControllerRef.current?.abort()
+  const controller = new AbortController()
+  extractionAbortControllerRef.current = controller
   setExtractingDocument(true)
   setExtractionResult(null)
   // Start each upload from a clean document draft, including when extraction fails.
@@ -375,7 +387,8 @@ const extractGRNDocument = async (file) => {
   setPendingMasterIndexes([])
   setItemMasterDraft(null)
   try {
-    const result = await grnApi.extractDocument(file)
+    const result = await grnApi.extractDocument(file, controller.signal)
+    if (controller.signal.aborted) return
     setExtractionResult(result)
     const fields = result.fields || {}
     // This document is the source for the draft: clear missing extracted values
@@ -415,6 +428,7 @@ const extractGRNDocument = async (file) => {
       fields.vendor_gst_no || fields.gst_no || extractedRows.find(row => row.vendor_gst_no)?.vendor_gst_no || ''
     )
     const latestVendors = await vendorApi.getAll().catch(() => [...vendors, ...createdVendorRecords])
+    if (controller.signal.aborted) return
     const matchedVendor = findInvoiceVendor(latestVendors, {
       code: extractedVendorCode,
       name: invoiceVendorName,
@@ -519,10 +533,22 @@ const extractGRNDocument = async (file) => {
     }
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
-    toast.error(err.response?.data?.detail || 'Could not extract document details.')
+    const wasCancelled = controller.signal.aborted || err.code === 'ERR_CANCELED' || err.name === 'CanceledError'
+    if (!wasCancelled) {
+      toast.error(err.response?.data?.detail || 'Could not extract document details.')
+    }
   } finally {
-    setExtractingDocument(false)
+    if (extractionAbortControllerRef.current === controller) {
+      extractionAbortControllerRef.current = null
+      setExtractingDocument(false)
+    }
   }
+}
+
+const cancelDocumentExtraction = () => {
+  extractionAbortControllerRef.current?.abort()
+  extractionAbortControllerRef.current = null
+  setExtractingDocument(false)
 }
 
 
@@ -1066,7 +1092,14 @@ const createGRN = async () => {
                   />
                 </label>
               </div>
-              {extractingDocument && <div style={{ marginTop:8, fontSize:12, color:'#2563eb' }}>Reading document…</div>}
+              {extractingDocument && (
+                <div style={{ marginTop:8, display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+                  <span style={{ fontSize:12, color:'#2563eb' }}>Reading document…</span>
+                  <button type="button" className="btn btn-outline" onClick={cancelDocumentExtraction} style={{ padding:'3px 10px', fontSize:12 }}>
+                    Cancel reading
+                  </button>
+                </div>
+              )}
               {extractionResult && pendingMasterIndexes.length > 0 && !itemMasterDraft && (
                 <div style={{ marginTop:10, padding:10, border:'1px solid #f4c66a', borderRadius:8, background:'#fffbeb', display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
                   <div style={{ fontSize:12, color:'#92400e' }}>
