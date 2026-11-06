@@ -1304,7 +1304,10 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
     # The shared OCR stage has already evaluated the image. Reuse one
     # normalized grayscale variant here instead of repeating OCR over three
     # variants (nine Tesseract passes). Keep alternate layout modes as fallbacks.
-    for variant in _prepare_ocr_variants(image)[:1]:
+    # Start with the normalized grayscale image. If its table rows are
+    # incomplete or inconsistent, continue through sharpened, thresholded and
+    # adaptive variants. A clean multi-row result still exits early below.
+    for variant_index, variant in enumerate(_prepare_ocr_variants(image)):
         for psm in (6, 4, 11):
             try:
                 data = pytesseract.image_to_data(
@@ -1319,7 +1322,11 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                     confidence = float(data["conf"][i])
                 except (ValueError, TypeError, IndexError):
                     confidence = -1
-                if not token or confidence < 20:
+                # Faint invoice print often has useful description/numeric
+                # tokens below 20 confidence. Keep lower-confidence words in
+                # the candidate; row validation and review flags decide whether
+                # they are safe to prefill.
+                if not token or confidence < 10:
                     continue
                 x, y = int(data["left"][i]), int(data["top"][i])
                 width, height = int(data["width"][i]), int(data["height"][i])
@@ -1470,11 +1477,11 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                         if len(supported) == 1:
                             rate = round(supported[0], 4)
 
-                # Preserve credible item rows when one numeric cell was missed by OCR.
-                # Blank values remain editable in the GRN form and must be reviewed;
-                # dropping the whole row silently loses invoice goods.
-                if qty is None and rate is None and amount is None:
-                    continue
+                # Preserve credible product descriptions even when OCR misses
+                # every numeric cell. The GRN form can then show the item for
+                # manual correction instead of silently dropping an invoice line.
+                # The description has already passed table-header, footer, charge,
+                # serial-number and minimum-token checks above.
                 if (qty is not None and qty <= 0) or (rate is not None and rate < 0):
                     continue
                 # Fail closed on HSN/SAC codes shifted into Qty (e.g. 38089400).
@@ -1509,8 +1516,14 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                     "line_amount": amount,
                     "match_status": "matched" if matched else "unmatched",
                     "source": "receipt_text",
-                    "needs_review": bool(serial_warning),
-                    "extraction_warning": serial_warning or "",
+                    "needs_review": bool(serial_warning) or qty is None or rate is None,
+                    "extraction_warning": "; ".join(
+                        warning for warning in (
+                            serial_warning,
+                            "quantity was not confidently read" if qty is None else "",
+                            "rate was not confidently read" if rate is None else "",
+                        ) if warning
+                    ),
                 }))
             # Score row integrity, not just count. Invoice line amount should agree
             # with quantity × rate within rounding tolerance. Wrong column assignments
