@@ -119,8 +119,8 @@ def clean_item_name(value: str) -> str:
     # into descriptions. A whitelist prevents unhandled symbols from leaking
     # into the GRN form while preserving product notation such as 36W, 25-MM,
     # 2ltr and 3+1.
-    cleaned = re.sub(r"[^A-Za-z0-9\\s+\\-]", " ", value or "")
-    return re.sub(r"\\s+", " ", cleaned).strip(" -+")
+    cleaned = re.sub(r"[^A-Za-z0-9\s+\-]", " ", value or "")
+    return re.sub(r"\s+", " ", cleaned).strip(" -+")
 
 
 def correct_item_name_from_master(
