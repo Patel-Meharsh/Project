@@ -1401,6 +1401,7 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
             description_header_x = header_centers.get("description")
             if description_header_x is not None:
                 serial_anchors = []
+                serial_word_ids = set()
                 for word in words:
                     if word["y"] <= visual_rows[header_index][0]["y"]:
                         continue
@@ -1415,6 +1416,7 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                     serial_number = int(digits)
                     if 1 <= serial_number <= 99:
                         serial_anchors.append((serial_number, word["y"], word_center_x))
+                        serial_word_ids.add(id(word))
                 # Activate only when several plausible serials are visible.
                 # A single numeric token in the left margin is not sufficient
                 # evidence to change the parser's row model.
@@ -1432,13 +1434,12 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                 )
                 if len(deduped_anchors) >= 6 and increasing >= len(deduped_anchors) - 2:
                     serial_center = sum(anchor[2] for anchor in deduped_anchors) / len(deduped_anchors)
-                    header_centers["ignore_serial"] = serial_center
                     header_y = sum(word["y"] for word in visual_rows[header_index]) / len(visual_rows[header_index])
                     anchored_rows = []
                     for serial_number, anchor_y, anchor_x in deduped_anchors:
                         anchored_rows.append((anchor_y, []))
                     for word in words:
-                        if word["y"] <= header_y:
+                        if word["y"] <= header_y or id(word) in serial_word_ids:
                             continue
                         nearest_index = min(
                             range(len(deduped_anchors)),
