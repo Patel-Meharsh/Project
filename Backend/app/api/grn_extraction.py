@@ -1488,10 +1488,18 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                 # A suspicious row is omitted for manual review rather than allowing
                 # an eight-digit tax code to inflate received/accepted inventory.
                 qty_digits = str(int(qty)) if qty is not None and float(qty).is_integer() else ""
+                quantity_warning = ""
                 if qty is not None and (
                     qty >= 100000 or (4 <= len(qty_digits) <= 8 and qty == int(qty))
                 ):
-                    continue
+                    # A shifted HSN/SAC code must never become received stock.
+                    # Keep the product description and other invoice values,
+                    # but leave quantity blank for the user to verify.
+                    quantity_warning = (
+                        f"quantity candidate {qty:g} may be an HSN/SAC code; "
+                        "quantity was withheld for review"
+                    )
+                    qty = None
                 if re.fullmatch(r"[\d\s.,/-]+", description):
                     continue
                 ocr_original_description = clean_item_name(description)
@@ -1516,11 +1524,12 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                     "line_amount": amount,
                     "match_status": "matched" if matched else "unmatched",
                     "source": "receipt_text",
-                    "needs_review": bool(serial_warning) or qty is None or rate is None,
+                    "needs_review": bool(serial_warning or quantity_warning) or qty is None or rate is None,
                     "extraction_warning": "; ".join(
                         warning for warning in (
                             serial_warning,
-                            "quantity was not confidently read" if qty is None else "",
+                            quantity_warning,
+                            "quantity was not confidently read" if qty is None and not quantity_warning else "",
                             "rate was not confidently read" if rate is None else "",
                         ) if warning
                     ),
