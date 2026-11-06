@@ -1393,6 +1393,64 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
             if header_index is None:
                 continue
 
+            # If the invoice has a dedicated serial-number column, use its
+            # printed row numbers as anchors instead of relying only on global
+            # vertical clustering. This handles wrapped descriptions (e.g.
+            # "Godrej Aer Spray" with "Mogra" beneath it) without merging the
+            # following numbered item into the same row.
+            description_header_x = header_centers.get("description")
+            if description_header_x is not None:
+                serial_anchors = []
+                for word in words:
+                    if word["y"] <= visual_rows[header_index][0]["y"]:
+                        continue
+                    word_center_x = (word["x0"] + word["x1"]) / 2
+                    if word_center_x >= description_header_x:
+                        continue
+                    digits = re.sub(r"\\D", "", word["text"])
+                    if not digits or len(digits) > 2:
+                        continue
+                    serial_number = int(digits)
+                    if 1 <= serial_number <= 99:
+                        serial_anchors.append((serial_number, word["y"], word_center_x))
+                # Activate only when several plausible serials are visible.
+                # A single numeric token in the left margin is not sufficient
+                # evidence to change the parser's row model.
+                serial_anchors.sort(key=lambda entry: entry[1])
+                deduped_anchors = []
+                for anchor in serial_anchors:
+                    if deduped_anchors and abs(anchor[1] - deduped_anchors[-1][1]) <= 5:
+                        if anchor[2] < deduped_anchors[-1][2]:
+                            deduped_anchors[-1] = anchor
+                        continue
+                    deduped_anchors.append(anchor)
+                increasing = sum(
+                    1 for previous, current in zip(deduped_anchors, deduped_anchors[1:])
+                    if current[0] > previous[0]
+                )
+                if len(deduped_anchors) >= 6 and increasing >= len(deduped_anchors) - 2:
+                    serial_center = sum(anchor[2] for anchor in deduped_anchors) / len(deduped_anchors)
+                    header_centers["ignore_serial"] = serial_center
+                    header_y = sum(word["y"] for word in visual_rows[header_index]) / len(visual_rows[header_index])
+                    anchored_rows = []
+                    for serial_number, anchor_y, anchor_x in deduped_anchors:
+                        anchored_rows.append((anchor_y, []))
+                    for word in words:
+                        if word["y"] <= header_y:
+                            continue
+                        nearest_index = min(
+                            range(len(deduped_anchors)),
+                            key=lambda index: abs(deduped_anchors[index][1] - word["y"]),
+                        )
+                        if abs(deduped_anchors[nearest_index][1] - word["y"]) <= max(11, median_height * 2.2):
+                            anchored_rows[nearest_index][1].append(word)
+                    rebuilt_rows = visual_rows[:header_index + 1]
+                    rebuilt_rows.extend(
+                        sorted(row_words, key=lambda word: word["x0"])
+                        for _, row_words in anchored_rows if row_words
+                    )
+                    visual_rows = rebuilt_rows
+
             ordered_columns = sorted(
                 (x, name) for name, x in header_centers.items()
                 if name in {"description", "qty", "rate", "amount", "unit"}
