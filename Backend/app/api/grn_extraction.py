@@ -1340,14 +1340,10 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
             if not words:
                 continue
             median_height = sorted(w["height"] for w in words)[len(words) // 2]
-            # Invoice columns often use different font sizes: description,
-            # quantity and rate baselines can differ by 15-25 px even on the
-            # same printed row. Use a wider but capped tolerance so they stay
-            # associated, while adjacent item rows remain separate.
-            # Keep neighboring invoice baselines separate. The previous 1.5x
-            # median-height tolerance could combine adjacent item rows when
-            # description and numeric cells were vertically misaligned.
-            tolerance = max(7, min(18, median_height * 0.95))
+            # Invoice columns can have noticeably different font sizes and
+            # baselines. Keep the established adaptive tolerance until the
+            # actual source invoice is available for layout-specific tuning.
+            tolerance = max(12, min(28, median_height * 1.5))
             visual_rows: list[list[dict[str, Any]]] = []
             for word in sorted(words, key=lambda w: (w["y"], w["x0"])):
                 possible = [(abs(sum(item["y"] for item in row) / len(row) - word["y"]), row)
