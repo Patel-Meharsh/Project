@@ -403,7 +403,14 @@ def _paddleocr_candidate(image) -> dict[str, Any]:
             det_dir = os.getenv("GRN_PADDLEOCR_DET_MODEL_DIR")
             rec_dir = os.getenv("GRN_PADDLEOCR_REC_MODEL_DIR")
             cls_dir = os.getenv("GRN_PADDLEOCR_CLS_MODEL_DIR")
-            if not all(path and os.path.isdir(path) for path in (det_dir, rec_dir, cls_dir)):
+            model_dirs = (det_dir, rec_dir, cls_dir)
+            models_ready = all(
+                path
+                and os.path.isfile(os.path.join(path, "inference.pdmodel"))
+                and os.path.isfile(os.path.join(path, "inference.pdiparams"))
+                for path in model_dirs
+            )
+            if not models_ready:
                 logger.info(
                     "PaddleOCR skipped: configure local GRN_PADDLEOCR_DET_MODEL_DIR, "
                     "GRN_PADDLEOCR_REC_MODEL_DIR and GRN_PADDLEOCR_CLS_MODEL_DIR "
