@@ -101,7 +101,7 @@ def test_distinct_catalog_item_is_not_replaced_by_weak_similarity():
 
 
 
-def test_local_spelling_correction_uses_dictionary_without_item_master(monkeypatch):
+def test_local_spelling_correction_requires_item_master_evidence(monkeypatch):
     from types import SimpleNamespace
     import app.api.grn_serial_cleanup as cleanup
 
@@ -111,13 +111,18 @@ def test_local_spelling_correction_uses_dictionary_without_item_master(monkeypat
 
         def lookup(self, term, verbosity, max_edit_distance, include_unknown):
             if term == "chownk":
-                return [
-                    SimpleNamespace(term="chowk", distance=1, count=120),
-                ]
+                return [SimpleNamespace(term="chowk", distance=1, count=120)]
             return [SimpleNamespace(term=term, distance=0, count=100)]
 
     monkeypatch.setattr(cleanup, "_get_local_spell_checker", lambda: FakeChecker())
+
+    # A common dictionary word must not replace invoice text without catalog proof.
     corrected, changes = cleanup.correct_item_spelling("CHOWNK PL")
+    assert corrected == "CHOWNK PL"
+    assert changes == []
+
+    # The same correction is allowed when the target exists in Item Master.
+    corrected, changes = cleanup.correct_item_spelling("CHOWNK PL", ["CHOWK PL"])
     assert corrected == "CHOWK PL"
     assert changes and changes[0]["original"] == "CHOWNK"
 
