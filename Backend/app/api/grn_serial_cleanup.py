@@ -171,12 +171,10 @@ def correct_item_spelling(
     description: str,
     known_terms: Iterable[str] = (),
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Conservatively correct individual OCR words using a bundled local dictionary.
+    """Correct OCR spelling only when the replacement exists in the Item Master.
 
-    This is independent of Item Master matching. Known catalog terms are added
-    to the in-memory dictionary so technical/product vocabulary is protected.
-    Only unique, one-edit suggestions are applied; ambiguous or unknown words
-    remain exactly as OCR read them.
+    General English frequency is not reliable evidence for product names:
+    uncommon but valid terms must not be rewritten as more common words.
     """
     try:
         from symspellpy import Verbosity
@@ -188,15 +186,19 @@ def correct_item_spelling(
     if checker is None or not original:
         return original, []
 
+    # Only catalog vocabulary is eligible as an automatic correction target.
+    catalog_tokens: set[str] = set()
     for phrase in known_terms:
         for term in re.findall(r"[A-Za-z]{3,}", str(phrase or "")):
-            checker.create_dictionary_entry(term.lower(), 10000)
+            normalized_term = term.lower()
+            catalog_tokens.add(normalized_term)
+            checker.create_dictionary_entry(normalized_term, 10000)
 
     corrections: list[dict[str, Any]] = []
 
     def replace_token(match: re.Match[str]) -> str:
         token = match.group(0)
-        if len(token) < 4 or token.isdigit():
+        if len(token) < 4 or token.isdigit() or not catalog_tokens:
             return token
         suggestions = checker.lookup(
             token.lower(),
@@ -206,7 +208,10 @@ def correct_item_spelling(
         )
         candidates = [
             item for item in suggestions
-            if item.term != token.lower() and item.distance == 1 and item.count >= 2
+            if item.term in catalog_tokens
+            and item.term != token.lower()
+            and item.distance == 1
+            and item.count >= 2
         ]
         if not candidates:
             return token
