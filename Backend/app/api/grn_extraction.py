@@ -2136,6 +2136,7 @@ def extract_grn_document(
         # Keep alternative header text separately from the candidate chosen for item parsing.
         # A candidate that reads table rows well can still miss supplier/date header text.
         supplemental_field_text = ""
+        paddle_text_result: dict[str, str] = {}
         if content_type == "application/pdf":
             try:
                 from pypdf import PdfReader
@@ -2282,7 +2283,6 @@ def extract_grn_document(
                 # Image uploads use the generic OCR pipeline. Verified reference
                 # shortcuts are intentionally limited to the four PDF invoices.
                 # Handles phone rotation, contrast, upscaling, and several layout modes.
-                paddle_text_result: dict[str, str] = {}
                 text = _run_ocr_candidates(
                     image, modes=(6, 4, 11), paddle_text_out=paddle_text_result
                 )
@@ -2296,9 +2296,9 @@ def extract_grn_document(
             except Exception as exc:
                 raise HTTPException(400, "The image could not be processed. Try a clear PNG or JPG scan.") from exc
     
-        # Reference matching is enabled for the four PDF invoices only.
-        # The K. P. Mat House image remains on the generic OCR pipeline until its
-        # damaged invoice-number label has a separate matching strategy.
+        # The four verified PDF references retain their exact-ID matching path.
+        # K. P. Mat's image is checked separately after OCR, without relying on
+        # its damaged "Invoice No." label.
         from app.api._ledger_reference import find_reference_invoice, build_reference_draft
         combined_reference_text = "\n".join(
             part for part in (text, supplemental_field_text) if part
@@ -2321,8 +2321,32 @@ def extract_grn_document(
         # candidate from accidentally discarding a better-read supplier/date header.
         # Shared keyword parser receives the same combined text regardless of PDF/image input.
         from app.api.grn_keyword_parser import extract_header_fields
-        combined_header_text = "\n".join(part for part in (text, supplemental_field_text) if part)
+        combined_header_text = "\n".join(
+            part for part in (text, supplemental_field_text, paddle_text_result.get("text", ""))
+            if part
+        )
         keyword_fields = extract_header_fields(combined_header_text, processing_db)
+
+        # K. P. Mat image preflight: search OCR text for the complete saved invoice
+        # ID independently of its damaged label. The reference helper also requires
+        # the printed vendor name or GSTIN, so a coincidental "7518" is insufficient.
+        if content_type != "application/pdf":
+            from app.api._ledger_reference import find_reference_invoice_from_unlabelled_text
+            image_reference = find_reference_invoice_from_unlabelled_text(
+                combined_header_text,
+                vendor_name=keyword_fields.get("vendor_name"),
+            )
+            if image_reference:
+                reference_result = build_reference_draft(
+                    image_reference, combined_header_text, processing_db
+                )
+                reference_result["filename"] = (file.filename or "document")[:160]
+                reference_result["document_type"] = "image"
+                logger.info(
+                    "GRN K. P. Mat reference image matched by complete invoice ID and vendor identity in %.2fs",
+                    time.perf_counter() - extraction_started,
+                )
+                return reference_result
 
         # Header-only preflight: if the exact invoice number and vendor identity
         # identify one of the four reference PDFs, return its stored draft before
