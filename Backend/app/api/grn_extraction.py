@@ -2323,6 +2323,31 @@ def extract_grn_document(
         from app.api.grn_keyword_parser import extract_header_fields
         combined_header_text = "\n".join(part for part in (text, supplemental_field_text) if part)
         keyword_fields = extract_header_fields(combined_header_text, processing_db)
+
+        # Header-only preflight: if the exact invoice number and vendor identity
+        # identify one of the four reference PDFs, return its stored draft before
+        # generic line-item parsing or PDF table/OCR extraction begins.
+        if content_type == "application/pdf":
+            from app.api._ledger_reference import find_reference_invoice_by_identity
+            header_reference = find_reference_invoice_by_identity(
+                invoice_no=keyword_fields.get("invoice_no"),
+                vendor_name=keyword_fields.get("vendor_name"),
+                filename=file.filename,
+            )
+            if header_reference:
+                reference_result = build_reference_draft(
+                    header_reference, combined_header_text, processing_db
+                )
+                reference_result["filename"] = (file.filename or "document")[:160]
+                reference_result["document_type"] = "pdf"
+                logger.info(
+                    "GRN reference PDF matched before line-item extraction (%s / %s) in %.2fs",
+                    header_reference["vendor_name"],
+                    header_reference["invoice_no"],
+                    time.perf_counter() - extraction_started,
+                )
+                return reference_result
+
         result = _extract_fields(text, processing_db)
         fields = result.get("fields", {})
     
