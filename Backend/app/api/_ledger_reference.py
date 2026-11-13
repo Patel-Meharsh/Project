@@ -167,18 +167,34 @@ def _labelled_invoice_number(text: str) -> str:
 
 
 def find_reference_invoice(text: str) -> dict[str, Any] | None:
-    """Return a reference record when its exact labelled invoice number is found."""
+    """Find a saved invoice by its exact number, even if OCR misses the label.
+
+    Long, distinctive invoice IDs may be matched anywhere in the extracted
+    document text. The short Kalyan number (468) is accepted only when it is
+    found beside an explicit invoice/bill-number label, avoiding matches to
+    unrelated amounts, dates, or item quantities.
+    """
     if not text or not text.strip():
         return None
-    invoice_number = _compact(_labelled_invoice_number(text))
-    if not invoice_number:
-        return None
 
-    matches = [
+    labelled_number = _compact(_labelled_invoice_number(text))
+    labelled_matches = [
         record for record in _REFERENCE_INVOICES
-        if _compact(record["invoice_no"]) == invoice_number
+        if _compact(record["invoice_no"]) == labelled_number
     ]
-    return matches[0] if len(matches) == 1 else None
+    if len(labelled_matches) == 1:
+        return labelled_matches[0]
+
+    # PDF text layers and OCR sometimes lose the label or split the invoice
+    # number across spaces/punctuation. Compact the full document and look for
+    # the complete saved identifier. Do not use this fallback for short IDs.
+    compact_document = _compact(text)
+    full_text_matches = [
+        record for record in _REFERENCE_INVOICES
+        if len(_compact(record["invoice_no"])) >= 8
+        and _compact(record["invoice_no"]) in compact_document
+    ]
+    return full_text_matches[0] if len(full_text_matches) == 1 else None
 
 
 
