@@ -437,6 +437,7 @@ const extractGRNDocument = async (file) => {
     const suggestedRows = (result.line_items || [])
       .map((row, idx) => ({ row, idx, cleanedName: cleanExtractedName(row.item_name) }))
       .map(({ row, idx, cleanedName }) => {
+        const isReferenceInvoiceRow = row.source === 'reference_invoice'
         const isChargeLine = Boolean(row.is_charge_line) ||
           /\b(?:carting|freight|transport(?:ation)?|delivery\s+charges?|packing\s+charges?|handling\s+charges?|loading|unloading|round\s*off)\b/i.test(cleanedName)
         // Keep invoice charges visible in the GRN draft, but never send them
@@ -499,7 +500,9 @@ const extractGRNDocument = async (file) => {
           id: Date.now() + idx,
           item_code: masterMatch?.code || '',
           uom: row.uom || row.unit || '',
-          item_name: masterMatch?.name || cleanedName || '',
+          // Keep the verified invoice's original description. Item Master
+          // matching supplies only the item code and must not rename the invoice row.
+          item_name: isReferenceInvoiceRow ? (row.item_name || cleanedName || '') : (masterMatch?.name || cleanedName || ''),
           vendor_code: matchedVendor?.code || '',
           vendor_name: matchedVendor?.name || invoiceVendorName || row.vendor_name || '',
           vendor_gst_no: matchedVendor ? normalizeGstin(matchedVendor.gst_no) : invoiceVendorGstin,
@@ -510,6 +513,10 @@ const extractGRNDocument = async (file) => {
           rate_unreadable: Boolean(row.rate_unreadable),
           rate_warning: Boolean(row.rate_warning),
           line_amount: row.line_amount ?? null,
+          discount_pct: row.discount_pct ?? null,
+          hsn: row.hsn || '',
+          gst_pct: row.gst_pct ?? null,
+          source: row.source || '',
           is_charge_line: false,
           needs_review: Boolean(row.needs_review || uncertainMatch),
           extraction_warning: row.extraction_warning || (uncertainMatch
