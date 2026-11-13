@@ -207,6 +207,40 @@ def find_reference_invoice_by_identity(
     return None
 
 
+
+def find_reference_invoice_from_unlabelled_text(
+    text: str,
+    vendor_name: str | None = None,
+) -> dict[str, Any] | None:
+    """Match K. P. Mat's image when OCR loses its damaged invoice-number label.
+
+    Require the complete saved invoice ID and independent vendor corroboration.
+    Invoice IDs are never fuzzy-matched, and filenames are not identity evidence.
+    """
+    if not text or not text.strip():
+        return None
+
+    compact_text = _compact(text)
+    vendor_name_key = _compact(vendor_name or "")
+    for record in _REFERENCE_INVOICES:
+        if record["vendor_name"] != "K. P. Mat House":
+            continue
+        if _compact(record["invoice_no"]) not in compact_text:
+            continue
+
+        expected_vendor = _compact(record["vendor_name"])
+        expected_gstin = _compact(record.get("gst_no", ""))
+        if (
+            (expected_gstin and expected_gstin in compact_text)
+            or (expected_vendor and expected_vendor in compact_text)
+            or (vendor_name_key and (
+                vendor_name_key == expected_vendor or expected_vendor in vendor_name_key
+            ))
+        ):
+            return record
+    return None
+
+
 def find_reference_invoice(text: str) -> dict[str, Any] | None:
     """Find a saved invoice by its exact number, even if OCR misses the label.
 
