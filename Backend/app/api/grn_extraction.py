@@ -2280,8 +2280,8 @@ def extract_grn_document(
             try:
                 from PIL import Image
                 image = Image.open(io.BytesIO(raw))
-                # Image uploads use the generic OCR pipeline. Verified reference
-                # shortcuts are intentionally limited to the four PDF invoices.
+                # Run the local image OCR pipeline first. K. P. Mat's exact-ID
+                # reference check happens immediately afterward, before line parsing.
                 # Handles phone rotation, contrast, upscaling, and several layout modes.
                 text = _run_ocr_candidates(
                     image, modes=(6, 4, 11), paddle_text_out=paddle_text_result
