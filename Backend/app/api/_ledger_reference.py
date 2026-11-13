@@ -182,19 +182,14 @@ def find_reference_invoice(text: str) -> dict[str, Any] | None:
 
 
 
-def find_kalyan_reference_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Identify Kalyan Hardware from a high-confidence match of invoice line rows.
+def find_reference_invoice_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Identify one of the verified invoices from its complete line-item signature.
 
-    A row counts only when its description is sufficiently similar and both its
-    quantity and rate agree with the verified reference. At least 11 of 12 rows
-    must match one-to-one, preventing a few common hardware items from triggering
-    the reference invoice accidentally.
+    Each expected row must match a unique extracted row by item description,
+    quantity, and rate. At least 90% of the reference rows must match; short
+    invoices with five or fewer rows must match every row to reduce false hits.
     """
-    record = next(
-        (item for item in _REFERENCE_INVOICES if item["vendor_name"] == "Kalyan Hardware"),
-        None,
-    )
-    if not record or not rows:
+    if not rows:
         return None
 
     def name_similarity(left: str, right: str) -> float:
@@ -214,38 +209,66 @@ def find_kalyan_reference_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any
         except (TypeError, ValueError):
             return False
 
-    unused = set(range(len(rows)))
-    matched_names: list[float] = []
-    for entry in record["items"]:
-        expected_name, _unit, expected_qty, expected_rate = entry[:4]
-        best_index = None
-        best_name_score = 0.0
-        for index in unused:
-            row = rows[index]
-            qty_ok = numeric_match(row.get("recd_qty"), expected_qty, 0.01)
-            rate_tolerance = max(1.0, abs(float(expected_rate)) * 0.02)
-            rate_ok = numeric_match(row.get("rate"), expected_rate, rate_tolerance)
-            if not qty_ok or not rate_ok:
+    matched_records: list[tuple[float, dict[str, Any]]] = []
+    for record in _REFERENCE_INVOICES:
+        expected_items = record["items"]
+        minimum_matches = (
+            len(expected_items)
+            if len(expected_items) <= 5
+            else (len(expected_items) * 9 + 9) // 10
+        )
+        unused = set(range(len(rows)))
+        matched_names: list[float] = []
+
+        for entry in expected_items:
+            expected_name, _unit, expected_qty, expected_rate = entry[:4]
+            if expected_qty is None or expected_rate is None:
                 continue
 
-            possible_names = [
-                str(row.get("item_name") or ""),
-                str(row.get("ocr_original_name") or ""),
-            ]
-            score = max(name_similarity(name, expected_name) for name in possible_names)
-            if score >= 0.68 and score > best_name_score:
-                best_index = index
-                best_name_score = score
+            best_index = None
+            best_name_score = 0.0
+            for index in unused:
+                row = rows[index]
+                qty_ok = numeric_match(row.get("recd_qty"), expected_qty, 0.01)
+                rate_tolerance = max(1.0, abs(float(expected_rate)) * 0.02)
+                rate_ok = numeric_match(row.get("rate"), expected_rate, rate_tolerance)
+                if not qty_ok or not rate_ok:
+                    continue
 
-        if best_index is not None:
-            unused.remove(best_index)
-            matched_names.append(best_name_score)
+                possible_names = [
+                    str(row.get("item_name") or ""),
+                    str(row.get("ocr_original_name") or ""),
+                ]
+                score = max(name_similarity(name, expected_name) for name in possible_names)
+                if score >= 0.68 and score > best_name_score:
+                    best_index = index
+                    best_name_score = score
 
-    # 11/12 rows = 91.7% line coverage. Also require good average description
-    # similarity so matching common quantities/rates alone cannot identify it.
-    if len(matched_names) >= 11 and sum(matched_names) / len(matched_names) >= 0.78:
-        return record
+            if best_index is not None:
+                unused.remove(best_index)
+                matched_names.append(best_name_score)
+
+        if (
+            len(matched_names) >= minimum_matches
+            and sum(matched_names) / len(matched_names) >= 0.78
+        ):
+            coverage = len(matched_names) / len(expected_items)
+            average_similarity = sum(matched_names) / len(matched_names)
+            matched_records.append((coverage * 0.7 + average_similarity * 0.3, record))
+
+    # If more than one reference invoice fits, do not guess which supplier it is.
+    matched_records.sort(key=lambda item: item[0], reverse=True)
+    if len(matched_records) == 1:
+        return matched_records[0][1]
+    if len(matched_records) > 1 and matched_records[0][0] - matched_records[1][0] >= 0.08:
+        return matched_records[0][1]
     return None
+
+
+# Backward-compatible alias for existing callers/tests.
+def find_kalyan_reference_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    record = find_reference_invoice_from_rows(rows)
+    return record if record and record["vendor_name"] == "Kalyan Hardware" else None
 
 
 def build_reference_draft(
