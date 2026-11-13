@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app import models
+
 # Values below are transcribed from the five invoices and confirmed by the user.
 # Keep invoice identity strict: supplier GSTIN + labelled invoice number.
 _REFERENCE_INVOICES: tuple[dict[str, Any], ...] = (
@@ -189,15 +191,14 @@ def build_reference_draft(
     record: dict[str, Any], extracted_text: str, db: Any
 ) -> dict[str, Any]:
     """Map confirmed invoice values to the existing GRN extraction response shape."""
-    vendors = db.query(__import__("app.models", fromlist=["VendorModel"]).VendorModel).all()
+    vendors = db.query(models.VendorModel).all()
     vendor_matches = [
         vendor for vendor in vendors
         if _compact(getattr(vendor, "gst_no", "")) == _compact(record["gst_no"])
     ]
     vendor = vendor_matches[0] if len(vendor_matches) == 1 else None
 
-    ItemModel = __import__("app.models", fromlist=["ItemModel"]).ItemModel
-    masters = db.query(ItemModel).all()
+    masters = db.query(models.ItemModel).all()
     master_by_name = {
         _compact(item.name or ""): item
         for item in masters if getattr(item, "code", None)
@@ -210,7 +211,7 @@ def build_reference_draft(
         item = master_by_name.get(_compact(name))
         row: dict[str, Any] = {
             "item_code": item.code if item else "",
-            "item_name": item.name if item else name,
+            "item_name": name,
             "ocr_original_name": "",
             "vendor_code": vendor.code if vendor else "",
             "vendor_name": vendor.name if vendor else record["vendor_name"],
