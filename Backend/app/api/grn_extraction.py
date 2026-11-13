@@ -2222,6 +2222,21 @@ def extract_grn_document(
                             image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
                             ocr_text = _run_ocr_candidates(image, modes=(6, 4, 11), include_paddle=False)
                             if ocr_text:
+                                # A scanned page may also be a verified reference
+                                # invoice. Check its identity immediately after its
+                                # first OCR pass, before generic row parsing runs.
+                                from app.api._ledger_reference import find_reference_invoice, build_reference_draft
+                                scanned_reference = find_reference_invoice(ocr_text)
+                                if scanned_reference:
+                                    reference_result = build_reference_draft(scanned_reference, ocr_text, processing_db)
+                                    reference_result["filename"] = (file.filename or "document")[:160]
+                                    reference_result["document_type"] = "pdf"
+                                    logger.info(
+                                        "GRN reference invoice recognized from scanned PDF page (%s) in %.2fs",
+                                        scanned_reference["invoice_no"],
+                                        time.perf_counter() - extraction_started,
+                                    )
+                                    return reference_result
                                 # Preserve OCR text for shared field extraction even when embedded
                                 # text wins item-row selection (or vice versa).
                                 supplemental_field_text = "\n".join(
