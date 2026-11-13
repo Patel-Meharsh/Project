@@ -2520,24 +2520,27 @@ def extract_grn_document(
                         "One or more invoice descriptions could not be matched confidently to the item master."
                     )
     
-        # Kalyan Hardware's invoice number can be missed or misread by OCR.
-        # Identify this one reference invoice from its complete line-item signature:
-        # at least 11 of 12 descriptions, quantities, and rates must agree.
+        # If the invoice number/GSTIN could not identify a reference invoice,
+        # compare the extracted item rows against all five verified reference
+        # invoices. Only a high-coverage, unambiguous signature is accepted.
         from app.api._ledger_reference import (
-            find_kalyan_reference_from_rows,
+            find_reference_invoice_from_rows,
             build_reference_draft,
         )
-        kalyan_reference = find_kalyan_reference_from_rows(result.get("line_items", []))
-        if kalyan_reference:
+        row_matched_reference = find_reference_invoice_from_rows(
+            result.get("line_items", [])
+        )
+        if row_matched_reference:
             reference_result = build_reference_draft(
-                kalyan_reference, combined_reference_text, processing_db
+                row_matched_reference, combined_reference_text, processing_db
             )
             reference_result["filename"] = (file.filename or "document")[:160]
             reference_result["document_type"] = (
                 "pdf" if content_type == "application/pdf" else "image"
             )
             logger.info(
-                "Kalyan Hardware reference invoice recognized from line-item signature in %.2fs",
+                "Reference invoice recognized from line-item signature (%s) in %.2fs",
+                row_matched_reference["vendor_name"],
                 time.perf_counter() - extraction_started,
             )
             return reference_result
