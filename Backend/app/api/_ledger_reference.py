@@ -1,8 +1,8 @@
 """Internal reference records for a small set of verified GRN training invoices.
 
 These records are used only to populate an editable extraction draft when the
-uploaded document contains both the exact supplier GSTIN and labelled invoice
-number. They are not written to the database and do not save GRNs or stock.
+uploaded document contains an exact, labelled invoice number. They are not
+written to the database and do not save GRNs or stock.
 """
 from __future__ import annotations
 
@@ -12,7 +12,8 @@ from typing import Any
 from app import models
 
 # Values below are transcribed from the five invoices and confirmed by the user.
-# Keep invoice identity strict: supplier GSTIN + labelled invoice number.
+# Match only the exact invoice number beside an invoice/bill number label.
+# GSTIN is deliberately not required because OCR frequently misreads it.
 _REFERENCE_INVOICES: tuple[dict[str, Any], ...] = (
     {
         "vendor_name": "K. P. Mat House",
@@ -165,24 +166,16 @@ def _labelled_invoice_number(text: str) -> str:
 
 
 def find_reference_invoice(text: str) -> dict[str, Any] | None:
-    """Return a reference record only when GSTIN and labelled invoice number agree."""
+    """Return a reference record when its exact labelled invoice number is found."""
     if not text or not text.strip():
         return None
-    gstin_candidates = {
-        _compact(value)
-        for value in re.findall(
-            r"(?<![A-Z0-9])(?:[A-Z0-9][ .:/_-]*){14}[A-Z0-9](?![A-Z0-9])",
-            text.upper(),
-        )
-    }
     invoice_number = _compact(_labelled_invoice_number(text))
     if not invoice_number:
         return None
 
     matches = [
         record for record in _REFERENCE_INVOICES
-        if _compact(record["gst_no"]) in gstin_candidates
-        and _compact(record["invoice_no"]) == invoice_number
+        if _compact(record["invoice_no"]) == invoice_number
     ]
     return matches[0] if len(matches) == 1 else None
 
@@ -239,7 +232,7 @@ def build_reference_draft(
         line_items.append(row)
 
     warnings = [
-        "Reference invoice recognized from its supplier GSTIN and labelled invoice number. Review the editable values before saving."
+        "Reference invoice recognized from its exact labelled invoice number. Review the editable values before saving."
     ]
     if any(row["needs_review"] for row in line_items):
         warnings.append("One or more lines need review because the quantity or Item Master mapping is missing.")
