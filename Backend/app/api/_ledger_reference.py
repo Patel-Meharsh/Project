@@ -166,6 +166,47 @@ def _labelled_invoice_number(text: str) -> str:
     return ""
 
 
+def find_reference_invoice_by_identity(
+    invoice_no: str | None,
+    vendor_name: str | None = None,
+    gstin: str | None = None,
+    filename: str | None = None,
+) -> dict[str, Any] | None:
+    """Match an exact saved invoice number when vendor identity corroborates it.
+
+    The invoice ID may already have been extracted into a structured field even
+    when the PDF text layer/OCR does not preserve its printed label. A filename
+    is only a vendor hint; it is never sufficient without the exact invoice ID.
+    """
+    invoice_key = _compact(invoice_no or "")
+    if not invoice_key:
+        return None
+
+    candidates = [
+        record for record in _REFERENCE_INVOICES
+        if _compact(record["invoice_no"]) == invoice_key
+    ]
+    if len(candidates) != 1:
+        return None
+
+    record = candidates[0]
+    expected_vendor = _compact(record["vendor_name"])
+    expected_gstin = _compact(record.get("gst_no", ""))
+    if gstin and expected_gstin and _compact(gstin) == expected_gstin:
+        return record
+
+    filename_stem = re.sub(
+        r"(?i)\.(?:pdf|png|jpe?g)$", "", filename or ""
+    )
+    for candidate in (vendor_name, filename_stem):
+        candidate_key = _compact(candidate or "")
+        if candidate_key and (
+            candidate_key == expected_vendor or expected_vendor in candidate_key
+        ):
+            return record
+    return None
+
+
 def find_reference_invoice(text: str) -> dict[str, Any] | None:
     """Find a saved invoice by its exact number, even if OCR misses the label.
 
@@ -339,7 +380,7 @@ def build_reference_draft(
         line_items.append(row)
 
     warnings = [
-        "Reference invoice recognized from its exact labelled invoice number. Review the editable values before saving."
+        "Verified reference invoice matched using its invoice number and vendor identity. Stored invoice values are shown below; review before saving."
     ]
     if any(row["needs_review"] for row in line_items):
         warnings.append("One or more lines need review because the quantity or Item Master mapping is missing.")
