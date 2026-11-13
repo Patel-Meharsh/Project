@@ -263,9 +263,9 @@ def find_reference_invoice_from_unlabelled_text(
         gstin_confirmed = bool(expected_gstin and expected_gstin in compact_text)
         total_confirmed = False
         for line in lines[:80]:
-            if not re.search(r"^\\s*total\\b", line, re.I):
+            if not re.search(r"^\s*total\b", line, re.I):
                 continue
-            amounts = re.findall(r"(?<![A-Z0-9])\\d[\\d,]*\\.\\d{2}(?![A-Z0-9])", line)
+            amounts = re.findall(r"(?<![A-Z0-9])\d[\d,]*\.\d{2}(?![A-Z0-9])", line)
             if amounts:
                 try:
                     parsed_total = float(amounts[-1].replace(",", ""))
