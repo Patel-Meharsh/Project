@@ -1,7 +1,7 @@
 """Internal reference records for a small set of verified GRN training invoices.
 
-These records are used only to populate an editable extraction draft when the
-uploaded document contains an exact, labelled invoice number. They are not
+These records populate editable extraction drafts after an exact invoice ID is
+identified with the appropriate document/vendor corroboration. They are not
 written to the database and do not save GRNs or stock.
 """
 from __future__ import annotations
@@ -13,8 +13,9 @@ from typing import Any
 from app import models
 
 # Values below are transcribed from the five invoices and confirmed by the user.
-# Match only the exact invoice number beside an invoice/bill number label.
-# GSTIN is deliberately not required because OCR frequently misreads it.
+# PDF matching normally uses labelled IDs; K. P. Mat image matching has a
+# separate exact-ID path that also requires vendor-name or GSTIN corroboration.
+# GSTIN is not mandatory when the printed vendor name is independently present.
 _REFERENCE_INVOICES: tuple[dict[str, Any], ...] = (
     {
         "vendor_name": "K. P. Mat House",
