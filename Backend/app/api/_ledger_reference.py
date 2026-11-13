@@ -222,11 +222,25 @@ def find_reference_invoice_from_unlabelled_text(
         return None
 
     compact_text = _compact(text)
+    lines = (text or "").splitlines()
     vendor_name_key = _compact(vendor_name or "")
     for record in _REFERENCE_INVOICES:
         if record["vendor_name"] != "K. P. Mat House":
             continue
-        if _compact(record["invoice_no"]) not in compact_text:
+
+        invoice_key = _compact(record["invoice_no"])
+        # Check one OCR line at a time, allowing a line-wrapped ID to continue
+        # onto the immediately following line. Do not concatenate the whole
+        # document, which could accidentally join unrelated numbers together.
+        invoice_found = any(invoice_key in _compact(line) for line in lines)
+        if not invoice_found:
+            invoice_found = any(
+                lines[index].strip()
+                and lines[index + 1].strip()
+                and invoice_key in _compact(lines[index] + " " + lines[index + 1])
+                for index in range(len(lines) - 1)
+            )
+        if not invoice_found:
             continue
 
         expected_vendor = _compact(record["vendor_name"])
