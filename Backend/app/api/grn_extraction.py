@@ -2263,6 +2263,24 @@ def extract_grn_document(
             except Exception as exc:
                 raise HTTPException(400, "The image could not be processed. Try a clear PNG or JPG scan.") from exc
     
+        # Recognize a strongly identified reference invoice before ordinary row parsing.
+        # The reference path still returns an editable draft and never persists a GRN.
+        from app.api._ledger_reference import find_reference_invoice, build_reference_draft
+        combined_reference_text = "\n".join(
+            part for part in (text, supplemental_field_text) if part
+        )
+        reference_invoice = find_reference_invoice(combined_reference_text)
+        if reference_invoice:
+            reference_result = build_reference_draft(reference_invoice, combined_reference_text, processing_db)
+            reference_result["filename"] = (file.filename or "document")[:160]
+            reference_result["document_type"] = "pdf" if content_type == "application/pdf" else "image"
+            logger.info(
+                "GRN reference invoice recognized (%s) in %.2fs",
+                reference_invoice["invoice_no"],
+                time.perf_counter() - extraction_started,
+            )
+            return reference_result
+
         # Use the selected text for item parsing, but let the common field extractor
         # inspect every available text source. This prevents choosing a table-focused
         # candidate from accidentally discarding a better-read supplier/date header.
