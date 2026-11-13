@@ -2474,15 +2474,62 @@ def next_code(entity: str, prefix: Optional[str] = None, db: Session = Depends(g
     pfx = f"{clean_prefix}-"
     code_column = getattr(model_cls, pk_attr)
 
+    # Vendor numbering follows the highest vendor that actually exists.
+    # Gaps caused by deleting an older vendor are intentionally NOT reused.
+    # Old reservations above the next real vendor number must not push the
+    # sequence forward (for example, VND-030/VND-031 must not skip VND-029).
+    if entity == "vendor":
+        existing_values = db.query(code_column).filter(code_column.like(f"{pfx}%")).all()
+        existing_nums = []
+        for (value,) in existing_values:
+            text_value = str(value or "")
+            suffix = text_value[len(pfx):] if text_value.startswith(pfx) else ""
+            if suffix.isdigit():
+                existing_nums.append(int(suffix))
+
+        next_n = max(existing_nums, default=0) + 1
+        candidate = f"{pfx}{next_n:03d}"
+        stale_before = (datetime.datetime.utcnow() - datetime.timedelta(hours=24)).isoformat()
+
+        # Remove obsolete reservations beyond the next real vendor code.
+        # They may have been left by earlier versions of the allocator.
+        reservations = db.query(models.CodeReservationModel).filter(
+            models.CodeReservationModel.entity == entity,
+            models.CodeReservationModel.prefix == pfx,
+        ).all()
+        for reservation in reservations:
+            reserved_code = str(reservation.code or "")
+            suffix = reserved_code[len(pfx):] if reserved_code.startswith(pfx) else ""
+            if suffix.isdigit() and int(suffix) > next_n:
+                db.delete(reservation)
+            elif reserved_code == candidate and (
+                reservation.reserved_at is None or reservation.reserved_at < stale_before
+            ):
+                # Expire an abandoned allocation after 24 hours.
+                db.delete(reservation)
+        db.commit()
+
+        # Do not skip to a later number if another request currently holds
+        # this exact next code. The caller can retry after that vendor is saved.
+        try:
+            db.add(models.CodeReservationModel(
+                code=candidate,
+                entity=entity,
+                prefix=pfx,
+                reserved_at=datetime.datetime.utcnow().isoformat(),
+            ))
+            db.commit()
+            return {"code": candidate}
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(409, "The next vendor code is currently being allocated. Please retry.")
+
     # If every item using this prefix has been deleted, old reservations
     # must not keep the sequence stuck at its previous maximum. Clear only
     # orphaned item reservations when the prefix has no remaining Item rows.
-    # Other entity reservations remain monotonic; GRNs use their own save-time counter.
     if entity == "item":
         has_items = db.query(code_column).filter(code_column.like(f"{pfx}%")).first()
         if not has_items:
-            # Old reservations predate timestamps and can only be stale. New
-            # in-progress form reservations remain valid for 24 hours.
             stale_before = (datetime.datetime.utcnow() - datetime.timedelta(hours=24)).isoformat()
             db.query(models.CodeReservationModel).filter(
                 models.CodeReservationModel.entity == entity,
@@ -2492,8 +2539,8 @@ def next_code(entity: str, prefix: Optional[str] = None, db: Session = Depends(g
             ).delete(synchronize_session=False)
             db.commit()
 
-    # A reservation row is the serialization point: the primary key ensures
-    # that two requests racing for the same candidate cannot both receive it.
+    # For other entity types, existing reservations remain part of the
+    # sequence and the unique reservation row protects concurrent requests.
     for _attempt in range(20):
         existing_values = db.query(code_column).filter(code_column.like(f"{pfx}%")).all()
         reserved_values = db.query(models.CodeReservationModel.code).filter(
@@ -2515,8 +2562,6 @@ def next_code(entity: str, prefix: Optional[str] = None, db: Session = Depends(g
             db.commit()
             return {"code": candidate}
         except IntegrityError:
-            # Another request reserved the same code first. Roll back and
-            # recalculate from the now-persisted reservation.
             db.rollback()
     raise HTTPException(503, "Could not allocate a unique code; please retry")
 
