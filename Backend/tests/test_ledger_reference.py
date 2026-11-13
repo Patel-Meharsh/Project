@@ -6,13 +6,13 @@ from app.api._ledger_reference import find_reference_invoice
 class ReferenceInvoiceMatchTests(unittest.TestCase):
     def test_each_confirmed_invoice_matches_by_labelled_number_without_gstin(self):
         cases = [
-            ("24AAEFK4814G1ZM", "GST/7518/26-27", 12),
-            ("24AKKPB1553H1ZJ", "SHE/0117/26-27", 5),
-            ("24BFWPS4186R2Z3", "ECS/367/26-27", 1),
-            ("24ACYPP9230H1Z2", "468", 12),
-            ("24EOTPR7394K1ZS", "IDI26-27I0702", 24),
+            ("GST/7518/26-27", 12),
+            ("SHE/0117/26-27", 5),
+            ("ECS/367/26-27", 1),
+            ("468", 12),
+            ("IDI26-27I0702", 24),
         ]
-        for gstin, invoice_no, expected_rows in cases:
+        for invoice_no, expected_rows in cases:
             with self.subTest(invoice_no=invoice_no):
                 document_text = (
                     f"Invoice No: {invoice_no}\n"
