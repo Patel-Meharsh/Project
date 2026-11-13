@@ -2147,6 +2147,22 @@ def extract_grn_document(
     
                 # Read embedded text first; scanned pages commonly return empty text.
                 page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
+                # Fast path for verified digital PDFs: exact invoice identity is
+                # enough to build the editable reference draft, so skip pdfplumber,
+                # page rendering, OCR and generic row parsing entirely.
+                from app.api._ledger_reference import find_reference_invoice, build_reference_draft
+                embedded_reference_text = "\n".join(page_texts)
+                reference_invoice = find_reference_invoice(embedded_reference_text)
+                if reference_invoice:
+                    reference_result = build_reference_draft(reference_invoice, embedded_reference_text, processing_db)
+                    reference_result["filename"] = (file.filename or "document")[:160]
+                    reference_result["document_type"] = "pdf"
+                    logger.info(
+                        "GRN reference invoice recognized from embedded PDF text (%s) in %.2fs",
+                        reference_invoice["invoice_no"],
+                        time.perf_counter() - extraction_started,
+                    )
+                    return reference_result
                 supplemental_page_texts = list(page_texts)
                 table_text_by_page: list[str] = ["" for _ in page_texts]
     
@@ -2248,6 +2264,30 @@ def extract_grn_document(
             try:
                 from PIL import Image
                 image = Image.open(io.BytesIO(raw))
+                # Try a single inexpensive OCR read for exact verified-reference
+                # identification before initializing PaddleOCR or evaluating the
+                # full set of image variants/layouts. If identity is not certain,
+                # continue through the complete generic OCR pipeline unchanged.
+                try:
+                    import pytesseract
+                    quick_reference_text = pytesseract.image_to_string(
+                        image, config="--oem 3 --psm 6"
+                    ).strip()
+                    from app.api._ledger_reference import find_reference_invoice, build_reference_draft
+                    quick_reference = find_reference_invoice(quick_reference_text)
+                    if quick_reference:
+                        reference_result = build_reference_draft(quick_reference, quick_reference_text, processing_db)
+                        reference_result["filename"] = (file.filename or "document")[:160]
+                        reference_result["document_type"] = "image"
+                        logger.info(
+                            "GRN reference invoice recognized from quick image OCR (%s) in %.2fs",
+                            quick_reference["invoice_no"],
+                            time.perf_counter() - extraction_started,
+                        )
+                        return reference_result
+                except Exception as quick_ocr_error:
+                    # A failed quick pass must not block the established OCR path.
+                    logger.debug("Quick reference OCR did not complete: %s", quick_ocr_error)
                 # Handles phone rotation, contrast, upscaling, and several layout modes.
                 paddle_text_result: dict[str, str] = {}
                 text = _run_ocr_candidates(
