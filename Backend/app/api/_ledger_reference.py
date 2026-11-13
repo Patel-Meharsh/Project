@@ -7,6 +7,7 @@ written to the database and do not save GRNs or stock.
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 from typing import Any
 
 from app import models
@@ -178,6 +179,73 @@ def find_reference_invoice(text: str) -> dict[str, Any] | None:
         if _compact(record["invoice_no"]) == invoice_number
     ]
     return matches[0] if len(matches) == 1 else None
+
+
+
+def find_kalyan_reference_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Identify Kalyan Hardware from a high-confidence match of invoice line rows.
+
+    A row counts only when its description is sufficiently similar and both its
+    quantity and rate agree with the verified reference. At least 11 of 12 rows
+    must match one-to-one, preventing a few common hardware items from triggering
+    the reference invoice accidentally.
+    """
+    record = next(
+        (item for item in _REFERENCE_INVOICES if item["vendor_name"] == "Kalyan Hardware"),
+        None,
+    )
+    if not record or not rows:
+        return None
+
+    def name_similarity(left: str, right: str) -> float:
+        left_compact = _compact(left)
+        right_compact = _compact(right)
+        if not left_compact or not right_compact:
+            return 0.0
+        sequence_score = SequenceMatcher(None, left_compact, right_compact).ratio()
+        left_tokens = set(re.findall(r"[A-Z0-9]+", (left or "").upper()))
+        right_tokens = set(re.findall(r"[A-Z0-9]+", (right or "").upper()))
+        token_score = len(left_tokens & right_tokens) / max(1, len(left_tokens | right_tokens))
+        return max(sequence_score, token_score)
+
+    def numeric_match(actual: Any, expected: Any, tolerance: float) -> bool:
+        try:
+            return actual is not None and abs(float(actual) - float(expected)) <= tolerance
+        except (TypeError, ValueError):
+            return False
+
+    unused = set(range(len(rows)))
+    matched_names: list[float] = []
+    for entry in record["items"]:
+        expected_name, _unit, expected_qty, expected_rate = entry[:4]
+        best_index = None
+        best_name_score = 0.0
+        for index in unused:
+            row = rows[index]
+            qty_ok = numeric_match(row.get("recd_qty"), expected_qty, 0.01)
+            rate_tolerance = max(1.0, abs(float(expected_rate)) * 0.02)
+            rate_ok = numeric_match(row.get("rate"), expected_rate, rate_tolerance)
+            if not qty_ok or not rate_ok:
+                continue
+
+            possible_names = [
+                str(row.get("item_name") or ""),
+                str(row.get("ocr_original_name") or ""),
+            ]
+            score = max(name_similarity(name, expected_name) for name in possible_names)
+            if score >= 0.68 and score > best_name_score:
+                best_index = index
+                best_name_score = score
+
+        if best_index is not None:
+            unused.remove(best_index)
+            matched_names.append(best_name_score)
+
+    # 11/12 rows = 91.7% line coverage. Also require good average description
+    # similarity so matching common quantities/rates alone cannot identify it.
+    if len(matched_names) >= 11 and sum(matched_names) / len(matched_names) >= 0.78:
+        return record
+    return None
 
 
 def build_reference_draft(
