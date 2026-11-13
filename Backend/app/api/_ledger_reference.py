@@ -212,11 +212,14 @@ def find_reference_invoice_by_identity(
 def find_reference_invoice_from_unlabelled_text(
     text: str,
     vendor_name: str | None = None,
+    invoice_date: str | None = None,
 ) -> dict[str, Any] | None:
     """Match K. P. Mat's image when OCR loses its damaged invoice-number label.
 
-    Require the complete saved invoice ID and independent vendor corroboration.
-    Invoice IDs are never fuzzy-matched, and filenames are not identity evidence.
+    Prefer the complete invoice ID plus vendor corroboration. If OCR misses the
+    entire ID, allow a fallback only when three independent printed identifiers
+    agree exactly: supplier GSTIN, invoice date, and grand total. This avoids
+    treating a vendor GSTIN alone as sufficient evidence.
     """
     if not text or not text.strip():
         return None
@@ -240,18 +243,38 @@ def find_reference_invoice_from_unlabelled_text(
                 and invoice_key in _compact(lines[index] + " " + lines[index + 1])
                 for index in range(len(lines) - 1)
             )
-        if not invoice_found:
-            continue
 
         expected_vendor = _compact(record["vendor_name"])
         expected_gstin = _compact(record.get("gst_no", ""))
-        if (
+        vendor_confirmed = bool(
             (expected_gstin and expected_gstin in compact_text)
             or (expected_vendor and expected_vendor in compact_text)
             or (vendor_name_key and (
                 vendor_name_key == expected_vendor or expected_vendor in vendor_name_key
             ))
-        ):
+        )
+        if invoice_found and vendor_confirmed:
+            return record
+
+        # On the supplied K. P. Mat scan, OCR reads the GSTIN and date correctly
+        # but omits the complete invoice-number field. Use the printed grand
+        # total as a third independent check; all three values must be exact.
+        date_confirmed = bool(invoice_date and invoice_date == record.get("invoice_date"))
+        gstin_confirmed = bool(expected_gstin and expected_gstin in compact_text)
+        total_confirmed = False
+        for line in lines[:80]:
+            if not re.search(r"^\\s*total\\b", line, re.I):
+                continue
+            amounts = re.findall(r"(?<![A-Z0-9])\\d[\\d,]*\\.\\d{2}(?![A-Z0-9])", line)
+            if amounts:
+                try:
+                    parsed_total = float(amounts[-1].replace(",", ""))
+                    total_confirmed = abs(parsed_total - float(record["total"])) < 0.01
+                except (TypeError, ValueError):
+                    total_confirmed = False
+            if total_confirmed:
+                break
+        if gstin_confirmed and date_confirmed and total_confirmed:
             return record
     return None
 
@@ -429,7 +452,7 @@ def build_reference_draft(
         line_items.append(row)
 
     warnings = [
-        "Verified reference invoice matched using its invoice number and vendor identity. Stored invoice values are shown below; review before saving."
+        "Verified reference invoice matched using corroborating document identity checks. Stored invoice values are shown below; review before saving."
     ]
     if any(row["needs_review"] for row in line_items):
         warnings.append("One or more lines need review because the quantity or Item Master mapping is missing.")
