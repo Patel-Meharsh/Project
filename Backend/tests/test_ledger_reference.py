@@ -87,6 +87,22 @@ class ReferenceInvoiceMatchTests(unittest.TestCase):
         rows[1]["rate"] = 999
         self.assertIsNone(find_reference_invoice_from_rows(rows))
 
+    def test_matches_distinctive_saved_number_when_ocr_misses_the_label(self):
+        cases = [
+            ("Header\nGST / 7518 / 26-27\nBuyer details", "K. P. Mat House"),
+            ("SHE/0117/26-27 08-05-2026", "Shri Hari Electrical"),
+            ("ECS/367/26-27", "Eco Care Solutions"),
+            ("IDI26-27I0702", "Ideal Office Needs"),
+        ]
+        for document_text, expected_vendor in cases:
+            with self.subTest(vendor=expected_vendor):
+                matched = find_reference_invoice(document_text)
+                self.assertIsNotNone(matched)
+                self.assertEqual(matched["vendor_name"], expected_vendor)
+
+    def test_short_kalyan_number_still_requires_a_number_label(self):
+        self.assertIsNone(find_reference_invoice("Amount 468\nTotal 1810"))
+
     def test_does_not_match_without_a_labelled_invoice_number(self):
         document_text = "GST/7518/26-27"
         self.assertIsNone(find_reference_invoice(document_text))
