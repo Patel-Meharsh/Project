@@ -85,7 +85,7 @@ class ReferenceInvoiceMatchTests(unittest.TestCase):
         ]
         rows[0]["recd_qty"] = 99
         rows[1]["rate"] = 999
-        self.assertIsNone(find_kalyan_reference_from_rows(rows))
+        self.assertIsNone(find_reference_invoice_from_rows(rows))
 
     def test_does_not_match_without_a_labelled_invoice_number(self):
         document_text = "GST/7518/26-27"
