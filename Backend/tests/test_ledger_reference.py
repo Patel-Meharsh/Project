@@ -2,7 +2,7 @@ import unittest
 
 from app.api._ledger_reference import (
     find_reference_invoice,
-    find_kalyan_reference_from_rows,
+    find_reference_invoice_from_rows,
 )
 
 
@@ -47,9 +47,22 @@ class ReferenceInvoiceMatchTests(unittest.TestCase):
         ]
         rows[0]["item_name"] = "SS CATORI PLATE OCR"
         self.assertEqual(
-            find_kalyan_reference_from_rows(rows)["vendor_name"],
+            find_reference_invoice_from_rows(rows)["vendor_name"],
             "Kalyan Hardware",
         )
+
+    def test_all_five_reference_invoices_match_their_line_signatures(self):
+        from app.api._ledger_reference import _REFERENCE_INVOICES
+
+        for record in _REFERENCE_INVOICES:
+            with self.subTest(vendor=record["vendor_name"]):
+                rows = [
+                    {"item_name": entry[0], "recd_qty": entry[2], "rate": entry[3]}
+                    for entry in record["items"]
+                ]
+                matched = find_reference_invoice_from_rows(rows)
+                self.assertIsNotNone(matched)
+                self.assertEqual(matched["vendor_name"], record["vendor_name"])
 
     def test_kalyan_does_not_match_when_only_ten_rows_agree(self):
         reference_rows = [
