@@ -2335,6 +2335,7 @@ def extract_grn_document(
             image_reference = find_reference_invoice_from_unlabelled_text(
                 combined_header_text,
                 vendor_name=keyword_fields.get("vendor_name"),
+                invoice_date=keyword_fields.get("grn_date"),
             )
             if image_reference:
                 reference_result = build_reference_draft(
