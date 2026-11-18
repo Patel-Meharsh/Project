@@ -11,6 +11,7 @@ from app.document_engine import (
     choose_rate_amount,
     extract_table_body_lines,
     normalize_ocr_numeric_text,
+    merge_invoice_continuation_lines,
 )
 from app.document_engine.ocr import _ocr_quality_score
 from app.document_engine.pdf import extract_pdf_text_sources
@@ -96,6 +97,21 @@ class DocumentEngineTests(unittest.TestCase):
         rows = extract_table_body_lines(text)
         self.assertEqual(len(rows), 1)
         self.assertIn("Soap", rows[0])
+
+    def test_wrapped_description_stays_with_the_previous_numbered_row(self):
+        lines = [
+            "5 Godrej AerSpray 33074900 18% 5 BTL 76.27 BTL 381.35",
+            "Mogra",
+            "6 Godrej AerPocket 33074900 18% 5 NO 50.00 NO 250.00",
+            "Lemon",
+            "7 Soft Broom Special 96031000 0% 1 NO 49.00 NO 49.00",
+        ]
+        merged = merge_invoice_continuation_lines(lines, r"(?:BTL|PKT|NO)")
+        self.assertIn("Mogra", merged[0])
+        self.assertIn("Godrej AerPocket", merged[1])
+        self.assertIn("Lemon", merged[1])
+        self.assertIn("Soft Broom", merged[2])
+        self.assertEqual(len(merged), 3)
 
     def test_numeric_ocr_cleanup_and_arithmetic_pair_selection(self):
         self.assertEqual(normalize_ocr_numeric_text("49.S0 29:00 1O5.00"), "49.50 29.00 105.00")
