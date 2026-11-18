@@ -121,7 +121,7 @@ def merge_invoice_continuation_lines(
 def normalize_ocr_numeric_text(value: str) -> str:
     """Repair common OCR substitutions only inside digit-bounded numeric tokens."""
     value = str(value or "")
-    value = re.sub(r"(?<=\d)[sS](?=\d)", "5", value)
+    value = re.sub(r"(?<=[\d.])[sS](?=\d)", "5", value)
     value = re.sub(r"(?<=\d)[oO](?=\d)", "0", value)
     # OCR often reads a decimal point as a colon or comma in prices.
     value = re.sub(r"(?<=\d)[:,](?=\d{2}(?:\D|$))", ".", value)
