@@ -8,6 +8,9 @@ from app.document_engine import (
     rank_candidates,
     rows_to_text,
     score_line_item_rows,
+    choose_rate_amount,
+    extract_table_body_lines,
+    normalize_ocr_numeric_text,
 )
 from app.document_engine.ocr import _ocr_quality_score
 from app.document_engine.pdf import extract_pdf_text_sources
@@ -67,6 +70,38 @@ class DocumentEngineTests(unittest.TestCase):
             "LED Tube Light 2 PCS 100.00 200.00"
         )
         self.assertGreater(_ocr_quality_score(text), _ocr_quality_score("### ???"))
+
+    def test_table_region_stops_before_tax_and_footer(self):
+        text = (
+            "Supplier: Example\n"
+            "Sl No Description of Goods HSN/SAC GST Quantity Rate Amount\n"
+            "1 LED Tube 9405 18% 2 PCS 50.00 100.00\n"
+            "2 Switch 8536 18% 1 PCS 30.00 30.00\n"
+            "Subtotal 130.00\n"
+            "CGST 11.70\n"
+            "Bank Details HDFC Bank\n"
+            "Drug License No GJ-12345"
+        )
+        rows = extract_table_body_lines(text)
+        self.assertEqual(len(rows), 2)
+        self.assertIn("LED Tube", rows[0])
+        self.assertNotIn("Bank Details", "\\n".join(rows))
+
+    def test_table_header_with_missing_first_character_is_detected(self):
+        text = (
+            "escription of Goods HSN/SAC GST Quantity Rate Amount\n"
+            "1 Soap 3924 18% 2 NO 15.00 30.00\n"
+            "Total 30.00"
+        )
+        rows = extract_table_body_lines(text)
+        self.assertEqual(len(rows), 1)
+        self.assertIn("Soap", rows[0])
+
+    def test_numeric_ocr_cleanup_and_arithmetic_pair_selection(self):
+        self.assertEqual(normalize_ocr_numeric_text("49.S0 29:00 1O5.00"), "49.50 29.00 105.00")
+        self.assertEqual(choose_rate_amount([2.0, 29.0], 1.0), (29.0, 29.0))
+        # Preserve the OCR evidence if arithmetic cannot distinguish a candidate.
+        self.assertEqual(choose_rate_amount([50.0, 280.0], 5.0), (50.0, 280.0))
 
     def test_invalid_pdf_is_reported_as_a_client_error(self):
         with self.assertRaises(HTTPException) as raised:
