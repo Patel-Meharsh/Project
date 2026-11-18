@@ -300,6 +300,25 @@ def _paddleocr_candidate(image) -> dict[str, Any]:
         return {"text": "", "confidence": 0.0, "word_count": 0, "engine": "paddleocr"}
 
 
+def _tesseract_data_to_text(data: dict[str, Any]) -> str:
+    """Rebuild readable text from one Tesseract TSV result, preserving visual lines."""
+    groups: dict[tuple[Any, Any, Any], list[tuple[int, str]]] = {}
+    words = data.get("text", [])
+    for index, raw_word in enumerate(words):
+        word = str(raw_word or "").strip()
+        if not word:
+            continue
+        block = data.get("block_num", [0] * len(words))[index]
+        paragraph = data.get("par_num", [0] * len(words))[index]
+        line = data.get("line_num", [0] * len(words))[index]
+        left = data.get("left", [0] * len(words))[index]
+        groups.setdefault((block, paragraph, line), []).append((int(left), word))
+    return "\n".join(
+        " ".join(word for _, word in sorted(line_words))
+        for line_words in groups.values()
+    ).strip()
+
+
 def _tesseract_box_candidate(image, mode: int = 6) -> dict[str, Any]:
     """Reconstruct Tesseract words in visual order and retain TSV confidence."""
     try:
@@ -343,7 +362,7 @@ def _ocr_candidate_score(candidate: dict[str, Any]) -> float:
     return _ocr_quality_score(text_value) + confidence * 0.15
 
 
-def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle: bool = True, paddle_text_out: dict[str, str] | None = None, preprocessed_variants: list[Any] | None = None) -> str:
+def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle: bool = True, paddle_text_out: dict[str, str] | None = None, preprocessed_variants: list[Any] | None = None, ocr_data_out: dict[str, Any] | None = None) -> str:
     """Run a fast OCR pass first, escalating only when the result is weak."""
     import pytesseract
 
@@ -351,11 +370,22 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle:
     fast_variant = variants[0]
     candidates: list[dict[str, Any]] = []
 
-    def add_tesseract_candidate(variant, mode: int, variant_index: int = 0):
+    def add_tesseract_candidate(
+        variant, mode: int, variant_index: int = 0, capture_data: bool = False
+    ):
         try:
-            candidate_text = pytesseract.image_to_string(
-                variant, config=f"--oem 3 --psm {mode}"
-            ).strip()
+            if capture_data:
+                from pytesseract import Output
+                data = pytesseract.image_to_data(
+                    variant, config=f"--oem 3 --psm {mode}", output_type=Output.DICT
+                )
+                candidate_text = _tesseract_data_to_text(data)
+                if ocr_data_out is not None:
+                    ocr_data_out["data"] = data
+            else:
+                candidate_text = pytesseract.image_to_string(
+                    variant, config=f"--oem 3 --psm {mode}"
+                ).strip()
         except Exception:
             return
         if candidate_text:
@@ -371,8 +401,11 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle:
                 "score": _ocr_quality_score(candidate_text),
             })
 
-    # One inexpensive first pass is enough for most clean scans.
-    add_tesseract_candidate(fast_variant, 6)
+    # One TSV pass supplies both readable text and word coordinates. The table
+    # parser can reuse this result instead of recognizing the same page again.
+    if ocr_data_out is not None:
+        ocr_data_out["data"] = None
+    add_tesseract_candidate(fast_variant, 6, capture_data=True)
     if paddle_text_out is not None:
         paddle_text_out["text"] = ""
 
@@ -451,6 +484,7 @@ def run_ocr_candidates(
     include_paddle: bool = True,
     paddle_text_out: dict[str, str] | None = None,
     preprocessed_variants: list[Any] | None = None,
+    ocr_data_out: dict[str, Any] | None = None,
 ) -> str:
     """Public document-engine entry point for local OCR candidate selection."""
     return _run_ocr_candidates(
@@ -459,4 +493,5 @@ def run_ocr_candidates(
         include_paddle=include_paddle,
         paddle_text_out=paddle_text_out,
         preprocessed_variants=preprocessed_variants,
+        ocr_data_out=ocr_data_out,
     )
