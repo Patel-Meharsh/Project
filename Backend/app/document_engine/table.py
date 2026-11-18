@@ -35,9 +35,14 @@ def extract_table_body_lines(text: str) -> list[str]:
     for index in range(len(lines)):
         window = " ".join(lines[index:index + 2])
         if _HEADER_WORDS.search(window) and _QTY_WORDS.search(window) and _RATE_WORDS.search(window):
-            start = index + (1 if index + 1 < len(lines) and not (
-                _QTY_WORDS.search(lines[index]) and _RATE_WORDS.search(lines[index])
-            ) else 0)
+            # Exclude the header itself. If quantity/rate headings are on
+            # the following OCR line, exclude that continuation too.
+            start = index + 1
+            if not (_QTY_WORDS.search(lines[index]) and _RATE_WORDS.search(lines[index])):
+                if index + 1 < len(lines) and (
+                    _QTY_WORDS.search(lines[index + 1]) or _RATE_WORDS.search(lines[index + 1])
+                ):
+                    start = index + 2
             header_found = True
             break
 
