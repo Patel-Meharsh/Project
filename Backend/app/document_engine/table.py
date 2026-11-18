@@ -85,8 +85,15 @@ def merge_invoice_continuation_lines(
     for index, line in enumerate(source):
         current_has_values = has_quantity_unit(line)
         previous_has_values = has_quantity_unit(merged[-1]) if merged else False
+        next_index = index + 1
+        while (
+            next_index < len(source)
+            and next_index - index <= 3
+            and not re.search(r"[A-Za-z]{2,}", source[next_index])
+        ):
+            next_index += 1
         next_is_new_item = (
-            index + 1 < len(source) and starts_numbered_item(source[index + 1])
+            next_index < len(source) and starts_numbered_item(source[next_index])
         )
 
         if merged and previous_has_values and not current_has_values and next_is_new_item:
