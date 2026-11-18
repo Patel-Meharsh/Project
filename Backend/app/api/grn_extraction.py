@@ -20,16 +20,14 @@ from app.database import get_db, SessionLocal
 from app import models
 from app.api.routes import _get_current_user
 from app.document_engine import (
+    extract_pdf_text_sources,
     line_item_warnings,
     normalize_alphanumeric,
+    prepare_ocr_variants,
     rank_candidates,
+    run_ocr_candidates,
     score_line_item_rows,
 )
-from app.document_engine.ocr import (
-    _prepare_ocr_variants,
-    _run_ocr_candidates,
-)
-from app.document_engine.pdf import extract_pdf_text_sources
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -941,7 +939,7 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
     # Start with the normalized grayscale image. If its table rows are
     # incomplete or inconsistent, continue through sharpened, thresholded and
     # adaptive variants. A clean multi-row result still exits early below.
-    for variant_index, variant in enumerate(_prepare_ocr_variants(image)):
+    for variant_index, variant in enumerate(prepare_ocr_variants(image)):
         for psm in (6, 4, 11):
             try:
                 data = pytesseract.image_to_data(
@@ -1759,7 +1757,7 @@ def extract_grn_document(
                             if pixmap.width * pixmap.height > 25_000_000:
                                 raise HTTPException(413, "A rendered PDF page is too large to process.")
                             image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
-                            ocr_text = _run_ocr_candidates(image, modes=(6, 4, 11), include_paddle=False)
+                            ocr_text = run_ocr_candidates(image, modes=(6, 4, 11), include_paddle=False)
                             if ocr_text:
                                 # Preserve OCR text for shared field extraction even when embedded
                                 # text wins item-row selection (or vice versa).
@@ -1804,7 +1802,7 @@ def extract_grn_document(
                 from PIL import Image
                 image = Image.open(io.BytesIO(raw))
                 # Run the local image OCR pipeline with rotation, contrast, upscaling, and multiple layout modes.
-                text = _run_ocr_candidates(
+                text = run_ocr_candidates(
                     image, modes=(6, 4, 11), paddle_text_out=paddle_text_result
                 )
             except HTTPException:
