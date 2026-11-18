@@ -6,7 +6,7 @@ from typing import Iterable
 
 
 _HEADER_WORDS = re.compile(
-    r"\b(?:description\s+of\s+goods|description|particulars|item\s+description|"
+    r"\b(?:d?escription\s+of\s+goods|d?escription|particulars|item\s+description|"
     r"product\s+description|goods\s+details)\b", re.I
 )
 _QTY_WORDS = re.compile(r"\b(?:qty|quantity|qnty|billed\s+qty)\b", re.I)
