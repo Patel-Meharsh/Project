@@ -72,6 +72,17 @@ class DocumentEngineTests(unittest.TestCase):
         )
         self.assertGreater(_ocr_quality_score(text), _ocr_quality_score("### ???"))
 
+    def test_row_quality_penalizes_footer_text_as_a_product(self):
+        real = [{
+            "item_name": "Toilet Brush", "recd_qty": 1,
+            "rate": 29, "line_amount": 29,
+        }]
+        footer = [{
+            "item_name": "HDFC Bank Account IFSC Branch", "recd_qty": 1,
+            "rate": 29, "line_amount": 29,
+        }]
+        self.assertGreater(score_line_item_rows(real), score_line_item_rows(footer))
+
     def test_table_region_stops_before_tax_and_footer(self):
         text = (
             "Supplier: Example\n"
