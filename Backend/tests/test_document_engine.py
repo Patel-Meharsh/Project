@@ -13,7 +13,7 @@ from app.document_engine import (
     normalize_ocr_numeric_text,
     merge_invoice_continuation_lines,
 )
-from app.document_engine.ocr import _ocr_quality_score
+from app.document_engine.ocr import _ocr_quality_score, _tesseract_data_to_text
 from app.document_engine.pdf import extract_pdf_text_sources
 from fastapi import HTTPException
 
@@ -63,6 +63,16 @@ class DocumentEngineTests(unittest.TestCase):
         good = [{"item_name": "LED Light", "recd_qty": 2, "rate": 50, "line_amount": 100}]
         bad = [{"item_name": "LED Light", "recd_qty": 2, "rate": 50, "line_amount": 140}]
         self.assertGreater(score_line_item_rows(good), score_line_item_rows(bad))
+
+    def test_tesseract_tsv_text_reconstruction_preserves_visual_lines(self):
+        data = {
+            "text": ["LED", "Tube", "2", "PCS"],
+            "block_num": [1, 1, 1, 1],
+            "par_num": [1, 1, 1, 1],
+            "line_num": [1, 1, 2, 2],
+            "left": [10, 40, 10, 20],
+        }
+        self.assertEqual(_tesseract_data_to_text(data), "LED Tube\\n2 PCS")
 
     def test_invoice_ocr_quality_rewards_readable_header_and_item_rows(self):
         text = (
