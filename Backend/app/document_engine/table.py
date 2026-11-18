@@ -70,17 +70,17 @@ def merge_invoice_continuation_lines(
     row (for example, a product variant such as "Mogra" or "Lemon"). A
     description-only line immediately before its numeric row is joined forward.
     """
-    source = [re.sub(r"\\s+", " ", str(line)).strip() for line in lines if str(line).strip()]
+    source = [re.sub(r"\s+", " ", str(line)).strip() for line in lines if str(line).strip()]
     merged: list[str] = []
 
     def has_quantity_unit(line: str) -> bool:
         return bool(re.search(
-            rf"(?<![A-Za-z])\\d[\\d,]*(?:\\.\\d{{1,2}})?\\s*{unit_pattern}\\b",
+            rf"(?<![A-Za-z])\d[\d,]*(?:\.\d{{1,2}})?\s*{unit_pattern}\b",
             line, re.I,
         ))
 
     def starts_numbered_item(line: str) -> bool:
-        return bool(re.match(r"^\\s*[\\W_]*\\d{1,3}\\s*[.)-]?\\s+[A-Za-z]", line))
+        return bool(re.match(r"^\s*[\W_]*\d{1,3}\s*[.)-]?\s+[A-Za-z]", line))
 
     for index, line in enumerate(source):
         current_has_values = has_quantity_unit(line)
@@ -89,21 +89,17 @@ def merge_invoice_continuation_lines(
             index + 1 < len(source) and starts_numbered_item(source[index + 1])
         )
 
-        # A short description after a complete row and before the next serial
-        # is a continuation of the previous product, not the next product.
         if merged and previous_has_values and not current_has_values and next_is_new_item:
             merged[-1] = f"{merged[-1]} {line}".strip()
             continue
 
-        # Conversely, when the description precedes its numeric cells, join it
-        # forward as the legacy parser did.
         if merged and current_has_values and not previous_has_values:
             previous = merged[-1]
             if (
                 re.search(r"[A-Za-z]", previous)
                 and not re.search(
-                    r"\\b(?:invoice|gstin|cgst|sgst|igst|total|round off|"
-                    r"description|quantity|amount|dated|vendor|supplier|party|tax invoice)\\b",
+                    r"\b(?:invoice|gstin|cgst|sgst|igst|total|round off|"
+                    r"description|quantity|amount|dated|vendor|supplier|party|tax invoice)\b",
                     previous, re.I,
                 )
             ):
