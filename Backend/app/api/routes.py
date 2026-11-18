@@ -1711,10 +1711,21 @@ def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
             purchase_order = db.query(models.PurchaseOrderModel).filter_by(po_no=affected_po_no).first()
             if not purchase_order:
                 continue
-            received_total = sum(
-                float(receipt.accepted_qty or 0)
-                for receipt in db.query(models.GRNModel).filter_by(po_no=affected_po_no).all()
-            )
+            received_total = 0.0
+            for receipt in db.query(models.GRNModel).filter_by(po_no=affected_po_no).all():
+                try:
+                    receipt_lines = _json.loads(receipt.line_items) if receipt.line_items else []
+                except Exception:
+                    receipt_lines = []
+                if receipt_lines:
+                    received_total += sum(
+                        float(line.get("accepted_qty") or 0)
+                        for line in receipt_lines
+                        if not line.get("is_charge_line")
+                    )
+                else:
+                    # Legacy single-item GRNs have no line_items JSON.
+                    received_total += float(receipt.accepted_qty or 0)
             purchase_order.received_qty = received_total
             purchase_order.balance_qty = max(0.0, float(purchase_order.qty_ordered or 0) - received_total)
             if purchase_order.balance_qty == 0:
