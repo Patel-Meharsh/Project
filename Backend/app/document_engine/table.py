@@ -74,10 +74,20 @@ def merge_invoice_continuation_lines(
     merged: list[str] = []
 
     def has_quantity_unit(line: str) -> bool:
-        return bool(re.search(
+        pattern = re.compile(
             rf"(?<![A-Za-z])\d[\d,]*(?:\.\d{{1,2}})?\s*{unit_pattern}\b",
-            line, re.I,
-        ))
+            re.I,
+        )
+        # A product specification such as "15 W LED" is not a billed
+        # quantity. Require the candidate unit to be followed by rate/amount
+        # evidence, and inspect rightmost matches first to prefer the Qty column.
+        for match in reversed(list(pattern.finditer(line))):
+            trailing_numbers = re.findall(
+                r"\d[\d,]*(?:\.\d{1,2})?", line[match.end():]
+            )
+            if len(trailing_numbers) >= 2:
+                return True
+        return False
 
     def starts_numbered_item(line: str) -> bool:
         return bool(re.match(r"^\s*[\W_]*\d{1,3}\s*[.)-]?\s+[A-Za-z]", line))
