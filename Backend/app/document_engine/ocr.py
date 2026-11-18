@@ -343,11 +343,11 @@ def _ocr_candidate_score(candidate: dict[str, Any]) -> float:
     return _ocr_quality_score(text_value) + confidence * 0.15
 
 
-def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle: bool = True, paddle_text_out: dict[str, str] | None = None) -> str:
+def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle: bool = True, paddle_text_out: dict[str, str] | None = None, preprocessed_variants: list[Any] | None = None) -> str:
     """Run a fast OCR pass first, escalating only when the result is weak."""
     import pytesseract
 
-    variants = _prepare_ocr_variants(image)
+    variants = preprocessed_variants or _prepare_ocr_variants(image)
     fast_variant = variants[0]
     candidates: list[dict[str, Any]] = []
 
@@ -441,6 +441,7 @@ def run_ocr_candidates(
     modes: tuple[int, ...] = (6, 11),
     include_paddle: bool = True,
     paddle_text_out: dict[str, str] | None = None,
+    preprocessed_variants: list[Any] | None = None,
 ) -> str:
     """Public document-engine entry point for local OCR candidate selection."""
     return _run_ocr_candidates(
@@ -448,4 +449,5 @@ def run_ocr_candidates(
         modes=modes,
         include_paddle=include_paddle,
         paddle_text_out=paddle_text_out,
+        preprocessed_variants=preprocessed_variants,
     )
