@@ -13,7 +13,7 @@ _QTY_WORDS = re.compile(r"\b(?:qty|quantity|qnty|billed\s+qty)\b", re.I)
 _RATE_WORDS = re.compile(r"\b(?:rate|unit\s+price|price\s+per\s+unit)\b", re.I)
 _FOOTER = re.compile(
     r"\b(?:sub\s*total|grand\s*total|total\s+amount|amount\s+in\s+words|"
-    r"amount\s+chargeable|cgst|sgst|igst|round\s*off|bank\s+details|"
+    r"amount\s+chargeable|total|cgst|sgst|igst|round\s*off|bank\s+details|"
     r"company'?s?\s+pan|declaration|drug\s+licen[cs]e|authori[sz]ed\s+signatory|"
     r"terms\s+and\s+conditions)\b", re.I
 )
