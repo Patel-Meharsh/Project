@@ -2145,7 +2145,11 @@ def extract_grn_document(
                     raise HTTPException(413, "PDFs are limited to 30 pages.")
                 if not reader.pages:
                     raise HTTPException(400, "The PDF contains no readable pages.")
-    
+
+                # Extract embedded text before table parsing and scanned-page OCR.
+                # Scanned pages may return an empty string and are handled by the OCR fallback.
+                page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
+
                 supplemental_page_texts = list(page_texts)
                 table_text_by_page: list[str] = ["" for _ in page_texts]
     
