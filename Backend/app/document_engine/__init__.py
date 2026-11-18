@@ -8,7 +8,7 @@ from .matching import normalize_alphanumeric, rank_candidates
 from .validation import line_item_warnings, score_line_item_rows
 from .ocr import prepare_ocr_variants, run_ocr_candidates, run_header_ocr
 from .pdf import extract_pdf_text_sources
-from .table import choose_rate_amount, extract_table_body_lines, normalize_ocr_numeric_text
+from .table import choose_rate_amount, extract_table_body_lines, merge_invoice_continuation_lines, normalize_ocr_numeric_text
 
 __all__ = [
     "group_words_into_rows",
@@ -23,5 +23,6 @@ __all__ = [
     "extract_pdf_text_sources",
     "choose_rate_amount",
     "extract_table_body_lines",
+    "merge_invoice_continuation_lines",
     "normalize_ocr_numeric_text",
 ]
