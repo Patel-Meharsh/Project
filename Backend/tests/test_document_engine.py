@@ -9,6 +9,7 @@ from app.document_engine import (
     rows_to_text,
     score_line_item_rows,
 )
+from app.document_engine.ocr import _ocr_quality_score
 
 
 class DocumentEngineTests(unittest.TestCase):
@@ -56,6 +57,14 @@ class DocumentEngineTests(unittest.TestCase):
         good = [{"item_name": "LED Light", "recd_qty": 2, "rate": 50, "line_amount": 100}]
         bad = [{"item_name": "LED Light", "recd_qty": 2, "rate": 50, "line_amount": 140}]
         self.assertGreater(score_line_item_rows(good), score_line_item_rows(bad))
+
+    def test_invoice_ocr_quality_rewards_readable_header_and_item_rows(self):
+        text = (
+            "TAX INVOICE\\nSupplier: Example Electricals\\n"
+            "GSTIN 24ABCDE1234F1Z5\\nInvoice No: EX/123/26-27\\n"
+            "LED Tube Light 2 PCS 100.00 200.00"
+        )
+        self.assertGreater(_ocr_quality_score(text), _ocr_quality_score("### ???"))
 
 
 if __name__ == "__main__":
