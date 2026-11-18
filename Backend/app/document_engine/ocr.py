@@ -387,3 +387,22 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle:
     return re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", best_text, flags=re.I)
 
 
+
+def prepare_ocr_variants(image):
+    """Public document-engine entry point for deterministic image preprocessing."""
+    return _prepare_ocr_variants(image)
+
+
+def run_ocr_candidates(
+    image,
+    modes: tuple[int, ...] = (6, 11),
+    include_paddle: bool = True,
+    paddle_text_out: dict[str, str] | None = None,
+) -> str:
+    """Public document-engine entry point for local OCR candidate selection."""
+    return _run_ocr_candidates(
+        image,
+        modes=modes,
+        include_paddle=include_paddle,
+        paddle_text_out=paddle_text_out,
+    )
