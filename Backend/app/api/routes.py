@@ -1426,9 +1426,12 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
     for li in line_items:
         if li.get("is_charge_line"):
             continue
-        recd = float(li.get("recd_qty") or 0)
-        accepted = float(li.get("accepted_qty") or 0)
-        if recd <= 0 or accepted < 0 or accepted > recd:
+        try:
+            recd = float(li.get("recd_qty") or 0)
+            accepted = float(li.get("accepted_qty") or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "GRN quantities must be valid numbers.")
+        if not math.isfinite(recd) or not math.isfinite(accepted) or recd <= 0 or accepted < 0 or accepted > recd:
             raise HTTPException(400, "GRN quantities must be positive and accepted quantity cannot exceed received quantity.")
         if float(li.get("rejected_qty") or 0) < 0:
             raise HTTPException(400, "Rejected quantity cannot be negative.")
@@ -1437,10 +1440,6 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
         accepted = float(data.get("accepted_qty") or 0)
         if recd <= 0 or accepted < 0 or accepted > recd:
             raise HTTPException(400, "GRN quantities must be positive and accepted quantity cannot exceed received quantity.")
-
-    # Always assign the number on the server at save time. Ignore any draft
-    # number supplied by the browser so opening/cancelling a form cannot reserve it.
-    data["grn_no"] = _next_grn_no(db)
 
     # Populate top-level item/qty fields from line items for backward compat
     if line_items:
@@ -1460,15 +1459,30 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
         return _item_cache[code]
 
     for li in (line_items or []):
-        if li.get("is_charge_line") or li.get("rate_unreadable"):
+        if li.get("is_charge_line"):
             continue
-        if not (float(li.get("rate") or 0) > 0):
+        if li.get("rate_unreadable"):
+            raise HTTPException(422, f"Rate for '{li.get('item_name') or li.get('item_code')}' was not read confidently. Correct it before saving.")
+        try:
+            current_rate = float(li.get("rate") or 0)
+        except (TypeError, ValueError):
+            current_rate = 0.0
+        if not math.isfinite(current_rate) or current_rate <= 0:
             li["rate"] = _item_rate(li.get("item_code", ""))
+        try:
+            resolved_rate = float(li.get("rate") or 0)
+        except (TypeError, ValueError):
+            resolved_rate = 0.0
+        if not math.isfinite(resolved_rate) or resolved_rate <= 0:
+            raise HTTPException(422, f"A valid rate is required for '{li.get('item_name') or li.get('item_code')}'. Enter the invoice rate or maintain a valid Item Master rate.")
 
     if not (float(data.get("rate") or 0) > 0):
         top_code = data.get("item_code", "")
         data["rate"] = _item_rate(top_code) if top_code else 0.0
 
+    # Allocate the GRN number only after all validation and rate resolution pass.
+    # The sequence increment remains in the same transaction as the GRN save.
+    data["grn_no"] = _next_grn_no(db)
     data["line_items"] = _json.dumps(line_items) if line_items else None
     total_value = sum(
         float(li.get("line_amount") or 0) if li.get("is_charge_line")
@@ -1544,13 +1558,28 @@ def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
     # ── Pull new line_items out before mutating data ───────────────────────────
     new_line_items = data.pop("line_items", None)  # list or None
     if new_line_items is not None:
+        target_location = (data.get("store_location") or grn.store_location or "").strip()
+        if not target_location or not db.query(models.LocationModel).filter_by(code=target_location).first():
+            raise HTTPException(422, f"Store location '{target_location or '(empty)'}' does not exist.")
         for li in new_line_items:
             if li.get("is_charge_line"):
                 continue
-            recd = float(li.get("recd_qty") or 0)
-            accepted = float(li.get("accepted_qty") or 0)
-            if recd <= 0 or accepted < 0 or accepted > recd:
-                raise HTTPException(400, "GRN quantities must be positive and accepted quantity cannot exceed received quantity.")
+            item_code = str(li.get("item_code") or "").strip()
+            if not item_code or not db.query(models.ItemModel).filter_by(code=item_code).first():
+                raise HTTPException(422, f"Item code '{item_code or '(empty)'}' does not exist in Item Master.")
+            vendor_code = str(li.get("vendor_code") or "").strip()
+            if vendor_code and not db.query(models.VendorModel).filter_by(code=vendor_code).first():
+                raise HTTPException(422, f"Vendor code '{vendor_code}' does not exist in Vendor Master.")
+            if li.get("rate_unreadable"):
+                raise HTTPException(422, f"Rate for item '{item_code}' was not read confidently. Correct it before updating the GRN.")
+            try:
+                recd = float(li.get("recd_qty") or 0)
+                accepted = float(li.get("accepted_qty") or 0)
+                rate = float(li.get("rate") or 0)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "GRN quantities and rates must be valid numbers.")
+            if not all(math.isfinite(value) for value in (recd, accepted, rate)) or recd <= 0 or accepted <= 0 or accepted > recd or rate <= 0:
+                raise HTTPException(400, "GRN quantities must be positive, accepted quantity cannot exceed received quantity, and each stock item must have a valid positive rate.")
     elif "accepted_qty" in data or "recd_qty" in data:
         recd = float(data.get("recd_qty") or 0)
         accepted = float(data.get("accepted_qty") or 0)
@@ -1668,7 +1697,12 @@ def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
     _parse_dates(data, ["grn_date"])
     for k, v in _clean(data, models.GRNModel).items():
         setattr(grn, k, v)
-    db.commit(); db.refresh(grn)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(500, "GRN update failed. Inventory and GRN changes were rolled back; please retry.")
+    db.refresh(grn)
     return {"grn_no": grn.grn_no}
 
 # ─── ISSUANCE ─────────────────────────────────────────────────────────────────
