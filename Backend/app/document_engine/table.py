@@ -61,6 +61,60 @@ def extract_table_body_lines(text: str) -> list[str]:
     return body
 
 
+def merge_invoice_continuation_lines(
+    lines: Iterable[str], unit_pattern: str
+) -> list[str]:
+    """Attach wrapped descriptions to the correct adjacent invoice row.
+
+    A description-only line between two numbered rows belongs to the previous
+    row (for example, a product variant such as "Mogra" or "Lemon"). A
+    description-only line immediately before its numeric row is joined forward.
+    """
+    source = [re.sub(r"\\s+", " ", str(line)).strip() for line in lines if str(line).strip()]
+    merged: list[str] = []
+
+    def has_quantity_unit(line: str) -> bool:
+        return bool(re.search(
+            rf"(?<![A-Za-z])\\d[\\d,]*(?:\\.\\d{{1,2}})?\\s*{unit_pattern}\\b",
+            line, re.I,
+        ))
+
+    def starts_numbered_item(line: str) -> bool:
+        return bool(re.match(r"^\\s*[\\W_]*\\d{1,3}\\s*[.)-]?\\s+[A-Za-z]", line))
+
+    for index, line in enumerate(source):
+        current_has_values = has_quantity_unit(line)
+        previous_has_values = has_quantity_unit(merged[-1]) if merged else False
+        next_is_new_item = (
+            index + 1 < len(source) and starts_numbered_item(source[index + 1])
+        )
+
+        # A short description after a complete row and before the next serial
+        # is a continuation of the previous product, not the next product.
+        if merged and previous_has_values and not current_has_values and next_is_new_item:
+            merged[-1] = f"{merged[-1]} {line}".strip()
+            continue
+
+        # Conversely, when the description precedes its numeric cells, join it
+        # forward as the legacy parser did.
+        if merged and current_has_values and not previous_has_values:
+            previous = merged[-1]
+            if (
+                re.search(r"[A-Za-z]", previous)
+                and not re.search(
+                    r"\\b(?:invoice|gstin|cgst|sgst|igst|total|round off|"
+                    r"description|quantity|amount|dated|vendor|supplier|party|tax invoice)\\b",
+                    previous, re.I,
+                )
+            ):
+                merged[-1] = f"{previous} {line}".strip()
+                continue
+
+        merged.append(line)
+
+    return merged
+
+
 def normalize_ocr_numeric_text(value: str) -> str:
     """Repair common OCR substitutions only inside digit-bounded numeric tokens."""
     value = str(value or "")
