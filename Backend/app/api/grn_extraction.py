@@ -839,7 +839,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
     # deduplication silently removed those real lines.
     return extracted
 
-def _extract_image_table_line_items(image, db: Session, paddle_text: str | None = None) -> list[dict[str, Any]]:
+def _extract_image_table_line_items(image, db: Session, paddle_text: str | None = None, preprocessed_variants: list[Any] | None = None) -> list[dict[str, Any]]:
     """Read invoice line items from image OCR boxes, using the invoice's own columns.
 
     Only rows below a detected item/description + quantity + rate header are
@@ -949,7 +949,7 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
     # original image. Use the normalized image first, then one thresholded
     # fallback with two layout modes. This caps the table parser at four TSV
     # recognition passes instead of twelve, while retaining a recovery path.
-    variants = prepare_ocr_variants(image)
+    variants = preprocessed_variants or prepare_ocr_variants(image)
     table_variants = [variants[0]]
     if len(variants) > 2:
         table_variants.append(variants[2])
@@ -1822,8 +1822,12 @@ def extract_grn_document(
                 image = Image.open(io.BytesIO(raw))
                 # Run the local image OCR pipeline with bounded adaptive retries.
                 image_ocr_started = time.perf_counter()
+                image_variants = prepare_ocr_variants(image)
                 text = run_ocr_candidates(
-                    image, modes=(6, 4, 11), paddle_text_out=paddle_text_result
+                    image,
+                    modes=(6, 4, 11),
+                    paddle_text_out=paddle_text_result,
+                    preprocessed_variants=image_variants,
                 )
                 image_ocr_seconds = time.perf_counter() - image_ocr_started
             except HTTPException:
@@ -1924,6 +1928,7 @@ def extract_grn_document(
                     image_items = _extract_image_table_line_items(
                         source_image.convert("RGB"), processing_db,
                         paddle_text=paddle_text_result.get("text", ""),
+                        preprocessed_variants=image_variants,
                     )
                 if image_items:
                     # Compare independent parsers rather than always trusting a
