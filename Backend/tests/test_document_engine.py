@@ -137,6 +137,13 @@ class DocumentEngineTests(unittest.TestCase):
         self.assertIn("Soft Broom", merged[2])
         self.assertEqual(len(merged), 3)
 
+    def test_product_specification_is_not_mistaken_for_a_billed_quantity(self):
+        merged = merge_invoice_continuation_lines(
+            ["15 W LED fitting", "2 PCS 100.00 200.00"],
+            r"(?:BTL|PKT|NO|PCS|W)",
+        )
+        self.assertEqual(merged, ["15 W LED fitting 2 PCS 100.00 200.00"])
+
     def test_numeric_ocr_cleanup_and_arithmetic_pair_selection(self):
         self.assertEqual(normalize_ocr_numeric_text("49.S0 29:00 1O5.00"), "49.50 29.00 105.00")
         self.assertEqual(choose_rate_amount([2.0, 29.0], 1.0), (2.0, 29.0))
