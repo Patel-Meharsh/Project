@@ -1029,6 +1029,11 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                     }
                     break
             if header_index is None:
+                logger.debug(
+                    "GRN image table header not detected (variant=%d, psm=%d)",
+                    variant_index,
+                    psm,
+                )
                 continue
 
             # If the invoice has a dedicated serial-number column, use its
@@ -1332,6 +1337,13 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
             ):
                 best_score = candidate_score
                 best_rows = validated_rows
+                logger.info(
+                    "GRN image table candidate rows=%d score=%.1f variant=%d psm=%d",
+                    len(validated_rows),
+                    candidate_score,
+                    variant_index,
+                    psm,
+                )
             all_candidate_rows.extend(validated_rows)
 
             # Stop after a clearly coherent multi-row table is found. Arithmetic
