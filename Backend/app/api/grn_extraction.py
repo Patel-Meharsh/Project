@@ -32,6 +32,7 @@ from app.document_engine import (
 from app.document_engine.table import (
     choose_rate_amount,
     extract_table_body_lines,
+    merge_invoice_continuation_lines,
     normalize_ocr_numeric_text,
 )
 
@@ -292,20 +293,9 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
     unit_re = r"(?:BOTTLES?|BTL|PACKETS?|PKT|PIECES?|PCS?\.?|NOS?\.?|MILLIMETERS?|MILLIMETRES?|MM|CENTIMETERS?|CENTIMETRES?|CM|METERS?|METRES?|MTRS?|MTR|KILOGRAMS?|KGS?|KG|GRAMS?|GMS?|MILLILITERS?|MILLILITRES?|ML|LIT(?:RE|ER)S?|LTRS?|LTR|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?|WATTS?|VOLTS?|W|V|M|G)"
     number_re = r"\d[\d,]*(?:\.\d{1,2})?"
 
-    # OCR frequently places a product description on one line and its HSN,
-    # quantity, rate, and amount on the next. Rejoin likely continuation lines
-    # before parsing, while leaving headings and totals untouched.
-    lines: list[str] = []
-    for raw_line in raw_lines:
-        has_qty_unit = re.search(rf"(?<![A-Za-z]){number_re}\s*{unit_re}\b", raw_line, re.I)
-        if lines and has_qty_unit and not re.search(rf"{number_re}\s*{unit_re}\b", lines[-1], re.I):
-            previous = lines[-1]
-            if (re.search(r"[A-Za-z]", previous)
-                    and not re.search(r"\b(?:invoice|gstin|cgst|sgst|igst|total|round off|description|quantity|amount)\b", previous, re.I)
-                    and not re.search(r"\b(?:dated|vendor|supplier|party|tax invoice)\b", previous, re.I)):
-                lines[-1] = previous + " " + raw_line
-                continue
-        lines.append(raw_line)
+    # Join wrapped descriptions in the correct direction: a detail line after
+    # a completed row belongs to that previous item when the next row has a serial.
+    lines = merge_invoice_continuation_lines(raw_lines, unit_re)
     found: list[dict[str, Any]] = []
     seen_codes: set[str] = set()
     def match_master(description: str):
