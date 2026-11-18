@@ -72,7 +72,7 @@ class DocumentEngineTests(unittest.TestCase):
             "line_num": [1, 1, 2, 2],
             "left": [10, 40, 10, 20],
         }
-        self.assertEqual(_tesseract_data_to_text(data), "LED Tube\\n2 PCS")
+        self.assertEqual(_tesseract_data_to_text(data), "LED Tube\n2 PCS")
 
     def test_invoice_ocr_quality_rewards_readable_header_and_item_rows(self):
         text = (
