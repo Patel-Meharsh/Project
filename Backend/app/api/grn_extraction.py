@@ -586,81 +586,78 @@ def _ocr_candidate_score(candidate: dict[str, Any]) -> float:
     return _ocr_quality_score(text_value) + confidence * 0.15
 
 
-def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11), include_paddle: bool = True, paddle_text_out: dict[str, str] | None = None) -> str:
-    """Compare local Tesseract and PaddleOCR candidates; no cloud OCR is used."""
+def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle: bool = True, paddle_text_out: dict[str, str] | None = None) -> str:
+    """Run a fast OCR pass first, escalating only when the result is weak."""
     import pytesseract
 
     variants = _prepare_ocr_variants(image)
     fast_variant = variants[0]
     candidates: list[dict[str, Any]] = []
 
-    try:
-        fast_text = pytesseract.image_to_string(
-            fast_variant, config="--oem 3 --psm 6"
-        ).strip()
-    except Exception:
-        fast_text = ""
-    if fast_text:
-        fast_text = re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", fast_text, flags=re.I)
-        candidates.append({
-            "text": fast_text, "confidence": 0.0, "engine": "tesseract",
-            "score": _ocr_quality_score(fast_text),
-        })
-        fast_boxes = _tesseract_box_candidate(fast_variant, 6)
-        if fast_boxes["text"]:
-            candidates.append(fast_boxes)
+    def add_tesseract_candidate(variant, mode: int, variant_index: int = 0):
+        try:
+            candidate_text = pytesseract.image_to_string(
+                variant, config=f"--oem 3 --psm {mode}"
+            ).strip()
+        except Exception:
+            return
+        if candidate_text:
+            candidate_text = re.sub(
+                r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", candidate_text, flags=re.I
+            )
+            candidates.append({
+                "text": candidate_text,
+                "confidence": 0.0,
+                "engine": "tesseract",
+                "variant": variant_index,
+                "mode": mode,
+                "score": _ocr_quality_score(candidate_text),
+            })
 
-    # Run PaddleOCR on the same preprocessed page as the first Tesseract pass.
-    # Both engines return word positions; each engine's words are ordered into
-    # visual rows before their text quality and recognition confidence are compared.
+    # One inexpensive first pass is enough for most clean scans.
+    add_tesseract_candidate(fast_variant, 6)
+    if paddle_text_out is not None:
+        paddle_text_out["text"] = ""
+
+    # Only try PaddleOCR when all three local model directories are configured.
+    # This avoids importing/initializing a large OCR runtime when it cannot run.
     paddle_candidate = (
         _paddleocr_candidate(fast_variant)
-        if include_paddle else {"text": "", "confidence": 0.0, "engine": "paddleocr"}
+        if include_paddle and all(os.getenv(key) for key in (
+            "GRN_PADDLEOCR_DET_MODEL_DIR",
+            "GRN_PADDLEOCR_REC_MODEL_DIR",
+            "GRN_PADDLEOCR_CLS_MODEL_DIR",
+        ))
+        else {"text": "", "confidence": 0.0, "engine": "paddleocr"}
     )
     if paddle_text_out is not None:
         paddle_text_out["text"] = paddle_candidate.get("text", "")
-    if paddle_candidate["text"]:
+    if paddle_candidate.get("text"):
         candidates.append(paddle_candidate)
 
-    best_fast_score = max(
+    best_score = max(
         (_ocr_candidate_score(item) for item in candidates), default=0.0
     )
-    # A clean first pass still gets the independent PaddleOCR reading above.
-    # Only difficult pages pay for the additional Tesseract variants and layouts.
-    if best_fast_score < 70:
-        for variant_index, variant in enumerate(variants):
-            for mode in modes:
-                try:
-                    candidate = pytesseract.image_to_string(
-                        variant, config=f"--oem 3 --psm {mode}"
-                    ).strip()
-                except Exception:
-                    continue
-                if candidate:
-                    candidate = re.sub(
-                        r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", candidate, flags=re.I
-                    )
-                    candidates.append({
-                        "text": candidate,
-                        "confidence": 0.0,
-                        "engine": "tesseract",
-                        "variant": variant_index,
-                        "mode": mode,
-                    })
-            # TSV is expensive; retain one position/confidence reconstruction
-            # for the first two useful variants rather than repeating every pass.
-            if variant_index < 2:
-                box_candidate = _tesseract_box_candidate(variant, 6)
-                if box_candidate["text"]:
-                    candidates.append(box_candidate)
+
+    # Escalate only weak pages. Limit retries to two useful variants and two
+    # layouts rather than running every filter/layout combination.
+    if best_score < 70:
+        retry_variants = [variants[1], variants[2]] if len(variants) > 2 else variants[1:]
+        for variant_index, variant in enumerate(retry_variants, start=1):
+            for mode in modes[:2]:
+                add_tesseract_candidate(variant, mode, variant_index)
+        # TSV reconstruction is expensive; use it once, only for a weak page.
+        if candidates:
+            best_candidate = max(candidates, key=_ocr_candidate_score)
+            best_variant_index = int(best_candidate.get("variant", 0))
+            box_variant = variants[min(best_variant_index, len(variants) - 1)]
+            box_candidate = _tesseract_box_candidate(box_variant, 6)
+            if box_candidate.get("text"):
+                candidates.append(box_candidate)
 
     if not candidates:
         return ""
 
-    # Agreement between the two independent engines is useful evidence, but it
-    # is not treated as proof: a candidate still needs readable invoice structure
-    # and its own recognition confidence. Avoid counting repeated Tesseract modes
-    # as independent votes.
     paddle_text = next(
         (item["text"] for item in candidates if item.get("engine") == "paddleocr"),
         "",
@@ -676,7 +673,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 4, 11), include_padd
 
     best = max(candidates, key=lambda item: item.get("score", 0.0))
     best_text = str(best.get("text") or "")
-    return re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", best_text, flags=re.I)
+    return re.sub(r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", best_text, flags=re.I)
 
 
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
