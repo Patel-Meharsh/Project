@@ -184,6 +184,49 @@ def _prepare_ocr_variants(image):
         return [gray_image, sharp, threshold]
 
 
+def run_header_ocr(image) -> str:
+    """Read the upper invoice header separately when key fields are missing.
+
+    This is an on-demand fallback, not an extra pass on every upload. Cropping
+    the header increases the effective character size and avoids spending OCR
+    time on the table/footer when recovering invoice identifiers.
+    """
+    try:
+        import pytesseract
+        from PIL import ImageEnhance, ImageOps
+
+        width, height = image.size
+        crop = image.crop((0, 0, width, max(1, int(height * 0.30))))
+        gray = ImageOps.grayscale(crop)
+        gray = ImageOps.autocontrast(gray)
+        if gray.width < 1800:
+            scale = min(2.0, 1800 / max(1, gray.width))
+            gray = gray.resize(
+                (int(gray.width * scale), int(gray.height * scale))
+            )
+        gray = ImageEnhance.Sharpness(gray).enhance(1.35)
+
+        candidates = []
+        for mode in (6, 11):
+            try:
+                text = pytesseract.image_to_string(
+                    gray, config=f"--oem 3 --psm {mode}"
+                ).strip()
+            except Exception:
+                continue
+            if text:
+                candidates.append(text)
+            if text and _ocr_quality_score(text) >= 45:
+                break
+        return max(candidates, key=_ocr_quality_score) if candidates else ""
+    except ImportError:
+        logger.info("Header OCR skipped because Pillow or pytesseract is unavailable.")
+        return ""
+    except Exception:
+        logger.exception("Invoice header OCR fallback failed.")
+        return ""
+
+
 _paddle_ocr_engine = None
 
 
