@@ -113,8 +113,11 @@ class DocumentEngineTests(unittest.TestCase):
         lines = [
             "5 Godrej AerSpray 33074900 18% 5 BTL 76.27 BTL 381.35",
             "Mogra",
+            ": | | |",
+            "| | |",
             "6 Godrej AerPocket 33074900 18% 5 NO 50.00 NO 250.00",
             "Lemon",
+            "| | F",
             "7 Soft Broom Special 96031000 0% 1 NO 49.00 NO 49.00",
         ]
         merged = merge_invoice_continuation_lines(lines, r"(?:BTL|PKT|NO)")
