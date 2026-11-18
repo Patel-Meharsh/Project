@@ -19,6 +19,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db, SessionLocal
 from app import models
 from app.api.routes import _get_current_user
+from app.document_engine import (
+    group_words_into_rows,
+    line_item_warnings,
+    normalize_alphanumeric,
+    rank_candidates,
+    rows_to_text,
+    score_line_item_rows,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -49,7 +57,7 @@ def _number(value: str | None) -> float | None:
 
 
 def _norm(value: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", (value or "").lower())
+    return normalize_alphanumeric(value)
 
 
 def _clean_item_description(value: str, expected_serial: int | None = None) -> str:
@@ -126,22 +134,8 @@ def _choose_pdf_page_rows(
 
 
 def _line_item_quality(rows: list[dict[str, Any]]) -> float:
-    """Score candidate rows for completeness and arithmetic consistency."""
-    score = float(len(rows) * 10)
-    for row in rows:
-        qty, rate, amount = row.get("recd_qty"), row.get("rate"), row.get("line_amount")
-        if qty is None:
-            score -= 3
-        if rate is None:
-            score -= 3
-        if amount is not None and qty is not None and rate is not None:
-            if abs(qty * rate - amount) <= max(2.0, abs(amount) * 0.03):
-                score += 4
-            else:
-                score -= 5
-        if len(_norm(row.get("item_name", ""))) < 4:
-            score -= 4
-    return score
+    """Use the shared document engine's row completeness/arithmetic score."""
+    return score_line_item_rows(rows)
 
 
 def _choose_line_item_candidate(
@@ -261,16 +255,9 @@ def _mark_row_for_review(row: dict[str, Any]) -> dict[str, Any]:
         row["recd_qty"] = None
         qty = None
 
-    if qty is None and "quantity was not confidently read" not in warnings:
-        warnings.append("quantity was not confidently read")
-    if rate is None and "rate was not confidently read" not in warnings:
-        warnings.append("rate was not confidently read")
-    if qty is not None and rate is not None and amount is not None:
-        expected = qty * rate
-        if abs(expected - amount) > max(0.05, abs(amount) * 0.015):
-            arithmetic_warning = "quantity × rate differs from the printed line amount"
-            if arithmetic_warning not in warnings:
-                warnings.append(arithmetic_warning)
+    for warning in line_item_warnings(qty, rate, amount):
+        if warning not in warnings:
+            warnings.append(warning)
 
     if warnings:
         row["needs_review"] = True
@@ -496,24 +483,8 @@ def _paddleocr_candidate(image) -> dict[str, Any]:
                         confidences.append(confidence * 100)
                 except (TypeError, ValueError, IndexError):
                     continue
-        words.sort(key=lambda word: (word["y"], word["x"]))
-        rows = []
-        tolerance = max(10, int(image.height * 0.012))
-        for word in words:
-            target = None
-            for row in reversed(rows[-4:]):
-                centre = sum(item["y"] for item in row) / len(row)
-                if abs(word["y"] - centre) <= tolerance:
-                    target = row
-                    break
-            if target is None:
-                rows.append([word])
-            else:
-                target.append(word)
-        text = "\n".join(
-            " ".join(item["text"] for item in sorted(row, key=lambda item: item["x"]))
-            for row in rows
-        ).strip()
+        rows = group_words_into_rows(words, image.height, tolerance_ratio=0.012)
+        text = rows_to_text(rows)
         return {
             "text": text,
             "confidence": sum(confidences) / len(confidences) if confidences else 0.0,
@@ -552,23 +523,8 @@ def _tesseract_box_candidate(image, mode: int = 6) -> dict[str, Any]:
                     "y": int(data["top"][index]) + int(data["height"][index]) // 2,
                 })
                 confidences.append(confidence)
-        words.sort(key=lambda word: (word["y"], word["x"]))
-        rows = []
-        for word in words:
-            target = None
-            for row in reversed(rows[-4:]):
-                centre = sum(item["y"] for item in row) / len(row)
-                if abs(word["y"] - centre) <= max(10, int(image.height * 0.006)):
-                    target = row
-                    break
-            if target is None:
-                rows.append([word])
-            else:
-                target.append(word)
-        text = "\n".join(
-            " ".join(item["text"] for item in sorted(row, key=lambda item: item["x"]))
-            for row in rows
-        ).strip()
+        rows = group_words_into_rows(words, image.height, tolerance_ratio=0.006)
+        text = rows_to_text(rows)
         return {
             "text": text,
             "confidence": sum(confidences) / len(confidences) if confidences else 0.0,
@@ -603,7 +559,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle:
             return
         if candidate_text:
             candidate_text = re.sub(
-                r"(?<![A-Za-z0-9])S(?=\s*BTL\\b)", "5", candidate_text, flags=re.I
+                r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", candidate_text, flags=re.I
             )
             candidates.append({
                 "text": candidate_text,
@@ -670,7 +626,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle:
 
     best = max(candidates, key=lambda item: item.get("score", 0.0))
     best_text = str(best.get("text") or "")
-    return re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\\b)", "5", best_text, flags=re.I)
+    return re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", best_text, flags=re.I)
 
 
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
@@ -700,27 +656,19 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
     seen_codes: set[str] = set()
     def match_master(description: str):
-        dn = _norm(description)
-        if not dn:
+        if not _norm(description):
             return None
-        scored = []
-        for item in masters:
-            nn = _norm(item.name or "")
-            if not item.code or not nn:
-                continue
-            if nn == dn or nn in dn or dn in nn:
-                score = 1.0
-            else:
-                dt = set(re.findall(r"[a-z0-9]+", description.lower()))
-                nt = set(re.findall(r"[a-z0-9]+", (item.name or "").lower()))
-                overlap = len(dt & nt) / max(1, len(dt | nt))
-                seq = SequenceMatcher(None, dn, nn).ratio()
-                score = max(seq, overlap)
-            if score >= 0.48:
-                scored.append((score, item))
-        scored.sort(key=lambda pair: pair[0], reverse=True)
-        if scored and (len(scored) == 1 or scored[0][0] - scored[1][0] >= 0.08):
-            return scored[0][1]
+        ranked = rank_candidates(
+            description,
+            (item for item in masters if item.code),
+            name_getter=lambda item: item.name or "",
+            minimum_score=0.48,
+        )
+        if ranked and (
+            len(ranked) == 1
+            or ranked[0]["score"] - ranked[1]["score"] >= 0.08
+        ):
+            return ranked[0]["candidate"]
         return None
 
     for line in lines:
