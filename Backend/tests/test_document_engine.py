@@ -10,6 +10,8 @@ from app.document_engine import (
     score_line_item_rows,
 )
 from app.document_engine.ocr import _ocr_quality_score
+from app.document_engine.pdf import extract_pdf_text_sources
+from fastapi import HTTPException
 
 
 class DocumentEngineTests(unittest.TestCase):
@@ -65,6 +67,11 @@ class DocumentEngineTests(unittest.TestCase):
             "LED Tube Light 2 PCS 100.00 200.00"
         )
         self.assertGreater(_ocr_quality_score(text), _ocr_quality_score("### ???"))
+
+    def test_invalid_pdf_is_reported_as_a_client_error(self):
+        with self.assertRaises(HTTPException) as raised:
+            extract_pdf_text_sources(b"not a valid pdf")
+        self.assertEqual(raised.exception.status_code, 400)
 
 
 if __name__ == "__main__":
