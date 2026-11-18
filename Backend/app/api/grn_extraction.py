@@ -1907,49 +1907,61 @@ def extract_grn_document(
                 result.get("warnings", []) + supplemental_result.get("warnings", [])
             ))
     
-        # Photos/scans need the same column-aware strategy as digital PDFs. If the
-        # OCR bounding boxes identify a table, use only those rows rather than
-        # unrelated text matches elsewhere on the page.
+        # Run the more expensive coordinate/table OCR only when the text candidate
+        # looks incomplete or uncertain. Clean, coherent invoices avoid a second
+        # round of OCR; suspicious scans still get spatial column reconstruction.
         if content_type != "application/pdf":
-            image_table_started = time.perf_counter()
-            try:
-                from PIL import Image
-                with Image.open(io.BytesIO(raw)) as source_image:
-                    image_items = _extract_image_table_line_items(
-                        source_image.convert("RGB"), processing_db,
-                        paddle_text=paddle_text_result.get("text", ""),
-                        preprocessed_variants=image_variants,
-                    )
-                if image_items:
-                    # Compare independent parsers rather than always trusting a
-                    # coordinate pass that may split one description across rows.
-                    # Keep the candidate with more complete invoice rows, with
-                    # arithmetic consistency as the tie-breaker.
-                    text_items = [
-                        row for row in _extract_item_rows(text, processing_db)
-                        if row.get("source") == "receipt_text"
-                    ]
-                    chosen_items = _choose_line_item_candidate(text_items, image_items)
-                    result["line_items"] = chosen_items
-                    result["warnings"] = [
-                        warning for warning in result.get("warnings", [])
-                        if "Line items were detected from receipt text" not in warning
-                        and "One or more PO line items could not be matched" not in warning
-                        and "Line items were read from image-table" not in warning
-                    ]
-                    result["warnings"].append(
-                        "Line items were extracted using the highest-scoring OCR parser. Verify item names, quantities, and rates before saving."
-                    )
-                    if any(row.get("match_status") == "unmatched" for row in chosen_items):
-                        result["warnings"].append(
-                            "One or more invoice descriptions could not be matched confidently to the item master."
+            text_items = [
+                row for row in result.get("line_items", [])
+                if row.get("source") == "receipt_text"
+            ]
+            if not text_items:
+                text_items = [
+                    row for row in _extract_item_rows(text, processing_db)
+                    if row.get("source") == "receipt_text"
+                ]
+            table_lines = extract_table_body_lines(text)
+            serial_count = sum(
+                1 for line in table_lines
+                if re.match(r"^\s*[\W_]*\d{1,3}\s*[.)-]?\s+[A-Za-z]", line)
+            )
+            text_candidate_is_uncertain = (
+                not text_items
+                or len(text_items) < 3
+                or any(row.get("needs_review") for row in text_items)
+                or serial_count > len(text_items)
+            )
+
+            if text_candidate_is_uncertain:
+                image_table_started = time.perf_counter()
+                try:
+                    from PIL import Image
+                    with Image.open(io.BytesIO(raw)) as source_image:
+                        image_items = _extract_image_table_line_items(
+                            source_image.convert("RGB"), processing_db,
+                            paddle_text=paddle_text_result.get("text", ""),
+                            preprocessed_variants=image_variants,
                         )
-            except Exception:
-                # Existing local OCR text extraction remains the fallback if
-                # bounding-box table detection cannot confidently find the headers.
-                logger.exception("GRN image table parser failed; retaining text candidate.")
-            finally:
-                image_table_seconds = time.perf_counter() - image_table_started
+                    if image_items:
+                        chosen_items = _choose_line_item_candidate(text_items, image_items)
+                        result["line_items"] = chosen_items
+                        result["warnings"] = [
+                            warning for warning in result.get("warnings", [])
+                            if "Line items were detected from receipt text" not in warning
+                            and "One or more PO line items could not be matched" not in warning
+                            and "Line items were read from image-table" not in warning
+                        ]
+                        result["warnings"].append(
+                            "Line items were extracted using the highest-scoring OCR parser. Verify item names, quantities, and rates before saving."
+                        )
+                        if any(row.get("match_status") == "unmatched" for row in chosen_items):
+                            result["warnings"].append(
+                                "One or more invoice descriptions could not be matched confidently to the item master."
+                            )
+                except Exception:
+                    logger.exception("GRN image table parser failed; retaining text candidate.")
+                finally:
+                    image_table_seconds = time.perf_counter() - image_table_started
     
         # For PDFs with embedded text, use the table's actual word coordinates when
         # available. This avoids treating header fragments (e.g. "SHE/") as products
