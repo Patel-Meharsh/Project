@@ -585,13 +585,17 @@ const chooseExistingMasterItem = (match) => {
   if (!itemMasterDraft || !match?.code) return
   const selectedIndex = itemMasterDraft.index
   const updated = [...lineItems]
+  const previousRow = updated[selectedIndex]
+  const matchingWarning = String(previousRow.extraction_warning || '').startsWith('Possible existing Item Master matches')
+  const remainingWarning = matchingWarning ? '' : (previousRow.extraction_warning || '')
   updated[selectedIndex] = {
-    ...updated[selectedIndex],
+    ...previousRow,
     item_code: match.code,
-    item_name: match.name || updated[selectedIndex].item_name,
-    // Linking an OCR description to a master item resolves only the matching
-    // question. Preserve independent OCR/numeric warnings until the user fixes them.
-    needs_review: Boolean(updated[selectedIndex].needs_review || updated[selectedIndex].rate_unreadable || updated[selectedIndex].rate_warning || updated[selectedIndex].extraction_warning),
+    item_name: match.name || previousRow.item_name,
+    // Resolve only the master-match warning. Keep unrelated OCR and numeric
+    // warnings visible so choosing a code cannot hide incorrect invoice values.
+    needs_review: Boolean(previousRow.rate_unreadable || previousRow.rate_warning || remainingWarning || (previousRow.needs_review && !matchingWarning)),
+    extraction_warning: remainingWarning,
     possible_matches: [],
   }
   setLineItems(updated)
