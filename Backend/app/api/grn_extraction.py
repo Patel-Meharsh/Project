@@ -194,7 +194,7 @@ def _invoice_number_from_nearby_label(text: str) -> str | None:
     """Recover invoice IDs when the label and value are separated in extracted/OCR text."""
     lines = [re.sub(r"\s+", " ", line).strip(" :#|\t") for line in (text or "").splitlines()]
     label = re.compile(
-        r"\b(?:tax\s*)?(?:invoice|invo[i1]ce|inv\.?|bill)\s*"
+        r"\b(?:tax\s*)?(?:invoice|invo[i1]ce|nvoice|voice|inv\.?|bill)\s*"
         r"(?:no\.?|number|num\.?|#|n[o0])(?=\s|[:#|=.-]|$)",
         re.I,
     )
@@ -1735,6 +1735,9 @@ def extract_grn_document(
         # A candidate that reads table rows well can still miss supplier/date header text.
         supplemental_field_text = ""
         paddle_text_result: dict[str, str] = {}
+        image_ocr_seconds = 0.0
+        image_table_seconds = 0.0
+        header_ocr_seconds = 0.0
         if content_type == "application/pdf":
             try:
                 pdf_sources = extract_pdf_text_sources(raw, max_pages=30)
@@ -1817,10 +1820,12 @@ def extract_grn_document(
             try:
                 from PIL import Image
                 image = Image.open(io.BytesIO(raw))
-                # Run the local image OCR pipeline with rotation, contrast, upscaling, and multiple layout modes.
+                # Run the local image OCR pipeline with bounded adaptive retries.
+                image_ocr_started = time.perf_counter()
                 text = run_ocr_candidates(
                     image, modes=(6, 4, 11), paddle_text_out=paddle_text_result
                 )
+                image_ocr_seconds = time.perf_counter() - image_ocr_started
             except HTTPException:
                 raise
             except ImportError:
@@ -1849,7 +1854,9 @@ def extract_grn_document(
         # header-only pass. This is especially useful when the printed "In" in
         # "Invoice No." is smudged but the identifier itself remains legible.
         if not fields.get("invoice_no") and content_type != "application/pdf":
+            header_started = time.perf_counter()
             header_text = run_header_ocr(image)
+            header_ocr_seconds = time.perf_counter() - header_started
             recovered_invoice_no = _invoice_number_from_nearby_label(header_text)
             if recovered_invoice_no:
                 fields["invoice_no"] = recovered_invoice_no
@@ -1910,6 +1917,7 @@ def extract_grn_document(
         # OCR bounding boxes identify a table, use only those rows rather than
         # unrelated text matches elsewhere on the page.
         if content_type != "application/pdf":
+            image_table_started = time.perf_counter()
             try:
                 from PIL import Image
                 with Image.open(io.BytesIO(raw)) as source_image:
@@ -1944,7 +1952,9 @@ def extract_grn_document(
             except Exception:
                 # Existing local OCR text extraction remains the fallback if
                 # bounding-box table detection cannot confidently find the headers.
-                pass
+                logger.exception("GRN image table parser failed; retaining text candidate.")
+            finally:
+                image_table_seconds = time.perf_counter() - image_table_started
     
         # For PDFs with embedded text, use the table's actual word coordinates when
         # available. This avoids treating header fragments (e.g. "SHE/") as products
@@ -2047,10 +2057,14 @@ def extract_grn_document(
         result["filename"] = (file.filename or "document")[:160]
         result["document_type"] = "pdf" if content_type == "application/pdf" else "image"
         logger.info(
-            "GRN document extraction completed in %.2fs (type=%s, bytes=%d)",
+            "GRN document extraction completed in %.2fs "
+            "(type=%s, bytes=%d, image_ocr=%.2fs, image_table=%.2fs, header_ocr=%.2fs)",
             time.perf_counter() - extraction_started,
             result["document_type"],
             len(raw),
+            image_ocr_seconds,
+            image_table_seconds,
+            header_ocr_seconds,
         )
         return result
     
