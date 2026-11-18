@@ -589,8 +589,9 @@ const chooseExistingMasterItem = (match) => {
     ...updated[selectedIndex],
     item_code: match.code,
     item_name: match.name || updated[selectedIndex].item_name,
-    needs_review: false,
-    extraction_warning: '',
+    // Linking an OCR description to a master item resolves only the matching
+    // question. Preserve independent OCR/numeric warnings until the user fixes them.
+    needs_review: Boolean(updated[selectedIndex].needs_review || updated[selectedIndex].rate_unreadable || updated[selectedIndex].rate_warning || updated[selectedIndex].extraction_warning),
     possible_matches: [],
   }
   setLineItems(updated)
@@ -756,8 +757,11 @@ const createGRN = async () => {
   if (lineItems.some(r => !r.is_charge_line && (!Number.isFinite(Number(r.accepted_qty)) || Number(r.accepted_qty) <= 0 || Number(r.accepted_qty) > Number(r.recd_qty)))) {
     return toast.error('Accepted quantity must be greater than 0 and cannot exceed received quantity.')
   }
-  if (lineItems.some(r => !r.is_charge_line && !r.rate_unreadable && (!Number.isFinite(Number(r.rate)) || Number(r.rate) < 0))) {
-    return toast.error('Rate must be a valid non-negative number.')
+  if (lineItems.some(r => !r.is_charge_line && r.rate_unreadable)) {
+    return toast.error('One or more item rates could not be read confidently. Enter and verify each missing rate before saving the GRN.')
+  }
+  if (lineItems.some(r => !r.is_charge_line && (!Number.isFinite(Number(r.rate)) || Number(r.rate) <= 0))) {
+    return toast.error('Every stock item must have a valid rate greater than zero. Check the invoice or Item Master rate before saving.')
   }
   if (!window.confirm(`Save this GRN with ${lineItems.length} line item(s)? The GRN number will be assigned only after a successful save. This will update inventory${form.po_no ? ' and the linked purchase order' : ''}.`)) {
     return
@@ -776,8 +780,8 @@ const createGRN = async () => {
       vendor_name: String(r.vendor_name || '').trim(),
       recd_qty: Number(r.recd_qty),
       accepted_qty: Number(r.accepted_qty),
-      rate: r.rate_unreadable ? 0 : Number(r.rate || 0),
-      rate_unreadable: Boolean(r.rate_unreadable),
+      rate: Number(r.rate),
+      rate_unreadable: false,
       is_charge_line: Boolean(r.is_charge_line),
       line_amount: r.line_amount == null ? null : Number(r.line_amount),
     }))
@@ -1252,6 +1256,13 @@ const createGRN = async () => {
                             const val = e.target.value
                             const updated = [...lineItems]
                             updated[idx].rate = val === '' ? '' : Number(val)
+                            // A manually entered replacement rate resolves the OCR unreadable flag.
+                            updated[idx].rate_unreadable = false
+                            updated[idx].rate_warning = false
+                            if (updated[idx].extraction_warning === 'rate was not confidently read') {
+                              updated[idx].extraction_warning = ''
+                            }
+                            updated[idx].needs_review = Boolean(updated[idx].extraction_warning || updated[idx].possible_matches?.length)
                             setLineItems(updated)
                           }}
                         />
