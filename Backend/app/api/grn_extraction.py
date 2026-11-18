@@ -829,7 +829,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
     # deduplication silently removed those real lines.
     return extracted
 
-def _extract_image_table_line_items(image, db: Session, paddle_text: str | None = None, preprocessed_variants: list[Any] | None = None) -> list[dict[str, Any]]:
+def _extract_image_table_line_items(image, db: Session, paddle_text: str | None = None, preprocessed_variants: list[Any] | None = None, precomputed_data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Read invoice line items from image OCR boxes, using the invoice's own columns.
 
     Only rows below a detected item/description + quantity + rate header are
@@ -947,12 +947,15 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
         table_variants.append(variants[1])
     for variant_index, variant in enumerate(table_variants):
         for psm in (6, 4):
-            try:
-                data = pytesseract.image_to_data(
-                    variant, config=f"--oem 3 --psm {psm}", output_type=Output.DICT
-                )
-            except Exception:
-                continue
+            if variant_index == 0 and psm == 6 and precomputed_data is not None:
+                data = precomputed_data
+            else:
+                try:
+                    data = pytesseract.image_to_data(
+                        variant, config=f"--oem 3 --psm {psm}", output_type=Output.DICT
+                    )
+                except Exception:
+                    continue
             words = []
             for i, raw_text in enumerate(data.get("text", [])):
                 token = (raw_text or "").strip()
@@ -1349,7 +1352,7 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
             # Stop after a clearly coherent multi-row table is found. Arithmetic
             # agreement is a strong signal; weaker scans still get all fallback
             # variants and segmentation modes below.
-            if len(validated_rows) >= 3 and candidate_score / len(validated_rows) >= 17:
+            if len(validated_rows) >= 3 and candidate_score / len(validated_rows) >= 14:
                 return _choose_line_item_candidate(validated_rows, paddle_rows)
 
     # Return one internally consistent OCR pass only. Merging numeric signatures
@@ -1737,6 +1740,7 @@ def extract_grn_document(
         # A candidate that reads table rows well can still miss supplier/date header text.
         supplemental_field_text = ""
         paddle_text_result: dict[str, str] = {}
+        ocr_data_result: dict[str, Any] = {}
         image_ocr_seconds = 0.0
         image_table_seconds = 0.0
         header_ocr_seconds = 0.0
@@ -1830,6 +1834,7 @@ def extract_grn_document(
                     modes=(6, 4, 11),
                     paddle_text_out=paddle_text_result,
                     preprocessed_variants=image_variants,
+                    ocr_data_out=ocr_data_result,
                 )
                 image_ocr_seconds = time.perf_counter() - image_ocr_started
             except HTTPException:
@@ -1953,6 +1958,7 @@ def extract_grn_document(
                             source_image.convert("RGB"), processing_db,
                             paddle_text=paddle_text_result.get("text", ""),
                             preprocessed_variants=image_variants,
+                            precomputed_data=ocr_data_result.get("data"),
                         )
                     if image_items:
                         chosen_items = _choose_line_item_candidate(text_items, image_items)
