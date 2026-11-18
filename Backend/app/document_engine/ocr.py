@@ -427,6 +427,15 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle:
 
     best = max(candidates, key=lambda item: item.get("score", 0.0))
     best_text = str(best.get("text") or "")
+    logger.info(
+        "GRN OCR selected engine=%s variant=%s psm=%s score=%.1f candidates=%d chars=%d",
+        best.get("engine", "unknown"),
+        best.get("variant", "n/a"),
+        best.get("mode", "n/a"),
+        float(best.get("score", 0.0)),
+        len(candidates),
+        len(best_text),
+    )
     return re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\b)", "5", best_text, flags=re.I)
 
 
