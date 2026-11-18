@@ -603,7 +603,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle:
             return
         if candidate_text:
             candidate_text = re.sub(
-                r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", candidate_text, flags=re.I
+                r"(?<![A-Za-z0-9])S(?=\s*BTL\\b)", "5", candidate_text, flags=re.I
             )
             candidates.append({
                 "text": candidate_text,
@@ -648,10 +648,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle:
                 add_tesseract_candidate(variant, mode, variant_index)
         # TSV reconstruction is expensive; use it once, only for a weak page.
         if candidates:
-            best_candidate = max(candidates, key=_ocr_candidate_score)
-            best_variant_index = int(best_candidate.get("variant", 0))
-            box_variant = variants[min(best_variant_index, len(variants) - 1)]
-            box_candidate = _tesseract_box_candidate(box_variant, 6)
+            box_candidate = _tesseract_box_candidate(variants[2] if len(variants) > 2 else fast_variant, 6)
             if box_candidate.get("text"):
                 candidates.append(box_candidate)
 
@@ -673,7 +670,7 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle:
 
     best = max(candidates, key=lambda item: item.get("score", 0.0))
     best_text = str(best.get("text") or "")
-    return re.sub(r"(?<![A-Za-z0-9])S(?=\\s*BTL\\b)", "5", best_text, flags=re.I)
+    return re.sub(r"(?<![A-Za-z0-9])S(?=\s*BTL\\b)", "5", best_text, flags=re.I)
 
 
 def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
