@@ -1559,6 +1559,9 @@ def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
 
         # ── Pull new line_items out before mutating data ───────────────────────────
         new_line_items = data.pop("line_items", None)  # list or None
+        requested_location = (data.get("store_location") or grn.store_location or "").strip()
+        if not requested_location or not db.query(models.LocationModel).filter_by(code=requested_location).first():
+            raise HTTPException(422, f"Store location '{requested_location or '(empty)'}' does not exist.")
         if new_line_items is not None:
             target_location = (data.get("store_location") or grn.store_location or "").strip()
             if not target_location or not db.query(models.LocationModel).filter_by(code=target_location).first():
@@ -1588,6 +1591,7 @@ def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
             if recd <= 0 or accepted < 0 or accepted > recd:
                 raise HTTPException(400, "GRN quantities must be positive and accepted quantity cannot exceed received quantity.")
 
+        old_po_no = grn.po_no or ""
         old_store_location = grn.store_location or ""
         new_store_location = (data.get("store_location") or old_store_location).strip()
 
@@ -1699,6 +1703,26 @@ def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
         _parse_dates(data, ["grn_date"])
         for k, v in _clean(data, models.GRNModel).items():
             setattr(grn, k, v)
+
+        # Keep linked PO receipt totals in sync when a GRN is edited, moved to
+        # another PO, or has its accepted quantities changed.
+        affected_po_numbers = {value for value in (old_po_no, grn.po_no or "") if value}
+        for affected_po_no in affected_po_numbers:
+            purchase_order = db.query(models.PurchaseOrderModel).filter_by(po_no=affected_po_no).first()
+            if not purchase_order:
+                continue
+            received_total = sum(
+                float(receipt.accepted_qty or 0)
+                for receipt in db.query(models.GRNModel).filter_by(po_no=affected_po_no).all()
+            )
+            purchase_order.received_qty = received_total
+            purchase_order.balance_qty = max(0.0, float(purchase_order.qty_ordered or 0) - received_total)
+            if purchase_order.balance_qty == 0:
+                purchase_order.status = "Fully Received"
+            elif received_total > 0:
+                purchase_order.status = "Partial Received"
+            else:
+                purchase_order.status = "Sent to Vendor"
         try:
             db.commit()
         except Exception:
