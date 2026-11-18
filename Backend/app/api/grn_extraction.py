@@ -28,6 +28,11 @@ from app.document_engine import (
     run_ocr_candidates,
     score_line_item_rows,
 )
+from app.document_engine.table import (
+    choose_rate_amount,
+    extract_table_body_lines,
+    normalize_ocr_numeric_text,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -274,7 +279,14 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
     from difflib import SequenceMatcher
     from app.api.grn_serial_cleanup import resolve_description, suggest_master_items, clean_item_name, correct_item_name_from_master, correct_item_spelling
 
-    raw_lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
+    # Restrict parsing to the invoice table before attempting any item-master
+    # matching. This prevents bank, PAN and licence details from becoming stock rows.
+    table_text = normalize_ocr_numeric_text(text)
+    raw_lines = [
+        re.sub(r"\s+", " ", line).strip()
+        for line in extract_table_body_lines(table_text)
+        if line.strip()
+    ]
     masters = db.query(models.ItemModel).all()
     unit_re = r"(?:BOTTLES?|BTL|PACKETS?|PKT|PIECES?|PCS?\.?|NOS?\.?|MILLIMETERS?|MILLIMETRES?|MM|CENTIMETERS?|CENTIMETRES?|CM|METERS?|METRES?|MTRS?|MTR|KILOGRAMS?|KGS?|KG|GRAMS?|GMS?|MILLILITERS?|MILLILITRES?|ML|LIT(?:RE|ER)S?|LTRS?|LTR|ROLLS?|BOX(?:ES)?|SETS?|PAIRS?|WATTS?|VOLTS?|W|V|M|G)"
     number_re = r"\d[\d,]*(?:\.\d{1,2})?"
@@ -380,8 +392,9 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             qty = _number(qm.group(1))
             unit = qm.group(2).upper().rstrip(".")
             trailing_numbers = re.findall(number_re, body[qm.end():])
-            rate = _number(trailing_numbers[0]) if trailing_numbers else None
-            amount = _number(trailing_numbers[-1]) if len(trailing_numbers) >= 2 else None
+            rate, amount = choose_rate_amount(
+                (_number(value) for value in trailing_numbers), qty
+            )
             # Preserve the values read from the invoice even if the arithmetic
             # disagrees. The row-level review marker below warns the user rather
             # than silently erasing OCR evidence that may be correct for tax/discount
@@ -411,8 +424,9 @@ def _extract_item_rows(text: str, db: Session) -> list[dict[str, Any]]:
             if len(row_numbers) < 3:
                 continue
             qty = _number(row_numbers[0])
-            rate = _number(row_numbers[1])
-            amount = _number(row_numbers[-1])
+            rate, amount = choose_rate_amount(
+                (_number(value) for value in row_numbers[1:]), qty
+            )
             if qty is None or rate is None or amount is None or qty <= 0 or rate < 0 or amount < 0:
                 continue
             # Keep the source amount even when quantity × rate disagrees. The
@@ -930,17 +944,18 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
     best_rows: list[dict[str, Any]] = []
     best_score = float("-inf")
     all_candidate_rows: list[dict[str, Any]] = []
-    # Evaluate multiple segmentation modes and image variants. Selecting the
-    # candidate with the largest raw row count alone is unsafe: a noisy pass can
-    # create extra rows by splitting descriptions from their numeric columns.
-    # The shared OCR stage has already evaluated the image. Reuse one
-    # normalized grayscale variant here instead of repeating OCR over three
-    # variants (nine Tesseract passes). Keep alternate layout modes as fallbacks.
-    # Start with the normalized grayscale image. If its table rows are
-    # incomplete or inconsistent, continue through sharpened, thresholded and
-    # adaptive variants. A clean multi-row result still exits early below.
-    for variant_index, variant in enumerate(prepare_ocr_variants(image)):
-        for psm in (6, 4, 11):
+    # Keep the table pass bounded: the text OCR has already inspected the
+    # original image. Use the normalized image first, then one thresholded
+    # fallback with two layout modes. This caps the table parser at four TSV
+    # recognition passes instead of twelve, while retaining a recovery path.
+    variants = prepare_ocr_variants(image)
+    table_variants = [variants[0]]
+    if len(variants) > 2:
+        table_variants.append(variants[2])
+    elif len(variants) > 1:
+        table_variants.append(variants[1])
+    for variant_index, variant in enumerate(table_variants):
+        for psm in (6, 4):
             try:
                 data = pytesseract.image_to_data(
                     variant, config=f"--oem 3 --psm {psm}", output_type=Output.DICT
