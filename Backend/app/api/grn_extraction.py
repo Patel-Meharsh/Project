@@ -29,6 +29,7 @@ from app.document_engine.ocr import (
     _prepare_ocr_variants,
     _run_ocr_candidates,
 )
+from app.document_engine.pdf import extract_pdf_text_sources
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -1722,42 +1723,10 @@ def extract_grn_document(
         paddle_text_result: dict[str, str] = {}
         if content_type == "application/pdf":
             try:
-                from pypdf import PdfReader
-                reader = PdfReader(io.BytesIO(raw))
-                if len(reader.pages) > 30:
-                    raise HTTPException(413, "PDFs are limited to 30 pages.")
-                if not reader.pages:
-                    raise HTTPException(400, "The PDF contains no readable pages.")
-
-                # Extract embedded text before table parsing and scanned-page OCR.
-                # Scanned pages may return an empty string and are handled by the OCR fallback.
-                page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
-
-                supplemental_page_texts = list(page_texts)
-                table_text_by_page: list[str] = ["" for _ in page_texts]
-    
-                # Extract table cells as row-shaped text where possible.
-                try:
-                    import pdfplumber
-                    with pdfplumber.open(io.BytesIO(raw)) as pdf:
-                        for index, page in enumerate(pdf.pages[:len(page_texts)]):
-                            rows = []
-                            for table in (page.extract_tables() or []):
-                                for row in table:
-                                    cells = [re.sub(r"\s+", " ", (cell or "")).strip() for cell in row]
-                                    if any(cells):
-                                        rows.append(" | ".join(cells))
-                            if rows:
-                                table_text_by_page[index] = "\n".join(rows)
-                    supplemental_field_text = "\n".join(
-                        part for part in (
-                            "\n".join(supplemental_page_texts),
-                            "\n".join(value for value in table_text_by_page if value),
-                        ) if part
-                    ).strip()
-                except Exception:
-                    # Table extraction is optional; OCR/text extraction must still run.
-                    pass
+                pdf_sources = extract_pdf_text_sources(raw, max_pages=30)
+                page_texts = pdf_sources["page_texts"]
+                table_text_by_page = pdf_sources["table_text_by_page"]
+                supplemental_field_text = pdf_sources["supplemental_field_text"]
     
                 # Crucial fallback: a page is OCR'd if it has little embedded text OR
                 # embedded/table text produces no actual receipt-text line rows.
