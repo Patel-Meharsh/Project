@@ -20,19 +20,13 @@ from app.database import get_db, SessionLocal
 from app import models
 from app.api.routes import _get_current_user
 from app.document_engine import (
-    group_words_into_rows,
     line_item_warnings,
     normalize_alphanumeric,
     rank_candidates,
-    rows_to_text,
     score_line_item_rows,
 )
 from app.document_engine.ocr import (
-    _ocr_quality_score,
     _prepare_ocr_variants,
-    _paddleocr_candidate,
-    _tesseract_box_candidate,
-    _ocr_candidate_score,
     _run_ocr_candidates,
 )
 
