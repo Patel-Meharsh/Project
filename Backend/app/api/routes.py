@@ -1552,159 +1552,167 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
 def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
                current_user: models.UserModel = Depends(_get_current_user)):
     _require_role(current_user, "analyst")
-    grn = db.query(models.GRNModel).filter_by(grn_no=grn_no).first()
-    if not grn:
-        raise HTTPException(status_code=404, detail="GRN not found")
-
-    # ── Pull new line_items out before mutating data ───────────────────────────
-    new_line_items = data.pop("line_items", None)  # list or None
-    if new_line_items is not None:
-        target_location = (data.get("store_location") or grn.store_location or "").strip()
-        if not target_location or not db.query(models.LocationModel).filter_by(code=target_location).first():
-            raise HTTPException(422, f"Store location '{target_location or '(empty)'}' does not exist.")
-        for li in new_line_items:
-            if li.get("is_charge_line"):
-                continue
-            item_code = str(li.get("item_code") or "").strip()
-            if not item_code or not db.query(models.ItemModel).filter_by(code=item_code).first():
-                raise HTTPException(422, f"Item code '{item_code or '(empty)'}' does not exist in Item Master.")
-            vendor_code = str(li.get("vendor_code") or "").strip()
-            if vendor_code and not db.query(models.VendorModel).filter_by(code=vendor_code).first():
-                raise HTTPException(422, f"Vendor code '{vendor_code}' does not exist in Vendor Master.")
-            if li.get("rate_unreadable"):
-                raise HTTPException(422, f"Rate for item '{item_code}' was not read confidently. Correct it before updating the GRN.")
-            try:
-                recd = float(li.get("recd_qty") or 0)
-                accepted = float(li.get("accepted_qty") or 0)
-                rate = float(li.get("rate") or 0)
-            except (TypeError, ValueError):
-                raise HTTPException(400, "GRN quantities and rates must be valid numbers.")
-            if not all(math.isfinite(value) for value in (recd, accepted, rate)) or recd <= 0 or accepted <= 0 or accepted > recd or rate <= 0:
-                raise HTTPException(400, "GRN quantities must be positive, accepted quantity cannot exceed received quantity, and each stock item must have a valid positive rate.")
-    elif "accepted_qty" in data or "recd_qty" in data:
-        recd = float(data.get("recd_qty") or 0)
-        accepted = float(data.get("accepted_qty") or 0)
-        if recd <= 0 or accepted < 0 or accepted > recd:
-            raise HTTPException(400, "GRN quantities must be positive and accepted quantity cannot exceed received quantity.")
-
-    old_store_location = grn.store_location or ""
-    new_store_location = (data.get("store_location") or old_store_location).strip()
-
-    # ── Build OLD accepted-qty map from what was originally posted ────────────
     try:
-        old_lis = _json.loads(grn.line_items) if grn.line_items else []
-    except Exception:
-        old_lis = []
-    if not old_lis and grn.item_code:
-        # legacy single-item GRN (no line_items JSON)
-        old_lis = [{"item_code": grn.item_code, "vendor_code": grn.vendor_code or "",
-                    "accepted_qty": grn.accepted_qty or 0, "rate": grn.rate or 0}]
+        grn = db.query(models.GRNModel).filter_by(grn_no=grn_no).first()
+        if not grn:
+            raise HTTPException(status_code=404, detail="GRN not found")
 
-    old_accepted: dict = defaultdict(float)   # item_code → qty
-    for li in old_lis:
-        old_accepted[li.get("item_code", "")] += float(li.get("accepted_qty") or 0)
+        # ── Pull new line_items out before mutating data ───────────────────────────
+        new_line_items = data.pop("line_items", None)  # list or None
+        if new_line_items is not None:
+            target_location = (data.get("store_location") or grn.store_location or "").strip()
+            if not target_location or not db.query(models.LocationModel).filter_by(code=target_location).first():
+                raise HTTPException(422, f"Store location '{target_location or '(empty)'}' does not exist.")
+            for li in new_line_items:
+                if li.get("is_charge_line"):
+                    continue
+                item_code = str(li.get("item_code") or "").strip()
+                if not item_code or not db.query(models.ItemModel).filter_by(code=item_code).first():
+                    raise HTTPException(422, f"Item code '{item_code or '(empty)'}' does not exist in Item Master.")
+                vendor_code = str(li.get("vendor_code") or "").strip()
+                if vendor_code and not db.query(models.VendorModel).filter_by(code=vendor_code).first():
+                    raise HTTPException(422, f"Vendor code '{vendor_code}' does not exist in Vendor Master.")
+                if li.get("rate_unreadable"):
+                    raise HTTPException(422, f"Rate for item '{item_code}' was not read confidently. Correct it before updating the GRN.")
+                try:
+                    recd = float(li.get("recd_qty") or 0)
+                    accepted = float(li.get("accepted_qty") or 0)
+                    rate = float(li.get("rate") or 0)
+                except (TypeError, ValueError):
+                    raise HTTPException(400, "GRN quantities and rates must be valid numbers.")
+                if not all(math.isfinite(value) for value in (recd, accepted, rate)) or recd <= 0 or accepted <= 0 or accepted > recd or rate <= 0:
+                    raise HTTPException(400, "GRN quantities must be positive, accepted quantity cannot exceed received quantity, and each stock item must have a valid positive rate.")
+        elif "accepted_qty" in data or "recd_qty" in data:
+            recd = float(data.get("recd_qty") or 0)
+            accepted = float(data.get("accepted_qty") or 0)
+            if recd <= 0 or accepted < 0 or accepted > recd:
+                raise HTTPException(400, "GRN quantities must be positive and accepted quantity cannot exceed received quantity.")
 
-    # ── Build NEW accepted-qty map from incoming payload ──────────────────────
-    new_lis = new_line_items if new_line_items is not None else old_lis
-    new_accepted: dict = defaultdict(float)
-    new_rates:    dict = {}
-    new_vendors:  dict = {}
-    for li in new_lis:
-        code = li.get("item_code", "")
-        new_accepted[code] += float(li.get("accepted_qty") or 0)
-        new_rates[code]    = float(li.get("rate") or 0)
-        new_vendors[code]  = li.get("vendor_code", "")
+        old_store_location = grn.store_location or ""
+        new_store_location = (data.get("store_location") or old_store_location).strip()
 
-    # ── Apply inventory deltas ────────────────────────────────────────────────
-    location_changed = new_store_location and (new_store_location != old_store_location)
+        # ── Build OLD accepted-qty map from what was originally posted ────────────
+        try:
+            old_lis = _json.loads(grn.line_items) if grn.line_items else []
+        except Exception:
+            old_lis = []
+        if not old_lis and grn.item_code:
+            # legacy single-item GRN (no line_items JSON)
+            old_lis = [{"item_code": grn.item_code, "vendor_code": grn.vendor_code or "",
+                        "accepted_qty": grn.accepted_qty or 0, "rate": grn.rate or 0}]
 
-    if location_changed:
-        # Reverse every item from the old location
-        for code, old_qty in old_accepted.items():
-            if not code or not old_store_location:
-                continue
-            inv = db.query(models.InventoryModel).filter_by(
-                item_code=code, location_code=old_store_location).first()
-            if inv and old_qty > 0:
-                snap = _inv_snapshot(inv)
-                inv.stock_in = max(0, inv.stock_in - old_qty)
+        old_accepted: dict = defaultdict(float)   # item_code → qty
+        for li in old_lis:
+            old_accepted[li.get("item_code", "")] += float(li.get("accepted_qty") or 0)
+
+        # ── Build NEW accepted-qty map from incoming payload ──────────────────────
+        new_lis = new_line_items if new_line_items is not None else old_lis
+        new_accepted: dict = defaultdict(float)
+        new_rates:    dict = {}
+        new_vendors:  dict = {}
+        for li in new_lis:
+            code = li.get("item_code", "")
+            new_accepted[code] += float(li.get("accepted_qty") or 0)
+            new_rates[code]    = float(li.get("rate") or 0)
+            new_vendors[code]  = li.get("vendor_code", "")
+
+        # ── Apply inventory deltas ────────────────────────────────────────────────
+        location_changed = new_store_location and (new_store_location != old_store_location)
+
+        if location_changed:
+            # Reverse every item from the old location
+            for code, old_qty in old_accepted.items():
+                if not code or not old_store_location:
+                    continue
+                inv = db.query(models.InventoryModel).filter_by(
+                    item_code=code, location_code=old_store_location).first()
+                if inv and old_qty > 0:
+                    snap = _inv_snapshot(inv)
+                    inv.stock_in = max(0, inv.stock_in - old_qty)
+                    db.flush()
+                    _log(db, "grn.updated", "grn", grn_no,
+                         location_code=old_store_location, item_code=code,
+                         qty=-old_qty, before=snap, after=_inv_snapshot(inv),
+                         meta={"grn_no": grn_no, "reason": "location_change_reversal"})
+
+            # Credit every item at the new location
+            for code, new_qty in new_accepted.items():
+                if not code or not new_store_location or not (new_qty > 0):
+                    continue
+                rate   = new_rates.get(code, 0)
+                vendor = new_vendors.get(code, "")
+                inv    = _get_or_create_inv(db, code, new_store_location, vendor, rate)
+                snap   = _inv_snapshot(inv)
+                inv.stock_in += new_qty
+                if rate > 0: inv.rate = rate
+                closing = inv.opening_stock + inv.stock_in - inv.stock_out
+                inv.value = closing * (inv.rate or 0)
                 db.flush()
                 _log(db, "grn.updated", "grn", grn_no,
-                     location_code=old_store_location, item_code=code,
-                     qty=-old_qty, before=snap, after=_inv_snapshot(inv),
-                     meta={"grn_no": grn_no, "reason": "location_change_reversal"})
+                     location_code=new_store_location, item_code=code, vendor_code=vendor,
+                     qty=new_qty, rate=rate, before=snap, after=_inv_snapshot(inv),
+                     meta={"grn_no": grn_no, "reason": "location_change_credit"})
+        else:
+            # Same location — apply per-item delta (new_accepted − old_accepted)
+            all_codes = set(old_accepted) | set(new_accepted)
+            for code in all_codes:
+                if not code or not new_store_location:
+                    continue
+                delta  = new_accepted.get(code, 0.0) - old_accepted.get(code, 0.0)
+                if delta == 0:
+                    continue
+                rate   = new_rates.get(code, 0)
+                vendor = new_vendors.get(code, "")
+                inv    = _get_or_create_inv(db, code, new_store_location, vendor, rate)
+                snap   = _inv_snapshot(inv)
+                inv.stock_in = max(0, inv.stock_in + delta)
+                if rate > 0: inv.rate = rate
 
-        # Credit every item at the new location
-        for code, new_qty in new_accepted.items():
-            if not code or not new_store_location or not (new_qty > 0):
-                continue
-            rate   = new_rates.get(code, 0)
-            vendor = new_vendors.get(code, "")
-            inv    = _get_or_create_inv(db, code, new_store_location, vendor, rate)
-            snap   = _inv_snapshot(inv)
-            inv.stock_in += new_qty
-            if rate > 0: inv.rate = rate
-            closing = inv.opening_stock + inv.stock_in - inv.stock_out
-            inv.value = closing * (inv.rate or 0)
-            db.flush()
-            _log(db, "grn.updated", "grn", grn_no,
-                 location_code=new_store_location, item_code=code, vendor_code=vendor,
-                 qty=new_qty, rate=rate, before=snap, after=_inv_snapshot(inv),
-                 meta={"grn_no": grn_no, "reason": "location_change_credit"})
-    else:
-        # Same location — apply per-item delta (new_accepted − old_accepted)
-        all_codes = set(old_accepted) | set(new_accepted)
-        for code in all_codes:
-            if not code or not new_store_location:
-                continue
-            delta  = new_accepted.get(code, 0.0) - old_accepted.get(code, 0.0)
-            if delta == 0:
-                continue
-            rate   = new_rates.get(code, 0)
-            vendor = new_vendors.get(code, "")
-            inv    = _get_or_create_inv(db, code, new_store_location, vendor, rate)
-            snap   = _inv_snapshot(inv)
-            inv.stock_in = max(0, inv.stock_in + delta)
-            if rate > 0: inv.rate = rate
+                closing = inv.opening_stock + inv.stock_in - inv.stock_out
+                inv.value = closing * (inv.rate or 0)
 
-            closing = inv.opening_stock + inv.stock_in - inv.stock_out
-            inv.value = closing * (inv.rate or 0)
+                db.flush()
+                _log(db, "grn.updated", "grn", grn_no,
+                     location_code=new_store_location, item_code=code, vendor_code=vendor,
+                     qty=delta, rate=rate, before=snap, after=_inv_snapshot(inv),
+                     meta={"grn_no": grn_no, "delta": delta})
 
-            db.flush()
-            _log(db, "grn.updated", "grn", grn_no,
-                 location_code=new_store_location, item_code=code, vendor_code=vendor,
-                 qty=delta, rate=rate, before=snap, after=_inv_snapshot(inv),
-                 meta={"grn_no": grn_no, "delta": delta})
+        # ── Persist updated GRN fields ─────────────────────────────────────────────
+        if new_line_items is not None:
+            data["line_items"] = _json.dumps(new_line_items) if new_line_items else None
+        #recompute totals from line items
+            total_recd = sum(float(li.get("recd_qty") or 0) for li in new_line_items)
+            total_accepted = sum(float(li.get("accepted_qty") or 0) for li in new_line_items)
 
-    # ── Persist updated GRN fields ─────────────────────────────────────────────
-    if new_line_items is not None:
-        data["line_items"] = _json.dumps(new_line_items) if new_line_items else None
-    #recompute totals from line items
-        total_recd = sum(float(li.get("recd_qty") or 0) for li in new_line_items)
-        total_accepted = sum(float(li.get("accepted_qty") or 0) for li in new_line_items)
+            data["recd_qty"] = total_recd
+            data["accepted_qty"] = total_accepted
+            data["rejected_qty"] = total_recd - total_accepted
 
-        data["recd_qty"] = total_recd
-        data["accepted_qty"] = total_accepted
-        data["rejected_qty"] = total_recd - total_accepted
+            total_value = sum(
+                float(li.get("line_amount") or 0) if li.get("is_charge_line")
+                else float(li.get("accepted_qty") or 0) * float(li.get("rate") or 0)
+                for li in new_line_items
+            )
 
-        total_value = sum(
-            float(li.get("line_amount") or 0) if li.get("is_charge_line")
-            else float(li.get("accepted_qty") or 0) * float(li.get("rate") or 0)
-            for li in new_line_items
-        )
+            data["total_value"] = total_value
 
-        data["total_value"] = total_value
+        _parse_dates(data, ["grn_date"])
+        for k, v in _clean(data, models.GRNModel).items():
+            setattr(grn, k, v)
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise HTTPException(500, "GRN update failed. Inventory and GRN changes were rolled back; please retry.")
+        db.refresh(grn)
+        return {"grn_no": grn.grn_no}
 
-    _parse_dates(data, ["grn_date"])
-    for k, v in _clean(data, models.GRNModel).items():
-        setattr(grn, k, v)
-    try:
-        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception:
         db.rollback()
-        raise HTTPException(500, "GRN update failed. Inventory and GRN changes were rolled back; please retry.")
-    db.refresh(grn)
-    return {"grn_no": grn.grn_no}
+        raise HTTPException(500, "GRN update failed. All GRN and inventory changes were rolled back; please retry.")
 
 # ─── ISSUANCE ─────────────────────────────────────────────────────────────────
 @router.get("/issuances")
