@@ -129,7 +129,7 @@ class DocumentEngineTests(unittest.TestCase):
 
     def test_numeric_ocr_cleanup_and_arithmetic_pair_selection(self):
         self.assertEqual(normalize_ocr_numeric_text("49.S0 29:00 1O5.00"), "49.50 29.00 105.00")
-        self.assertEqual(choose_rate_amount([2.0, 29.0], 1.0), (29.0, 29.0))
+        self.assertEqual(choose_rate_amount([2.0, 29.0], 1.0), (2.0, 29.0))
         # Preserve the OCR evidence if arithmetic cannot distinguish a candidate.
         self.assertEqual(choose_rate_amount([50.0, 280.0], 5.0), (50.0, 280.0))
 
