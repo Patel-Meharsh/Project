@@ -2146,24 +2146,6 @@ def extract_grn_document(
                 if not reader.pages:
                     raise HTTPException(400, "The PDF contains no readable pages.")
     
-                # Read embedded text first; scanned pages commonly return empty text.
-                page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
-                # Fast path for verified digital PDFs: exact invoice identity is
-                # enough to build the editable reference draft, so skip pdfplumber,
-                # page rendering, OCR and generic row parsing entirely.
-                from app.api._ledger_reference import find_reference_invoice, build_reference_draft
-                embedded_reference_text = "\n".join(page_texts)
-                reference_invoice = find_reference_invoice(embedded_reference_text)
-                if reference_invoice:
-                    reference_result = build_reference_draft(reference_invoice, embedded_reference_text, processing_db)
-                    reference_result["filename"] = (file.filename or "document")[:160]
-                    reference_result["document_type"] = "pdf"
-                    logger.info(
-                        "GRN reference invoice recognized from embedded PDF text (%s) in %.2fs",
-                        reference_invoice["invoice_no"],
-                        time.perf_counter() - extraction_started,
-                    )
-                    return reference_result
                 supplemental_page_texts = list(page_texts)
                 table_text_by_page: list[str] = ["" for _ in page_texts]
     
@@ -2223,21 +2205,6 @@ def extract_grn_document(
                             image = Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
                             ocr_text = _run_ocr_candidates(image, modes=(6, 4, 11), include_paddle=False)
                             if ocr_text:
-                                # A scanned page may also be a verified reference
-                                # invoice. Check its identity immediately after its
-                                # first OCR pass, before generic row parsing runs.
-                                from app.api._ledger_reference import find_reference_invoice, build_reference_draft
-                                scanned_reference = find_reference_invoice(ocr_text)
-                                if scanned_reference:
-                                    reference_result = build_reference_draft(scanned_reference, ocr_text, processing_db)
-                                    reference_result["filename"] = (file.filename or "document")[:160]
-                                    reference_result["document_type"] = "pdf"
-                                    logger.info(
-                                        "GRN reference invoice recognized from scanned PDF page (%s) in %.2fs",
-                                        scanned_reference["invoice_no"],
-                                        time.perf_counter() - extraction_started,
-                                    )
-                                    return reference_result
                                 # Preserve OCR text for shared field extraction even when embedded
                                 # text wins item-row selection (or vice versa).
                                 supplemental_field_text = "\n".join(
@@ -2280,9 +2247,7 @@ def extract_grn_document(
             try:
                 from PIL import Image
                 image = Image.open(io.BytesIO(raw))
-                # Run the local image OCR pipeline first. K. P. Mat's exact-ID
-                # reference check happens immediately afterward, before line parsing.
-                # Handles phone rotation, contrast, upscaling, and several layout modes.
+                # Run the local image OCR pipeline with rotation, contrast, upscaling, and multiple layout modes.
                 text = _run_ocr_candidates(
                     image, modes=(6, 4, 11), paddle_text_out=paddle_text_result
                 )
@@ -2296,26 +2261,6 @@ def extract_grn_document(
             except Exception as exc:
                 raise HTTPException(400, "The image could not be processed. Try a clear PNG or JPG scan.") from exc
     
-        # The four verified PDF references retain their exact-ID matching path.
-        # K. P. Mat's image is checked separately after OCR, without relying on
-        # its damaged "Invoice No." label.
-        from app.api._ledger_reference import find_reference_invoice, build_reference_draft
-        combined_reference_text = "\n".join(
-            part for part in (text, supplemental_field_text) if part
-        )
-        if content_type == "application/pdf":
-            reference_invoice = find_reference_invoice(combined_reference_text)
-            if reference_invoice:
-                reference_result = build_reference_draft(reference_invoice, combined_reference_text, processing_db)
-                reference_result["filename"] = (file.filename or "document")[:160]
-                reference_result["document_type"] = "pdf"
-                logger.info(
-                    "GRN reference PDF recognized (%s) in %.2fs",
-                    reference_invoice["invoice_no"],
-                    time.perf_counter() - extraction_started,
-                )
-                return reference_result
-
         # Use the selected text for item parsing, but let the common field extractor
         # inspect every available text source. This prevents choosing a table-focused
         # candidate from accidentally discarding a better-read supplier/date header.
@@ -2326,52 +2271,6 @@ def extract_grn_document(
             if part
         )
         keyword_fields = extract_header_fields(combined_header_text, processing_db)
-
-        # K. P. Mat image preflight: search OCR text for the complete saved invoice
-        # ID independently of its damaged label. The reference helper also requires
-        # the printed vendor name or GSTIN, so a coincidental "7518" is insufficient.
-        if content_type != "application/pdf":
-            from app.api._ledger_reference import find_reference_invoice_from_unlabelled_text
-            image_reference = find_reference_invoice_from_unlabelled_text(
-                combined_header_text,
-                vendor_name=keyword_fields.get("vendor_name"),
-                invoice_date=keyword_fields.get("grn_date"),
-            )
-            if image_reference:
-                reference_result = build_reference_draft(
-                    image_reference, combined_header_text, processing_db
-                )
-                reference_result["filename"] = (file.filename or "document")[:160]
-                reference_result["document_type"] = "image"
-                logger.info(
-                    "GRN K. P. Mat reference image matched by complete invoice ID and vendor identity in %.2fs",
-                    time.perf_counter() - extraction_started,
-                )
-                return reference_result
-
-        # Header-only preflight: if the exact invoice number and vendor identity
-        # identify one of the four reference PDFs, return its stored draft before
-        # generic line-item parsing or PDF table/OCR extraction begins.
-        if content_type == "application/pdf":
-            from app.api._ledger_reference import find_reference_invoice_by_identity
-            header_reference = find_reference_invoice_by_identity(
-                invoice_no=keyword_fields.get("invoice_no"),
-                vendor_name=keyword_fields.get("vendor_name"),
-                filename=file.filename,
-            )
-            if header_reference:
-                reference_result = build_reference_draft(
-                    header_reference, combined_header_text, processing_db
-                )
-                reference_result["filename"] = (file.filename or "document")[:160]
-                reference_result["document_type"] = "pdf"
-                logger.info(
-                    "GRN reference PDF matched before line-item extraction (%s / %s) in %.2fs",
-                    header_reference["vendor_name"],
-                    header_reference["invoice_no"],
-                    time.perf_counter() - extraction_started,
-                )
-                return reference_result
 
         result = _extract_fields(text, processing_db)
         fields = result.get("fields", {})
@@ -2428,28 +2327,6 @@ def extract_grn_document(
                 result.get("warnings", []) + supplemental_result.get("warnings", [])
             ))
     
-        if content_type == "application/pdf":
-            from app.api._ledger_reference import find_reference_invoice_by_identity
-            identity_reference = find_reference_invoice_by_identity(
-                invoice_no=fields.get("invoice_no"),
-                vendor_name=fields.get("vendor_name"),
-                gstin=fields.get("gst_no"),
-                filename=file.filename,
-            )
-            if identity_reference:
-                reference_result = build_reference_draft(
-                    identity_reference, combined_header_text, processing_db
-                )
-                reference_result["filename"] = (file.filename or "document")[:160]
-                reference_result["document_type"] = "pdf"
-                logger.info(
-                    "GRN reference PDF matched by exact invoice/vendor identity (%s / %s) in %.2fs",
-                    identity_reference["vendor_name"],
-                    identity_reference["invoice_no"],
-                    time.perf_counter() - extraction_started,
-                )
-                return reference_result
-
         # Photos/scans need the same column-aware strategy as digital PDFs. If the
         # OCR bounding boxes identify a table, use only those rows rather than
         # unrelated text matches elsewhere on the page.
@@ -2572,32 +2449,6 @@ def extract_grn_document(
                         "One or more invoice descriptions could not be matched confidently to the item master."
                     )
     
-        # If the invoice number/GSTIN could not identify a reference invoice,
-        # compare the extracted item rows against all five verified reference
-        # invoices. Only a high-coverage, unambiguous signature is accepted.
-        from app.api._ledger_reference import (
-            find_reference_invoice_from_rows,
-            build_reference_draft,
-        )
-        row_matched_reference = (
-            find_reference_invoice_from_rows(result.get("line_items", []))
-            if content_type == "application/pdf" else None
-        )
-        if row_matched_reference:
-            reference_result = build_reference_draft(
-                row_matched_reference, combined_reference_text, processing_db
-            )
-            reference_result["filename"] = (file.filename or "document")[:160]
-            reference_result["document_type"] = (
-                "pdf" if content_type == "application/pdf" else "image"
-            )
-            logger.info(
-                "Reference invoice recognized from line-item signature (%s) in %.2fs",
-                row_matched_reference["vendor_name"],
-                time.perf_counter() - extraction_started,
-            )
-            return reference_result
-
         extracted_rows = result.get("line_items", [])
         if not extracted_rows:
             result["warnings"] = list(dict.fromkeys(
