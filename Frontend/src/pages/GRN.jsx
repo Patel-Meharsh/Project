@@ -404,10 +404,10 @@ const extractGRNDocument = async (file) => {
     }))
     const normalizeItemName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
     const cleanExtractedName = value => String(value || '')
-      .replace(/^\\s*(?:sr\\.?\\s*no\\.?\\s*)?\\d{1,3}\\s*[.)-]\\s*/i, '')
-      .replace(/^\\s*(?:5|\\d{1,3})\\s+(?=(?:carting|freight|transport|delivery\\s+charges?|packing|handling|loading|unloading)\\b)/i, '')
-      .replace(/\\s*\\(\\s*\\d+(?:\\.\\d+)?\\s*%\\s*\\)\\s*$/i, '')
-      .replace(/^\\s*(?:5|\\d{1,3})\\s+(?=[a-z])/i, (prefix, offset, whole) => {
+      .replace(/^\s*(?:sr\.?\s*no\.?\s*)?\d{1,3}\s*[.)-]\s*/i, '')
+      .replace(/^\s*(?:5|\d{1,3})\s+(?=(?:carting|freight|transport|delivery\s+charges?|packing|handling|loading|unloading)\b)/i, '')
+      .replace(/\s*\(\s*\d+(?:\.\d+)?\s*%\s*\)\s*$/i, '')
+      .replace(/^\s*(?:5|\d{1,3})\s+(?=[a-z])/i, (prefix, offset, whole) => {
         // Treat a bare leading number as a serial only if removing it exactly
         // matches a known item. This protects real product numbers such as 15W.
         const withoutSerial = whole.slice(prefix.length).trim()
