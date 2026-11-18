@@ -38,21 +38,21 @@ def extract_pdf_text_sources(raw: bytes, max_pages: int = 30) -> dict[str, Any]:
                 for table in (page.extract_tables() or []):
                     for row in table:
                         cells = [
-                            re.sub(r"\\s+", " ", (cell or "")).strip()
+                            re.sub(r"\s+", " ", (cell or "")).strip()
                             for cell in row
                         ]
                         if any(cells):
                             rows.append(" | ".join(cells))
                 if rows:
-                    table_text_by_page[index] = "\\n".join(rows)
+                    table_text_by_page[index] = "\n".join(rows)
     except Exception:
         # Embedded text remains useful even if optional table detection fails.
         pass
 
-    supplemental_field_text = "\\n".join(
+    supplemental_field_text = "\n".join(
         part for part in (
-            "\\n".join(page_texts),
-            "\\n".join(value for value in table_text_by_page if value),
+            "\n".join(page_texts),
+            "\n".join(value for value in table_text_by_page if value),
         ) if part
     ).strip()
 
