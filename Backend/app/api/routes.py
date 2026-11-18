@@ -21,6 +21,7 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from typing import Optional
 import datetime
 import calendar
+import math
 import json as _json
 from datetime import date
 from collections import defaultdict
