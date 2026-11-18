@@ -26,6 +26,7 @@ from app.document_engine import (
     prepare_ocr_variants,
     rank_candidates,
     run_ocr_candidates,
+    run_header_ocr,
     score_line_item_rows,
 )
 from app.document_engine.table import (
@@ -881,7 +882,7 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
         }:
             return "ignore_serial"
         if value in {
-            "description", "particulars", "item", "items", "product", "products",
+            "description", "escription", "particulars", "item", "items", "product", "products",
             "goods", "details", "itemdescription", "descriptionofgoods",
             "descriptionofgoodsandservices", "descriptionofproductservice",
             "descriptionofproducts", "nameofitem", "itemname", "goodsname",
@@ -1843,6 +1844,15 @@ def extract_grn_document(
 
         result = _extract_fields(text, processing_db)
         fields = result.get("fields", {})
+
+        # If the full-page OCR missed the invoice identifier, make one targeted
+        # header-only pass. This is especially useful when the printed "In" in
+        # "Invoice No." is smudged but the identifier itself remains legible.
+        if not fields.get("invoice_no") and content_type != "application/pdf":
+            header_text = run_header_ocr(image)
+            recovered_invoice_no = _invoice_number_from_nearby_label(header_text)
+            if recovered_invoice_no:
+                fields["invoice_no"] = recovered_invoice_no
     
         # If the invoice cannot be matched to a vendor master record, use the
         # uploaded document's filename (without .pdf/.jpg/.jpeg/.png) as a safer
