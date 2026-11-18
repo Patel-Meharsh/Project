@@ -62,8 +62,8 @@ class DocumentEngineTests(unittest.TestCase):
 
     def test_invoice_ocr_quality_rewards_readable_header_and_item_rows(self):
         text = (
-            "TAX INVOICE\\nSupplier: Example Electricals\\n"
-            "GSTIN 24ABCDE1234F1Z5\\nInvoice No: EX/123/26-27\\n"
+            "TAX INVOICE\nSupplier: Example Electricals\n"
+            "GSTIN 24ABCDE1234F1Z5\nInvoice No: EX/123/26-27\n"
             "LED Tube Light 2 PCS 100.00 200.00"
         )
         self.assertGreater(_ocr_quality_score(text), _ocr_quality_score("### ???"))
