@@ -2131,6 +2131,9 @@ def extract_grn_document(
                             )
                 except Exception:
                     logger.exception("GRN image table parser failed; retaining text candidate.")
+                    result.setdefault("warnings", []).append(
+                        "Image-table reconstruction could not complete. Review the text-extracted line items carefully before saving."
+                    )
                 finally:
                     image_table_seconds = time.perf_counter() - image_table_started
     
@@ -2191,8 +2194,11 @@ def extract_grn_document(
                             coordinate_items.extend(chosen_page_rows)
                 coordinate_items.sort(key=lambda row: row.get("_source_page_index", 0))
             except Exception:
-                # Text extraction still returns its available rows if OCR is unavailable.
-                pass
+                # Keep available text/coordinate rows, but make the fallback failure visible.
+                logger.exception("GRN scanned-PDF page reconstruction failed; retaining available rows.")
+                result.setdefault("warnings", []).append(
+                    "One or more scanned PDF pages could not be reconstructed with OCR/table layout. Review the extracted rows carefully before saving."
+                )
             text_items = [
                 row for row in result.get("line_items", [])
                 if row.get("source") == "receipt_text"
