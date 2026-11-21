@@ -2089,7 +2089,7 @@ def extract_grn_document(
                 if re.match(r"^\s*[\W_]*\d{1,3}\s*[.)-]?\s+[A-Za-z]", line)
             )
             has_table_metadata = bool(re.search(
-                r"\b(?:hsn(?:\s*/\s*sac)?|gst\s*rate|disc(?:ount)?\.?\s*%|d\s*%)(?![a-z])",
+                r"\b(?:hsn(?:\s*/\s*sac)?|gst(?!in)(?:\s*rate)?|disc(?:ount)?\.?\s*%|d\s*%)(?![a-z])",
                 text,
                 re.I,
             ))
