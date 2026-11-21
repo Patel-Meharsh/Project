@@ -181,6 +181,7 @@ export default function GRN() {
   const [itemMasterDraft, setItemMasterDraft] = useState(null)
   const [createdVendorRecords, setCreatedVendorRecords] = useState([])
   const [vendorSetupDraft, setVendorSetupDraft] = useState(null)
+  const [showVendorSetupModal, setShowVendorSetupModal] = useState(false)
   const [savingInvoiceVendor, setSavingInvoiceVendor] = useState(false)
   const [savingMasterItem, setSavingMasterItem] = useState(false)
   const [pendingMasterIndexes, setPendingMasterIndexes] = useState([])
@@ -237,6 +238,7 @@ export default function GRN() {
     // Keep the active invoice draft and its unmatched-item queue in memory when
     // the GRN panel is closed. Reopening GRN can resume review without OCR again.
     setItemMasterDraft(null)
+    setShowVendorSetupModal(false)
     setExtractingDocument(false)
     if (!pendingMasterIndexes.length) {
       setExtractionResult(null)
@@ -269,6 +271,8 @@ export default function GRN() {
     setLineItems([emptyRow()])
     setPendingMasterIndexes([])
     setItemMasterDraft(null)
+    setVendorSetupDraft(null)
+    setShowVendorSetupModal(false)
     setCreatedVendorRecords([])
     setExtractionResult(null)
     setExtractingDocument(false)
@@ -280,6 +284,7 @@ export default function GRN() {
     setShowDraftChoice(false)
     setEditTarget(null)
     setRowError(false)
+    setShowVendorSetupModal(Boolean(vendorSetupDraft))
     if (pendingMasterIndexes.length > 0) {
       const index = pendingMasterIndexes[0]
       const row = lineItems[index]
@@ -377,6 +382,8 @@ const extractGRNDocument = async (file) => {
   extractionAbortControllerRef.current = controller
   setExtractingDocument(true)
   setExtractionResult(null)
+  setVendorSetupDraft(null)
+  setShowVendorSetupModal(false)
   // Start each upload from a clean document draft, including when extraction fails.
   // Otherwise values from a previously uploaded invoice can remain visible and be saved.
   setForm(f => ({
@@ -427,7 +434,10 @@ const extractGRNDocument = async (file) => {
       fields.vendor_name || extractedRows.find(row => row.vendor_name)?.vendor_name || ''
     ).trim()
     const invoiceVendorGstin = normalizeGstin(
-      fields.vendor_gst_no || fields.gst_no || extractedRows.find(row => row.vendor_gst_no)?.vendor_gst_no || ''
+      fields.vendor_gst_no || fields.gst_no || fields.vendor_gstin || fields.gstin ||
+      extractedRows.find(row => row.vendor_gst_no)?.vendor_gst_no ||
+      extractedRows.find(row => row.gst_no)?.gst_no ||
+      extractedRows.find(row => row.vendor_gstin)?.vendor_gstin || ''
     )
     const latestVendors = await vendorApi.getAll().catch(() => [...vendors, ...createdVendorRecords])
     if (controller.signal.aborted) return
@@ -539,9 +549,12 @@ const extractGRNDocument = async (file) => {
     // Vendor setup is independent of Item Master setup. Ask for a new vendor
     // even when every invoice item already exists in the Item Master.
     if (!matchedVendor) {
+      const firstExtractedVendorGstin = normalizeGstin(
+        suggestedRows.find(row => row.vendor_gst_no)?.vendor_gst_no || invoiceVendorGstin
+      )
       setVendorSetupDraft({
-        name: invoiceVendorName,
-        gst_no: invoiceVendorGstin,
+        name: invoiceVendorName || suggestedRows.find(row => row.vendor_name)?.vendor_name || '',
+        gst_no: firstExtractedVendorGstin,
         category: 'Other',
         contact_person: '',
         phone: '',
@@ -551,6 +564,7 @@ const extractGRNDocument = async (file) => {
         pan: '',
         payment_terms: 'Net 30',
       })
+      setShowVendorSetupModal(true)
       setItemMasterDraft(null)
     } else if (unmatched.length) {
       const first = suggestedRows[unmatched[0]]
@@ -617,6 +631,7 @@ const saveInvoiceVendor = async () => {
       vendor_gst_no: normalizeGstin(savedVendor.gst_no || gstin),
     })))
     setVendorSetupDraft(null)
+    setShowVendorSetupModal(false)
     await refetch()
     toast.success(existing
       ? `Matched existing vendor ${savedVendor.code}.`
@@ -897,6 +912,8 @@ const createGRN = async () => {
   // A successful save ends this in-memory invoice review session.
   setPendingMasterIndexes([])
   setItemMasterDraft(null)
+  setVendorSetupDraft(null)
+  setShowVendorSetupModal(false)
   setExtractionResult(null)
   setSelectedDocumentName('')
   closeSlideOver()
@@ -1063,15 +1080,16 @@ const createGRN = async () => {
         </div>
       )}
 
-      {vendorSetupDraft && (
+      {showVendorSetupModal && vendorSetupDraft && (
         <div role="presentation" style={{ position:'fixed', inset:0, zIndex:1250, background:'rgba(15,23,42,.6)', display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
-          <div role="dialog" aria-modal="true" aria-labelledby="grn-new-vendor-title" style={{ width:'100%', maxWidth:560, maxHeight:'90vh', overflowY:'auto', background:'#fff', borderRadius:14, padding:22, boxShadow:'0 20px 60px rgba(0,0,0,.2)' }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="grn-new-vendor-title" style={{ width:'100%', maxWidth:560, maxHeight:'90vh', overflowY:'auto', background:'#fff', borderRadius:14, padding:22, boxShadow:'0 20px 60px rgba(0,0,0,.2)', fontFamily:"'DM Sans', sans-serif", color:'var(--ink)' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, marginBottom:8 }}>
               <div>
-                <h3 id="grn-new-vendor-title" style={{ margin:0, fontSize:18, color:'#0f172a' }}>New vendor not found</h3>
+                <div style={{ fontSize:11, color:'#64748b', fontWeight:700, letterSpacing:'.06em', textTransform:'uppercase' }}>Invoice vendor</div>
+                <h3 id="grn-new-vendor-title" style={{ margin:'5px 0 6px', fontSize:20, color:'var(--ink)', fontFamily:"'Fraunces', serif", fontWeight:600 }}>Add vendor to Vendor Directory</h3>
                 <p style={{ margin:'6px 0 0', color:'#64748b', fontSize:12 }}>We couldn't match this supplier in the Vendor Directory. Confirm the details extracted from the invoice to add it.</p>
               </div>
-              <span style={{ fontSize:11, color:'#b45309', background:'#fffbeb', padding:'5px 8px', borderRadius:6 }}>Vendor setup required</span>
+              <span style={{ fontSize:11, color:'#64748b', fontWeight:600 }}>Review extracted details</span>
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:12, marginTop:18 }}>
               <label style={{ fontSize:12, color:'#475569' }}>Vendor name *
@@ -1083,7 +1101,7 @@ const createGRN = async () => {
             </div>
             {!isAdmin && <p role="alert" style={{ color:'#b91c1c', fontSize:12, marginTop:12 }}>Your account does not have permission to create Vendor Directory records. Ask an admin to add this vendor.</p>}
             <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:20 }}>
-              <button type="button" className="btn btn-outline" disabled={savingInvoiceVendor} onClick={()=>setVendorSetupDraft(null)}>Close for now</button>
+              <button type="button" className="btn btn-outline" disabled={savingInvoiceVendor} onClick={()=>setShowVendorSetupModal(false)}>Review later</button>
               <button type="button" className="btn btn-accent" disabled={savingInvoiceVendor || !isAdmin} onClick={saveInvoiceVendor}>{savingInvoiceVendor ? 'Saving…' : 'Save Vendor & Continue'}</button>
             </div>
           </div>
@@ -1230,6 +1248,15 @@ const createGRN = async () => {
                   <button type="button" className="btn btn-outline" onClick={cancelDocumentExtraction} style={{ padding:'3px 10px', fontSize:12 }}>
                     Cancel reading
                   </button>
+                </div>
+              )}
+              {extractionResult && vendorSetupDraft && !showVendorSetupModal && (
+                <div style={{ marginTop:10, padding:10, border:'1px solid #f4c66a', borderRadius:8, background:'#fffbeb', display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
+                  <div style={{ fontSize:12, color:'#92400e' }}>
+                    <strong>Vendor details still need review.</strong>
+                    <div>Your invoice and extracted GRN data are retained. You do not need to upload the invoice again.</div>
+                  </div>
+                  <button type="button" className="btn btn-accent" onClick={()=>setShowVendorSetupModal(true)}>Review vendor</button>
                 </div>
               )}
               {extractionResult && pendingMasterIndexes.length > 0 && !itemMasterDraft && (
