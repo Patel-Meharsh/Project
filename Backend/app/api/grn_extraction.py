@@ -1931,6 +1931,12 @@ def extract_grn_document(
             # with a blank or an unmatched supplier candidate.
             if not fields.get("grn_date") and supplemental_fields.get("grn_date"):
                 fields["grn_date"] = supplemental_fields["grn_date"]
+            # GSTIN may be visible only in supplemental OCR/header text (for
+            # example, a scanned header that the primary text candidate missed).
+            # Merge it before returning fields so the GRN vendor-review modal
+            # receives the same GSTIN that the Add Item flow can use.
+            if not fields.get("gst_no") and supplemental_fields.get("gst_no"):
+                fields["gst_no"] = supplemental_fields["gst_no"]
             if not fields.get("vendor_code") and supplemental_fields.get("vendor_code"):
                 fields["vendor_code"] = supplemental_fields["vendor_code"]
                 fields["vendor_name"] = supplemental_fields.get("vendor_name", fields.get("vendor_name", ""))
