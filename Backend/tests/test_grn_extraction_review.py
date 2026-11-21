@@ -11,6 +11,7 @@ from app.api.grn_extraction import (
     _extract_pdf_table_line_items,
     _extract_fields,
     _clean_item_description,
+    _reconcile_invoice_number_warning,
 )
 
 
@@ -109,6 +110,32 @@ class GRNPDFPageFallbackTests(unittest.TestCase):
         existing = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": 320, "line_amount": 640}]
         candidate = [{"item_name": "LED Fitting", "recd_qty": 2, "rate": None, "line_amount": 640}]
         self.assertIs(_choose_pdf_page_rows(existing, candidate), existing)
+
+
+class GRNInvoiceWarningReconciliationTests(unittest.TestCase):
+    def test_populated_final_invoice_number_removes_stale_missing_warning(self):
+        warnings = [
+            "Invoice number was not detected.",
+            "Purchase order number was not detected.",
+        ]
+        result = _reconcile_invoice_number_warning(
+            {"invoice_no": "SHE/0117/26-27"}, warnings
+        )
+        self.assertNotIn("Invoice number was not detected.", result)
+        self.assertIn("Purchase order number was not detected.", result)
+
+    def test_missing_final_invoice_number_keeps_missing_warning(self):
+        result = _reconcile_invoice_number_warning(
+            {"invoice_no": ""}, ["Purchase order number was not detected."]
+        )
+        self.assertIn("Invoice number was not detected.", result)
+
+    def test_missing_invoice_warning_is_not_duplicated(self):
+        result = _reconcile_invoice_number_warning(
+            {"invoice_no": None},
+            ["Invoice number was not detected.", "Invoice number was not detected."],
+        )
+        self.assertEqual(result.count("Invoice number was not detected."), 1)
 
 
 class GRNHeaderFallbackTests(unittest.TestCase):
