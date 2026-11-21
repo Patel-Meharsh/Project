@@ -1260,7 +1260,8 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                 # Only repair a rate when the independently detected line amount
                 # supports it arithmetically; never scale a value on its own.
                 if qty is not None and qty > 0 and rate is not None and amount is not None:
-                    implied_rate = amount / qty
+                    discount_factor = 1 - (discount_pct or 0) / 100
+                    implied_rate = amount / qty / discount_factor if discount_factor > 0 else amount / qty
                     if abs(rate - implied_rate) > max(2.0, abs(implied_rate) * 0.03):
                         scaled_candidates = [rate / factor for factor in (10, 100, 1000)]
                         supported = [
