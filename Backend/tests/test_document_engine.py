@@ -150,6 +150,27 @@ class DocumentEngineTests(unittest.TestCase):
         # Preserve the OCR evidence if arithmetic cannot distinguish a candidate.
         self.assertEqual(choose_rate_amount([50.0, 280.0], 5.0), (50.0, 280.0))
 
+    def test_missing_tesseract_executable_returns_a_clear_service_error(self):
+        from unittest.mock import patch
+        from PIL import Image
+        from app.document_engine.ocr import run_ocr_candidates
+
+        with patch("pytesseract.get_tesseract_version", side_effect=RuntimeError("not found")):
+            with self.assertRaises(HTTPException) as raised:
+                run_ocr_candidates(
+                    Image.new("RGB", (80, 40), "white"),
+                    include_paddle=False,
+                )
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("Tesseract OCR engine", raised.exception.detail)
+
+    def test_tesseract_executable_is_available_in_ci(self):
+        import os
+        if os.getenv("GRN_REQUIRE_TESSERACT_TESTS") != "1":
+            self.skipTest("Tesseract executable smoke test is enabled in CI only")
+        import pytesseract
+        self.assertTrue(str(pytesseract.get_tesseract_version()))
+
     def test_invalid_pdf_is_reported_as_a_client_error(self):
         with self.assertRaises(HTTPException) as raised:
             extract_pdf_text_sources(b"not a valid pdf")
