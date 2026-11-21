@@ -2,8 +2,11 @@
 
 Run from Backend with: python -m unittest discover -s tests -v
 """
+import io
 import os
 import unittest
+
+import pymupdf
 from pathlib import Path
 
 # The extraction helpers do not connect to the database during import. Supply
@@ -17,6 +20,7 @@ from app.api.grn_extraction import (  # noqa: E402
     _mark_row_for_review,
     _pdf_pages_needing_image_fallback,
     _is_charge_line_description,
+    _extract_pdf_table_line_items,
 )
 
 
@@ -30,6 +34,16 @@ def row(name, qty=1, rate=10, amount=10, **extra):
     }
     value.update(extra)
     return value
+
+
+class _EmptyQuery:
+    def all(self):
+        return []
+
+
+class _EmptyItemDB:
+    def query(self, model):
+        return _EmptyQuery()
 
 
 class GRNExtractionCandidateTests(unittest.TestCase):
@@ -84,6 +98,45 @@ class GRNExtractionCandidateTests(unittest.TestCase):
         self.assertTrue(charge["is_charge_line"])
         self.assertFalse(charge["needs_review"])
         self.assertEqual(charge["extraction_warning"], "")
+
+    def test_digital_pdf_table_extracts_hsn_gst_discount_and_taxable_amount(self):
+        document = pymupdf.open()
+        page = document.new_page(width=800, height=360)
+        header = [
+            (40, 100, "Description"),
+            (190, 100, "HSN/SAC"),
+            (265, 100, "GST"),
+            (330, 100, "Quantity"),
+            (410, 100, "Rate"),
+            (480, 100, "D%"),
+            (550, 100, "Amount"),
+            (650, 100, "Value"),
+            (685, 100, "Supply"),
+        ]
+        values = [
+            (40, 140, "Cleaning Liquid"),
+            (190, 140, "3402"),
+            (265, 140, "18%"),
+            (330, 140, "2 NOS"),
+            (410, 140, "100.00"),
+            (480, 140, "10.00"),
+            (550, 140, "180.00"),
+            (650, 140, "212.40"),
+        ]
+        for x, y, text in header + values:
+            page.insert_text((x, y), text, fontsize=10)
+        raw = document.tobytes()
+        document.close()
+
+        rows = _extract_pdf_table_line_items(raw, _EmptyItemDB())
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["item_name"], "Cleaning Liquid")
+        self.assertEqual(rows[0]["hsn"], "3402")
+        self.assertEqual(rows[0]["gst_pct"], 18)
+        self.assertEqual(rows[0]["discount_pct"], 10)
+        self.assertEqual(rows[0]["line_amount"], 180)
+        self.assertEqual(rows[0]["value_of_supply"], 212.4)
+        self.assertFalse(rows[0]["needs_review"])
 
     def test_sample_specific_overrides_are_not_in_the_runtime_pipeline(self):
         backend_dir = Path(__file__).resolve().parents[1]
