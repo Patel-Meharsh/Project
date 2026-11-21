@@ -454,6 +454,9 @@ const extractGRNDocument = async (file) => {
           accepted_qty: row.accepted_qty ?? '',
           rate: row.rate ?? '',
           line_amount: row.line_amount ?? null,
+          discount_pct: row.discount_pct ?? null,
+          gst_pct: row.gst_pct ?? null,
+          hsn: row.hsn || '',
           is_charge_line: true,
           needs_review: false,
           extraction_warning: '',
@@ -515,7 +518,7 @@ const extractGRNDocument = async (file) => {
           line_amount: row.line_amount ?? null,
           discount_pct: row.discount_pct ?? null,
           hsn: row.hsn || '',
-          gst_pct: row.gst_pct ?? null,
+          gst_pct: row.gst_pct ?? masterMatch?.gst_pct ?? null,
           source: row.source || '',
           is_charge_line: false,
           needs_review: Boolean(row.needs_review || uncertainMatch),
@@ -1298,11 +1301,26 @@ const createGRN = async () => {
             <FormRow label="Remarks"><textarea className="input" rows={2} value={form.remarks} onChange={e => setForm({...form, remarks:e.target.value})} placeholder="Quality notes, damage details, etc." /></FormRow>
           </FormGrid>
 
-          {/* Accepted value and GST summary — GST is calculated at 18% (9% CGST + 9% SGST) */}
+          {/* Calculate taxable value after invoice discounts and apply each line's GST rate. */}
           {(() => {
-            const acceptedValue = lineItems.reduce((sum, row) => sum + (row.is_charge_line ? Number(row.line_amount || 0) : Number(row.accepted_qty || 0) * Number(row.rate || 0)), 0)
-            const cgst = Math.round(acceptedValue * 0.09 * 100) / 100
-            const sgst = Math.round(acceptedValue * 0.09 * 100) / 100
+            const taxableValueForRow = row => {
+              const discount = Number(row.discount_pct ?? 0)
+              const safeDiscount = Number.isFinite(discount) && discount >= 0 && discount <= 100 ? discount : 0
+              if (row.is_charge_line) {
+                return Number(row.line_amount || 0) * (1 - safeDiscount / 100)
+              }
+              return Number(row.accepted_qty || 0) * Number(row.rate || 0) * (1 - safeDiscount / 100)
+            }
+            const gstRateForRow = row => {
+              const masterItem = items.find(item => item.code === row.item_code)
+              const rawRate = row.gst_pct ?? masterItem?.gst_pct ?? 18
+              const rate = Number(rawRate)
+              return Number.isFinite(rate) && rate >= 0 && rate <= 100 ? rate : 18
+            }
+            const acceptedValue = lineItems.reduce((sum, row) => sum + taxableValueForRow(row), 0)
+            const totalGst = lineItems.reduce((sum, row) => sum + taxableValueForRow(row) * gstRateForRow(row) / 100, 0)
+            const cgst = Math.round(totalGst / 2 * 100) / 100
+            const sgst = Math.round((totalGst - cgst) * 100) / 100
             const finalAmount = acceptedValue + cgst + sgst
             return acceptedValue > 0 ? (
               <div style={{ background:'#f0fdf4', borderRadius:10, padding:14, marginTop:8, display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(125px, 1fr))', gap:16 }}>
@@ -1311,15 +1329,15 @@ const createGRN = async () => {
                   <div style={{ fontFamily:"'Fraunces',serif", fontWeight:700, color:'#16a34a', fontSize:18 }}>{fmtCurrency(acceptedValue)}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>CGST (9%)</div>
+                  <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>CGST</div>
                   <div style={{ fontWeight:600, fontSize:16 }}>{fmtCurrency(cgst)}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>SGST (9%)</div>
+                  <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>SGST</div>
                   <div style={{ fontWeight:600, fontSize:16 }}>{fmtCurrency(sgst)}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>Final Amount (18% GST)</div>
+                  <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>Final Amount (invoice GST rates)</div>
                   <div style={{ fontFamily:"'Fraunces',serif", fontWeight:700, color:'#0f766e', fontSize:20 }}>{fmtCurrency(finalAmount)}</div>
                 </div>
               </div>
