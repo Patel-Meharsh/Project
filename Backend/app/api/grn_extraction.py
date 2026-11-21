@@ -1056,6 +1056,7 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
 
             header_index = None
             header_centers: dict[str, float] = {}
+            discount_header_is_percent = False
             for idx, row in enumerate(visual_rows):
                 labels: dict[str, list[dict[str, Any]]] = {}
                 for word in row:
@@ -1087,6 +1088,14 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                         kind: sum((w["x0"] + w["x1"]) / 2 for w in group) / len(group)
                         for kind, group in labels.items()
                     }
+                    discount_center = header_centers.get("ignore_discount")
+                    discount_header_is_percent = bool(
+                        discount_center is not None and any(
+                            "%" in word["text"]
+                            and abs((word["x0"] + word["x1"]) / 2 - discount_center) <= max(18, median_height * 1.8)
+                            for word in row
+                        )
+                    )
                     break
             if header_index is None:
                 logger.debug(
@@ -1227,6 +1236,14 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                     if candidate_unit and len(candidate_unit) <= 12 and len(candidate_unit.split()) <= 2:
                         unit = candidate_unit
 
+                hsn = _first_hsn_code(cell("ignore_hsn"))
+                gst_pct = _first_numeric_cell(cell("ignore_gst"))
+                discount_pct = (
+                    _first_numeric_cell(cell("ignore_discount"))
+                    if discount_header_is_percent else None
+                )
+                value_of_supply = _first_numeric_cell(cell("ignore_value_supply"))
+
                 # OCR frequently drops a faint decimal point (e.g. 76.00 -> 7600).
                 # Only repair a rate when the independently detected line amount
                 # supports it arithmetically; never scale a value on its own.
@@ -1278,6 +1295,10 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                         "rate": rate,
                         "unit": unit,
                         "line_amount": amount,
+                        "hsn": hsn,
+                        "gst_pct": gst_pct,
+                        "discount_pct": discount_pct,
+                        "value_of_supply": value_of_supply,
                         "is_charge_line": True,
                         "match_status": "charge",
                         "source": "receipt_text",
@@ -1309,6 +1330,10 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                     "rate": rate,
                     "unit": unit,
                     "line_amount": amount,
+                    "hsn": hsn,
+                    "gst_pct": gst_pct,
+                    "discount_pct": discount_pct,
+                    "value_of_supply": value_of_supply,
                     "match_status": "matched" if matched else "unmatched",
                     "source": "receipt_text",
                     "needs_review": bool(serial_warning or quantity_warning) or qty is None or rate is None,
@@ -1397,7 +1422,11 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                 # supplied from different batches/lines), so do not penalize them.
                 candidate_score += 8
                 if amount_value is not None and qty_value is not None and rate_value is not None:
-                    expected = qty_value * rate_value
+                    try:
+                        discount = float(item.get("discount_pct") or 0)
+                    except (TypeError, ValueError):
+                        discount = 0.0
+                    expected = qty_value * rate_value * (1 - discount / 100) if 0 <= discount <= 100 else qty_value * rate_value
                     if abs(expected - amount_value) <= max(2.0, abs(amount_value) * 0.03):
                         candidate_score += 12
                     else:
