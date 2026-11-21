@@ -134,6 +134,31 @@ def _inv_snapshot(inv) -> dict:
         "rate":          inv.rate,
     }
 
+def _grn_net_unit_rate(line_item: dict) -> float:
+    """Return the invoice unit rate after an explicitly extracted percentage discount."""
+    try:
+        rate = float(line_item.get("rate") or 0)
+        discount = float(line_item.get("discount_pct") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(rate) or not math.isfinite(discount) or not 0 <= discount <= 100:
+        return 0.0
+    return rate * (1 - discount / 100)
+
+
+def _grn_line_taxable_value(line_item: dict) -> float:
+    """Calculate accepted taxable value, keeping invoice charges outside stock valuation."""
+    try:
+        if line_item.get("is_charge_line"):
+            amount = float(line_item.get("line_amount") or 0)
+            discount = float(line_item.get("discount_pct") or 0)
+            return amount * (1 - discount / 100) if 0 <= discount <= 100 else amount
+        accepted = float(line_item.get("accepted_qty") or 0)
+        return accepted * _grn_net_unit_rate(line_item)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _resolve_store(db: Session, location_code: str) -> str:
     """Resolve a SITE location to its parent STORE.
     SITE locations (CH-XX) never hold inventory — stock always lives at the STORE (STORE-CH).
@@ -1485,10 +1510,7 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
     # The sequence increment remains in the same transaction as the GRN save.
     data["grn_no"] = _next_grn_no(db)
     data["line_items"] = _json.dumps(line_items) if line_items else None
-    total_value = sum(
-        float(li.get("line_amount") or 0) if li.get("is_charge_line")
-        else float(li.get("accepted_qty") or 0) * float(li.get("rate") or 0)
-        for li in line_items)
+    total_value = sum(_grn_line_taxable_value(li) for li in line_items)
     data["total_value"] = total_value
 
     _parse_dates(data, ["grn_date"])
@@ -1510,7 +1532,7 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
         vendor_code = li.get("vendor_code", "")
         _aq = li.get("accepted_qty")
         accepted    = float(_aq if _aq is not None else (li.get("recd_qty") or 0))
-        rate        = float(li.get("rate") or data.get("rate") or 0)
+        rate        = _grn_net_unit_rate(li) or float(data.get("rate") or 0)
         if not (accepted > 0 and item_code and store_location):
             continue
         inv  = _get_or_create_inv(db, item_code, store_location, vendor_code, rate)
@@ -1617,7 +1639,7 @@ def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
         for li in new_lis:
             code = li.get("item_code", "")
             new_accepted[code] += float(li.get("accepted_qty") or 0)
-            new_rates[code]    = float(li.get("rate") or 0)
+            new_rates[code]    = _grn_net_unit_rate(li)
             new_vendors[code]  = li.get("vendor_code", "")
 
         # ── Apply inventory deltas ────────────────────────────────────────────────
@@ -1692,11 +1714,7 @@ def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
             data["accepted_qty"] = total_accepted
             data["rejected_qty"] = total_recd - total_accepted
 
-            total_value = sum(
-                float(li.get("line_amount") or 0) if li.get("is_charge_line")
-                else float(li.get("accepted_qty") or 0) * float(li.get("rate") or 0)
-                for li in new_line_items
-            )
+            total_value = sum(_grn_line_taxable_value(li) for li in new_line_items)
 
             data["total_value"] = total_value
 
