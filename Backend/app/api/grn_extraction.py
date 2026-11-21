@@ -45,6 +45,17 @@ ALLOWED_TYPES = {
     "image/jpeg",
 }
 
+CHARGE_LINE_RE = re.compile(
+    r"\b(?:carting|freight|transport(?:ation)?|delivery\s+charges?|packing\s+charges?|"
+    r"handling\s+charges?|loading|unloading|round\s*off)\b",
+    re.I,
+)
+
+
+def _is_charge_line_description(value: str | None) -> bool:
+    """Identify invoice-level charges that must not become stock items."""
+    return bool(CHARGE_LINE_RE.search(str(value or "")))
+
 
 def _first(patterns: list[str], text: str) -> str | None:
     for pattern in patterns:
@@ -242,6 +253,17 @@ def _mark_row_for_review(row: dict[str, Any]) -> dict[str, Any]:
     qty = row.get("recd_qty")
     rate = row.get("rate")
     amount = row.get("line_amount")
+
+    if row.get("is_charge_line") or _is_charge_line_description(row.get("item_name")):
+        row["is_charge_line"] = True
+        if amount is None:
+            warnings.append("charge amount was not confidently read")
+            row["needs_review"] = True
+            row["extraction_warning"] = "; ".join(warnings)
+        else:
+            row["needs_review"] = False
+            row["extraction_warning"] = ""
+        return row
 
     # A common column-alignment failure is an HSN/SAC code (for example 9405)
     # being read as quantity. Keep ordinary large quantities when their arithmetic
@@ -1146,9 +1168,9 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                     continue
                 if re.search(r"\b(?:description|particulars|quantity|qty|rate|amount|subtotal|total|cgst|sgst|igst|taxable|invoice|page|gstin)\b", description, re.I):
                     continue
-                # Freight/carting/packing are invoice charges, not stock items.
-                if re.search(r"\b(?:carting|freight|transport(?:ation)?|delivery\s+charges?|packing\s+charges?|handling\s+charges?|loading|unloading|round\s*off)\b", description, re.I):
-                    continue
+                # Preserve invoice charges as non-stock rows. The frontend and
+                # GRN save path keep their amount but never create inventory for them.
+                is_charge_line = _is_charge_line_description(description)
                 description = _clean_item_description(description)
                 # Reject tiny OCR fragments (e.g. "sis") as item descriptions.
                 # They are commonly misread remnants of a longer product name and
@@ -1208,6 +1230,25 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
                     )
                     qty = None
                 if re.fullmatch(r"[\d\s.,/-]+", description):
+                    continue
+                if is_charge_line:
+                    current_rows.append(_mark_row_for_review({
+                        "item_code": "",
+                        "item_name": description,
+                        "ocr_original_name": "",
+                        "vendor_code": "",
+                        "vendor_name": "",
+                        "recd_qty": qty,
+                        "accepted_qty": None,
+                        "rate": rate,
+                        "unit": unit,
+                        "line_amount": amount,
+                        "is_charge_line": True,
+                        "match_status": "charge",
+                        "source": "receipt_text",
+                        "needs_review": amount is None,
+                        "extraction_warning": "" if amount is not None else "charge amount was not confidently read",
+                    }))
                     continue
                 ocr_original_description = clean_item_name(description)
                 matched_description, spelling_changes = correct_item_spelling(
@@ -1311,6 +1352,9 @@ def _extract_image_table_line_items(image, db: Session, paddle_text: str | None 
             # are penalized; missing amounts remain usable but lower-confidence.
             candidate_score = 0.0
             for item in current_rows:
+                if item.get("is_charge_line"):
+                    candidate_score += 4 if item.get("line_amount") is not None else -4
+                    continue
                 qty_value = item.get("recd_qty")
                 rate_value = item.get("rate")
                 amount_value = item.get("line_amount")
@@ -1944,6 +1988,7 @@ def extract_grn_document(
             )
             text_candidate_is_uncertain = (
                 not text_items
+                or _is_charge_line_description(text)
                 or len(text_items) < 3
                 or any(row.get("needs_review") for row in text_items)
                 or serial_count > len(text_items)
