@@ -276,7 +276,10 @@ def _mark_row_for_review(row: dict[str, Any]) -> dict[str, Any]:
         and 1000 <= qty < 100_000_000
         and rate is not None
         and amount is not None
-        and abs(qty * rate - amount) > max(10.0, abs(amount) * 0.20)
+        and abs(
+            qty * rate * (1 - float(row.get("discount_pct") or 0) / 100)
+            - amount
+        ) > max(10.0, abs(amount) * 0.20)
         and qty * max(abs(rate), 1.0) > max(abs(amount), 1.0) * 20
     ):
         warnings.append(
@@ -285,7 +288,7 @@ def _mark_row_for_review(row: dict[str, Any]) -> dict[str, Any]:
         row["recd_qty"] = None
         qty = None
 
-    for warning in line_item_warnings(qty, rate, amount):
+    for warning in line_item_warnings(qty, rate, amount, discount_pct=row.get("discount_pct")):
         if warning not in warnings:
             warnings.append(warning)
 
