@@ -19,6 +19,7 @@ jobs:
     env:
       DATABASE_URL: sqlite:///./grn-test.db
       SECRET_KEY: ci-only-not-for-production
+      GRN_REQUIRE_TESSERACT_TESTS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,6 +27,10 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: Backend/requirements.txt
+      - name: Install system OCR engine
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
       - name: Install backend dependencies
         run: python -m pip install -r requirements.txt
       - name: Run backend unit tests
