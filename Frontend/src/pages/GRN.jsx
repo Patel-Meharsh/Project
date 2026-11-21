@@ -1168,12 +1168,19 @@ const createGRN = async () => {
                       <div style={{ flex:1, minWidth:0 }}>
                         <div style={{ fontSize:11, color:'#64748b', marginBottom:3 }}>Item *</div>
                         {row.is_charge_line ? (
-                          <div className="input" style={{ background:'#f8fafc', color:'#475569', minHeight:38, display:'flex', alignItems:'center' }}>
-                            {row.item_name}
-                          </div>
-                          <div style={{ fontSize:10.5, color:'#64748b', marginTop:3 }}>
-                            {row.line_amount != null ? \`Charge amount \${fmtCurrency(row.line_amount)}\` : 'Charge amount needs review'}
-                            {row.gst_pct != null ? \` · GST \${row.gst_pct}%\` : ''}
+                          <div>
+                            <div className="input" style={{ background:'#f8fafc', color:'#475569', minHeight:38, display:'flex', alignItems:'center' }}>
+                              {row.item_name}
+                            </div>
+                            <div style={{ fontSize:10.5, color:'#64748b', marginTop:3 }}>
+                              {row.line_amount != null ? 'Charge amount ' + fmtCurrency(row.line_amount) : 'Charge amount needs review'}
+                              {row.gst_pct != null ? ' · GST ' + row.gst_pct + '%' : ''}
+                            </div>
+                            {row.needs_review && (
+                              <div role="status" style={{ fontSize:10.5, color:'#b45309', marginTop:4 }}>
+                                {row.extraction_warning || 'Review this charge amount before saving.'}
+                              </div>
+                            )}
                           </div>
                         ) : <ComboSearch
                           query={row.item_code}
@@ -1285,9 +1292,9 @@ const createGRN = async () => {
                         )}
                         {(row.hsn || row.discount_pct != null || row.gst_pct != null) && (
                           <div style={{ fontSize:10.5, color:'#64748b', marginTop:4, lineHeight:1.35 }}>
-                            {row.hsn ? \`HSN \${row.hsn}\` : ''}
-                            {row.discount_pct != null ? \`\${row.hsn ? ' · ' : ''}Discount \${row.discount_pct}%\` : ''}
-                            {row.gst_pct != null ? \`\${row.hsn || row.discount_pct != null ? ' · ' : ''}GST \${row.gst_pct}%\` : ''}
+                            {row.hsn ? 'HSN ' + row.hsn : ''}
+                            {row.discount_pct != null ? (row.hsn ? ' · ' : '') + 'Discount ' + row.discount_pct + '%' : ''}
+                            {row.gst_pct != null ? (row.hsn || row.discount_pct != null ? ' · ' : '') + 'GST ' + row.gst_pct + '%' : ''}
                           </div>
                         )}
                       </div>
