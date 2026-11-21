@@ -51,7 +51,7 @@ class DocumentEngineTests(unittest.TestCase):
             line_item_warnings(2, 50, 100), []
         )
         self.assertIn(
-            "quantity × rate differs from the printed line amount",
+            "quantity × rate (after discount, if any) differs from the printed line amount",
             line_item_warnings(2, 50, 120),
         )
         self.assertIn(
