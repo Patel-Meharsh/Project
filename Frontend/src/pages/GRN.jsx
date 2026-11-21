@@ -458,8 +458,8 @@ const extractGRNDocument = async (file) => {
           gst_pct: row.gst_pct ?? null,
           hsn: row.hsn || '',
           is_charge_line: true,
-          needs_review: false,
-          extraction_warning: '',
+          needs_review: Boolean(row.needs_review || row.line_amount == null),
+          extraction_warning: row.extraction_warning || (row.line_amount == null ? 'charge amount was not confidently read' : ''),
           possible_matches: [],
         }
         const normalizedName = normalizeItemName(cleanedName)
@@ -769,6 +769,9 @@ const createGRN = async () => {
   }
   if (lineItems.some(r => !r.is_charge_line && (!Number.isFinite(Number(r.rate)) || Number(r.rate) <= 0))) {
     return toast.error('Every stock item must have a valid rate greater than zero. Check the invoice or Item Master rate before saving.')
+  }
+  if (lineItems.some(r => r.is_charge_line && (r.line_amount == null || !Number.isFinite(Number(r.line_amount)) || Number(r.line_amount) < 0))) {
+    return toast.error('Every invoice charge must have a valid amount, or be removed before saving the GRN.')
   }
   if (!window.confirm(`Save this GRN with ${lineItems.length} line item(s)? The GRN number will be assigned only after a successful save. This will update inventory${form.po_no ? ' and the linked purchase order' : ''}.`)) {
     return
