@@ -1429,7 +1429,13 @@ def create_grn(data: dict, db: Session = Depends(get_db), current_user: models.U
     for li in line_items:
         if li.get("is_charge_line"):
             # Invoice charges are retained in the GRN record but never become
-            # stock items or Item Master records.
+            # stock items or Item Master records. Their printed amount is required.
+            try:
+                charge_amount = float(li.get("line_amount"))
+            except (TypeError, ValueError):
+                raise HTTPException(422, "Every invoice charge must have a valid amount.")
+            if not math.isfinite(charge_amount) or charge_amount < 0:
+                raise HTTPException(422, "Every invoice charge must have a valid non-negative amount.")
             continue
         item_code = (li.get("item_code") or "").strip()
         item_name = (li.get("item_name") or "").strip()
@@ -1590,6 +1596,12 @@ def update_grn(grn_no: str, data: dict, db: Session = Depends(get_db),
                 raise HTTPException(422, f"Store location '{target_location or '(empty)'}' does not exist.")
             for li in new_line_items:
                 if li.get("is_charge_line"):
+                    try:
+                        charge_amount = float(li.get("line_amount"))
+                    except (TypeError, ValueError):
+                        raise HTTPException(422, "Every invoice charge must have a valid amount.")
+                    if not math.isfinite(charge_amount) or charge_amount < 0:
+                        raise HTTPException(422, "Every invoice charge must have a valid non-negative amount.")
                     continue
                 item_code = str(li.get("item_code") or "").strip()
                 if not item_code or not db.query(models.ItemModel).filter_by(code=item_code).first():
