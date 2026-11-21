@@ -1069,40 +1069,16 @@ const createGRN = async () => {
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, marginBottom:8 }}>
               <div>
                 <h3 id="grn-new-vendor-title" style={{ margin:0, fontSize:18, color:'#0f172a' }}>New vendor not found</h3>
-                <p style={{ margin:'6px 0 0', color:'#64748b', fontSize:12 }}>This supplier is not in the Vendor Directory. Add it now to continue this GRN.</p>
+                <p style={{ margin:'6px 0 0', color:'#64748b', fontSize:12 }}>We couldn't match this supplier in the Vendor Directory. Confirm the details extracted from the invoice to add it.</p>
               </div>
               <span style={{ fontSize:11, color:'#b45309', background:'#fffbeb', padding:'5px 8px', borderRadius:6 }}>Vendor setup required</span>
             </div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(2,minmax(0,1fr))', gap:12, marginTop:18 }}>
-              <label style={{ gridColumn:'1/-1', fontSize:12, color:'#475569' }}>Vendor name *
-                <input className="input" autoFocus value={vendorSetupDraft.name || ''} onChange={e=>setVendorSetupDraft(d=>({...d,name:e.target.value}))} placeholder="Vendor name from invoice" style={{ marginTop:4 }} />
+            <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:12, marginTop:18 }}>
+              <label style={{ fontSize:12, color:'#475569' }}>Vendor name *
+                <input className="input" autoFocus value={vendorSetupDraft.name || ''} onChange={e=>setVendorSetupDraft(d=>({...d,name:e.target.value}))} placeholder="Vendor name extracted from invoice" style={{ marginTop:4 }} />
               </label>
-              <label style={{ fontSize:12, color:'#475569' }}>GSTIN
-                <input className="input" maxLength={15} autoComplete="off" spellCheck={false} value={vendorSetupDraft.gst_no || ''} onChange={e=>setVendorSetupDraft(d=>({...d,gst_no:normalizeGstin(e.target.value)}))} placeholder="Optional if not on invoice" style={{ marginTop:4 }} />
-              </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Category
-                <input className="input" value={vendorSetupDraft.category || ''} onChange={e=>setVendorSetupDraft(d=>({...d,category:e.target.value}))} style={{ marginTop:4 }} />
-              </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Contact person
-                <input className="input" value={vendorSetupDraft.contact_person || ''} onChange={e=>setVendorSetupDraft(d=>({...d,contact_person:e.target.value}))} style={{ marginTop:4 }} />
-              </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Phone
-                <input className="input" value={vendorSetupDraft.phone || ''} onChange={e=>setVendorSetupDraft(d=>({...d,phone:e.target.value}))} style={{ marginTop:4 }} />
-              </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Email
-                <input className="input" type="email" value={vendorSetupDraft.email || ''} onChange={e=>setVendorSetupDraft(d=>({...d,email:e.target.value}))} style={{ marginTop:4 }} />
-              </label>
-              <label style={{ fontSize:12, color:'#475569' }}>City
-                <input className="input" value={vendorSetupDraft.city || ''} onChange={e=>setVendorSetupDraft(d=>({...d,city:e.target.value}))} style={{ marginTop:4 }} />
-              </label>
-              <label style={{ gridColumn:'1/-1', fontSize:12, color:'#475569' }}>Address
-                <textarea className="input" rows={2} value={vendorSetupDraft.address || ''} onChange={e=>setVendorSetupDraft(d=>({...d,address:e.target.value}))} style={{ marginTop:4 }} />
-              </label>
-              <label style={{ fontSize:12, color:'#475569' }}>PAN
-                <input className="input" value={vendorSetupDraft.pan || ''} onChange={e=>setVendorSetupDraft(d=>({...d,pan:e.target.value.toUpperCase()}))} style={{ marginTop:4 }} />
-              </label>
-              <label style={{ fontSize:12, color:'#475569' }}>Payment terms
-                <input className="input" value={vendorSetupDraft.payment_terms || ''} onChange={e=>setVendorSetupDraft(d=>({...d,payment_terms:e.target.value}))} style={{ marginTop:4 }} />
+              <label style={{ fontSize:12, color:'#475569' }}>Vendor GSTIN
+                <input className="input" maxLength={15} autoComplete="off" spellCheck={false} value={vendorSetupDraft.gst_no || ''} onChange={e=>setVendorSetupDraft(d=>({...d,gst_no:normalizeGstin(e.target.value)}))} placeholder="GSTIN extracted from invoice (if available)" style={{ marginTop:4 }} />
               </label>
             </div>
             {!isAdmin && <p role="alert" style={{ color:'#b91c1c', fontSize:12, marginTop:12 }}>Your account does not have permission to create Vendor Directory records. Ask an admin to add this vendor.</p>}
