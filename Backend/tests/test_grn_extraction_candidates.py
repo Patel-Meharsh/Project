@@ -16,6 +16,7 @@ from app.api.grn_extraction import (  # noqa: E402
     _clean_item_description,
     _mark_row_for_review,
     _pdf_pages_needing_image_fallback,
+    _is_charge_line_description,
 )
 
 
@@ -65,6 +66,24 @@ class GRNExtractionCandidateTests(unittest.TestCase):
             ),
             [1],
         )
+
+    def test_invoice_charges_are_classified_separately_from_stock_items(self):
+        self.assertTrue(_is_charge_line_description("5 CARTING (18%)"))
+        self.assertTrue(_is_charge_line_description("Freight charges"))
+        self.assertFalse(_is_charge_line_description("LED Bulb 15W"))
+
+    def test_charge_line_does_not_require_stock_quantity_or_rate(self):
+        charge = _mark_row_for_review({
+            "item_name": "CARTING",
+            "is_charge_line": True,
+            "recd_qty": None,
+            "rate": None,
+            "line_amount": 150,
+            "needs_review": True,
+        })
+        self.assertTrue(charge["is_charge_line"])
+        self.assertFalse(charge["needs_review"])
+        self.assertEqual(charge["extraction_warning"], "")
 
     def test_sample_specific_overrides_are_not_in_the_runtime_pipeline(self):
         backend_dir = Path(__file__).resolve().parents[1]
