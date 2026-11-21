@@ -179,9 +179,20 @@ def _choose_line_item_candidate(
 
     primary_score = _line_item_quality(primary)
     alternative_score = _line_item_quality(alternative)
-    # Prefer the primary parser on ties: it is the document's native text/coordinate
-    # representation, while alternate OCR can split one description into duplicates.
-    return alternative if alternative_score > primary_score else primary
+    if alternative_score > primary_score:
+        return alternative
+
+    def metadata_score(rows: list[dict[str, Any]]) -> int:
+        return sum(
+            sum(row.get(key) not in (None, "") for key in ("hsn", "gst_pct", "discount_pct"))
+            for row in rows
+        )
+
+    # When row quality is tied, prefer the candidate that also recovered the
+    # invoice's tax/HSN metadata rather than discarding those extracted fields.
+    if alternative_score == primary_score and metadata_score(alternative) > metadata_score(primary):
+        return alternative
+    return primary
 
 
 def _append_pdf_description_continuation(
@@ -842,9 +853,9 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                         previous["match_status"] = "matched" if updated_match else "unmatched"
                     continue
                 if qty is not None and rate is not None and amount is not None:
-                    expected = qty * rate
-                    # Tax-inclusive or rounded lines can differ slightly; only
-                    # clear values on a substantial mismatch, don't rewrite them.
+                    expected = qty * rate * (1 - (discount_pct or 0) / 100)
+                    # Tax-inclusive, discounted or rounded lines can differ slightly;
+                    # preserve the printed values and let review warnings flag conflicts.
                     if abs(expected - amount) > max(3.0, abs(amount) * 0.08):
                         # Preserve the source values for human review, and mark
                         # uncertainty in the warning rather than silently blanking.
@@ -855,8 +866,9 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 )
                 _, fuzzy_name, _ = correct_item_name_from_master(matched_description, masters)
                 description = matched_description
-                matched = match_master(description)
-                if matched is None and fuzzy_name:
+                is_charge_line = _is_charge_line_description(description)
+                matched = None if is_charge_line else match_master(description)
+                if matched is None and fuzzy_name and not is_charge_line:
                     matched = next((item for item in masters if (item.name or '').strip() == fuzzy_name), None)
                 extracted.append(_mark_row_for_review({
                     "item_code": (matched.code or "") if matched else "",
@@ -873,8 +885,8 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                     "gst_pct": gst_pct,
                     "discount_pct": discount_pct,
                     "value_of_supply": value_of_supply,
-                    "is_charge_line": _is_charge_line_description(description),
-                    "match_status": "charge" if _is_charge_line_description(description) else ("matched" if matched else "unmatched"),
+                    "is_charge_line": is_charge_line,
+                    "match_status": "charge" if is_charge_line else ("matched" if matched else "unmatched"),
                     "source": "receipt_text",
                     "_source_page_index": page_index,
                 }))
@@ -2050,9 +2062,15 @@ def extract_grn_document(
                 1 for line in table_lines
                 if re.match(r"^\s*[\W_]*\d{1,3}\s*[.)-]?\s+[A-Za-z]", line)
             )
+            has_table_metadata = bool(re.search(
+                r"\b(?:hsn(?:\s*/\s*sac)?|gst\s*rate|disc(?:ount)?\.?\s*%|d\s*%)\b",
+                text,
+                re.I,
+            ))
             text_candidate_is_uncertain = (
                 not text_items
                 or _is_charge_line_description(text)
+                or has_table_metadata
                 or len(text_items) < 3
                 or any(row.get("needs_review") for row in text_items)
                 or serial_count > len(text_items)
