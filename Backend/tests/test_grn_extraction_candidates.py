@@ -122,6 +122,10 @@ class GRNExtractionCandidateTests(unittest.TestCase):
             (480, 140, "10.00"),
             (550, 140, "180.00"),
             (650, 140, "212.40"),
+            (40, 170, "Carting"),
+            (265, 170, "18%"),
+            (550, 170, "150.00"),
+            (650, 170, "177.00"),
         ]
         for x, y, text in header + values:
             page.insert_text((x, y), text, fontsize=10)
@@ -129,7 +133,7 @@ class GRNExtractionCandidateTests(unittest.TestCase):
         document.close()
 
         rows = _extract_pdf_table_line_items(raw, _EmptyItemDB())
-        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["item_name"], "Cleaning Liquid")
         self.assertEqual(rows[0]["hsn"], "3402")
         self.assertEqual(rows[0]["gst_pct"], 18)
@@ -137,6 +141,10 @@ class GRNExtractionCandidateTests(unittest.TestCase):
         self.assertEqual(rows[0]["line_amount"], 180)
         self.assertEqual(rows[0]["value_of_supply"], 212.4)
         self.assertFalse(rows[0]["needs_review"])
+        self.assertEqual(rows[1]["item_name"], "Carting")
+        self.assertTrue(rows[1]["is_charge_line"])
+        self.assertEqual(rows[1]["line_amount"], 150)
+        self.assertFalse(rows[1]["needs_review"])
 
     def test_sample_specific_overrides_are_not_in_the_runtime_pipeline(self):
         backend_dir = Path(__file__).resolve().parents[1]
