@@ -180,6 +180,8 @@ export default function GRN() {
   const [selectedDocumentName, setSelectedDocumentName] = useState('')
   const [itemMasterDraft, setItemMasterDraft] = useState(null)
   const [createdVendorRecords, setCreatedVendorRecords] = useState([])
+  const [vendorSetupDraft, setVendorSetupDraft] = useState(null)
+  const [savingInvoiceVendor, setSavingInvoiceVendor] = useState(false)
   const [savingMasterItem, setSavingMasterItem] = useState(false)
   const [pendingMasterIndexes, setPendingMasterIndexes] = useState([])
   const [showDraftChoice, setShowDraftChoice] = useState(false)
@@ -534,9 +536,25 @@ const extractGRNDocument = async (file) => {
       .filter(({ row }) => !row.is_charge_line && !row.item_code && row.item_name.trim())
       .map(({ index }) => index)
     setPendingMasterIndexes(unmatched)
-    if (unmatched.length) {
+    // Vendor setup is independent of Item Master setup. Ask for a new vendor
+    // even when every invoice item already exists in the Item Master.
+    if (!matchedVendor) {
+      setVendorSetupDraft({
+        name: invoiceVendorName,
+        gst_no: invoiceVendorGstin,
+        category: 'Other',
+        contact_person: '',
+        phone: '',
+        email: '',
+        city: '',
+        address: '',
+        pan: '',
+        payment_terms: 'Net 30',
+      })
+      setItemMasterDraft(null)
+    } else if (unmatched.length) {
       const first = suggestedRows[unmatched[0]]
-      setItemMasterDraft({ index: unmatched[0], name: first.item_name, ...suggestItemMasterDefaults(first.item_name, items), uom: first.uom || '', vendor_name: first.vendor_name || fields.vendor_name || '', gst_no: first.vendor_gst_no || '', vendor_code: first.vendor_code || '', vendor_is_new: !first.vendor_code, possible_matches: first.possible_matches || [], needs_review: first.needs_review })
+      setItemMasterDraft({ index: unmatched[0], name: first.item_name, ...suggestItemMasterDefaults(first.item_name, items), uom: first.uom || '', vendor_name: first.vendor_name || fields.vendor_name || '', gst_no: first.vendor_gst_no || '', vendor_code: first.vendor_code || '', vendor_is_new: false, possible_matches: first.possible_matches || [], needs_review: first.needs_review })
     }
     toast.success('Document read. Review every extracted field before saving.')
   } catch (err) {
@@ -556,6 +574,78 @@ const cancelDocumentExtraction = () => {
   extractionAbortControllerRef.current?.abort()
   extractionAbortControllerRef.current = null
   setExtractingDocument(false)
+}
+
+const saveInvoiceVendor = async () => {
+  if (!vendorSetupDraft) return
+  const name = String(vendorSetupDraft.name || '').trim()
+  const gstin = normalizeGstin(vendorSetupDraft.gst_no)
+  if (!name) return toast.error('Enter the vendor name before saving.')
+  if (gstin && (gstin.length !== 15 || !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(gstin))) {
+    return toast.error('Enter a valid 15-character GSTIN, or leave it blank if it is not available.')
+  }
+  if (!isAdmin) return toast.error('Admin permission is required to add a vendor to the Vendor Directory.')
+
+  setSavingInvoiceVendor(true)
+  try {
+    // Recheck the directory at save time to avoid creating a duplicate if
+    // another user added this vendor after the invoice was uploaded.
+    const latestVendors = await vendorApi.getAll()
+    const existing = findInvoiceVendor(latestVendors, { name, gstin })
+    let savedVendor = existing
+    if (!savedVendor) {
+      const code = await codeApi.next('vendor')
+      savedVendor = await vendorApi.create({
+        ...vendorSetupDraft,
+        code,
+        name,
+        gst_no: gstin,
+        status: 'Active',
+        rating: 0,
+      })
+    }
+    if (!savedVendor?.code) throw new Error('Vendor was not returned after saving. Refresh Vendor Directory before continuing.')
+
+    setCreatedVendorRecords(previous => [
+      ...previous.filter(v => v.code !== savedVendor.code),
+      savedVendor,
+    ])
+    setLineItems(previous => previous.map(row => ({
+      ...row,
+      vendor_code: savedVendor.code,
+      vendor_name: savedVendor.name || name,
+      vendor_gst_no: normalizeGstin(savedVendor.gst_no || gstin),
+    })))
+    setVendorSetupDraft(null)
+    await refetch()
+    toast.success(existing
+      ? `Matched existing vendor ${savedVendor.code}.`
+      : `Vendor ${savedVendor.code} added to Vendor Directory.`)
+
+    // Continue the separate Item Master workflow only after vendor setup.
+    if (pendingMasterIndexes.length) {
+      const index = pendingMasterIndexes[0]
+      const row = lineItems[index]
+      if (row) {
+        setItemMasterDraft({
+          index,
+          name: row.item_name || '',
+          ...suggestItemMasterDefaults(row.item_name || '', items),
+          uom: row.uom || '',
+          vendor_name: savedVendor.name || name,
+          gst_no: normalizeGstin(savedVendor.gst_no || gstin),
+          vendor_code: savedVendor.code,
+          vendor_is_new: false,
+          possible_matches: row.possible_matches || [],
+          needs_review: row.needs_review,
+        })
+      }
+    }
+  } catch (err) {
+    toast.error(err.response?.data?.detail || err.message || 'Could not save the vendor.')
+  } finally {
+    setSavingInvoiceVendor(false)
+  }
 }
 
 
@@ -968,6 +1058,57 @@ const createGRN = async () => {
               <button className="btn btn-outline" onClick={()=>setShowDraftChoice(false)}>Cancel</button>
               <button className="btn btn-outline" onClick={startNewGRN}>Record New GRN</button>
               <button className="btn btn-accent" onClick={continueGRNDraft}>Continue Draft</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {vendorSetupDraft && (
+        <div role="presentation" style={{ position:'fixed', inset:0, zIndex:1250, background:'rgba(15,23,42,.6)', display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="grn-new-vendor-title" style={{ width:'100%', maxWidth:560, maxHeight:'90vh', overflowY:'auto', background:'#fff', borderRadius:14, padding:22, boxShadow:'0 20px 60px rgba(0,0,0,.2)' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, marginBottom:8 }}>
+              <div>
+                <h3 id="grn-new-vendor-title" style={{ margin:0, fontSize:18, color:'#0f172a' }}>New vendor not found</h3>
+                <p style={{ margin:'6px 0 0', color:'#64748b', fontSize:12 }}>This supplier is not in the Vendor Directory. Add it now to continue this GRN.</p>
+              </div>
+              <span style={{ fontSize:11, color:'#b45309', background:'#fffbeb', padding:'5px 8px', borderRadius:6 }}>Vendor setup required</span>
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(2,minmax(0,1fr))', gap:12, marginTop:18 }}>
+              <label style={{ gridColumn:'1/-1', fontSize:12, color:'#475569' }}>Vendor name *
+                <input className="input" autoFocus value={vendorSetupDraft.name || ''} onChange={e=>setVendorSetupDraft(d=>({...d,name:e.target.value}))} placeholder="Vendor name from invoice" style={{ marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>GSTIN
+                <input className="input" maxLength={15} autoComplete="off" spellCheck={false} value={vendorSetupDraft.gst_no || ''} onChange={e=>setVendorSetupDraft(d=>({...d,gst_no:normalizeGstin(e.target.value)}))} placeholder="Optional if not on invoice" style={{ marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Category
+                <input className="input" value={vendorSetupDraft.category || ''} onChange={e=>setVendorSetupDraft(d=>({...d,category:e.target.value}))} style={{ marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Contact person
+                <input className="input" value={vendorSetupDraft.contact_person || ''} onChange={e=>setVendorSetupDraft(d=>({...d,contact_person:e.target.value}))} style={{ marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Phone
+                <input className="input" value={vendorSetupDraft.phone || ''} onChange={e=>setVendorSetupDraft(d=>({...d,phone:e.target.value}))} style={{ marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Email
+                <input className="input" type="email" value={vendorSetupDraft.email || ''} onChange={e=>setVendorSetupDraft(d=>({...d,email:e.target.value}))} style={{ marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>City
+                <input className="input" value={vendorSetupDraft.city || ''} onChange={e=>setVendorSetupDraft(d=>({...d,city:e.target.value}))} style={{ marginTop:4 }} />
+              </label>
+              <label style={{ gridColumn:'1/-1', fontSize:12, color:'#475569' }}>Address
+                <textarea className="input" rows={2} value={vendorSetupDraft.address || ''} onChange={e=>setVendorSetupDraft(d=>({...d,address:e.target.value}))} style={{ marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>PAN
+                <input className="input" value={vendorSetupDraft.pan || ''} onChange={e=>setVendorSetupDraft(d=>({...d,pan:e.target.value.toUpperCase()}))} style={{ marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'#475569' }}>Payment terms
+                <input className="input" value={vendorSetupDraft.payment_terms || ''} onChange={e=>setVendorSetupDraft(d=>({...d,payment_terms:e.target.value}))} style={{ marginTop:4 }} />
+              </label>
+            </div>
+            {!isAdmin && <p role="alert" style={{ color:'#b91c1c', fontSize:12, marginTop:12 }}>Your account does not have permission to create Vendor Directory records. Ask an admin to add this vendor.</p>}
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:20 }}>
+              <button type="button" className="btn btn-outline" disabled={savingInvoiceVendor} onClick={()=>setVendorSetupDraft(null)}>Close for now</button>
+              <button type="button" className="btn btn-accent" disabled={savingInvoiceVendor || !isAdmin} onClick={saveInvoiceVendor}>{savingInvoiceVendor ? 'Saving…' : 'Save Vendor & Continue'}</button>
             </div>
           </div>
         </div>
