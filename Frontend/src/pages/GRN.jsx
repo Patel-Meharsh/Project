@@ -467,7 +467,7 @@ const extractGRNDocument = async (file) => {
         const exactNameMatch = items.find(item =>
           normalizedName && normalizeItemName(item.name) === normalizedName
         )
-        const withoutLeadingDigit = cleanedName.replace(/^\\s*\\d(?=[a-z])/i, '').trim()
+        const withoutLeadingDigit = cleanedName.replace(/^\s*\d(?=[a-z])/i, '').trim()
         const serialCleanMatch = withoutLeadingDigit !== cleanedName
           ? items.find(item => normalizeItemName(item.name) === normalizeItemName(withoutLeadingDigit))
           : null
