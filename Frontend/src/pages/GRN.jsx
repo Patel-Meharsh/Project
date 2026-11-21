@@ -1175,10 +1175,25 @@ const createGRN = async () => {
                             <div className="input" style={{ background:'#f8fafc', color:'#475569', minHeight:38, display:'flex', alignItems:'center' }}>
                               {row.item_name}
                             </div>
-                            <div style={{ fontSize:10.5, color:'#64748b', marginTop:3 }}>
-                              {row.line_amount != null ? 'Charge amount ' + fmtCurrency(row.line_amount) : 'Charge amount needs review'}
-                              {row.gst_pct != null ? ' · GST ' + row.gst_pct + '%' : ''}
-                            </div>
+                            <div style={{ fontSize:11, color:'#64748b', marginTop:5, marginBottom:3 }}>Charge amount ₹</div>
+                            <input
+                              className="input"
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={row.line_amount ?? ''}
+                              onChange={e => {
+                                const value = e.target.value
+                                const updated = [...lineItems]
+                                updated[idx].line_amount = value === '' ? null : Number(value)
+                                updated[idx].needs_review = value === ''
+                                updated[idx].extraction_warning = value === '' ? 'charge amount was not confidently read' : ''
+                                setLineItems(updated)
+                              }}
+                            />
+                            {row.gst_pct != null && (
+                              <div style={{ fontSize:10.5, color:'#64748b', marginTop:3 }}>GST {row.gst_pct}%</div>
+                            )}
                             {row.needs_review && (
                               <div role="status" style={{ fontSize:10.5, color:'#b45309', marginTop:4 }}>
                                 {row.extraction_warning || 'Review this charge amount before saving.'}
