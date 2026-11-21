@@ -38,6 +38,9 @@ def score_line_item_rows(rows: Iterable[dict[str, Any]]) -> float:
         quantity = row.get("recd_qty")
         rate = row.get("rate")
         amount = row.get("line_amount")
+        if row.get("is_charge_line"):
+            score += 2 if amount is not None and amount >= 0 else -5
+            continue
         normalized = "".join(ch for ch in description.lower() if ch.isalnum())
         words = re.findall(r"[A-Za-z]{2,}", description)
         digits = sum(ch.isdigit() for ch in description)
