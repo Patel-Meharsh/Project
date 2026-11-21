@@ -838,10 +838,35 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                     if discount_header_is_percent else None
                 )
                 value_of_supply = _first_numeric_cell(cell_text("value_supply"))
+                is_charge_line = _is_charge_line_description(description)
 
                 # Some tables print the UOM next to quantity; others put it in
                 # its own column. Never infer quantity/rate from description text.
                 if qty is None and rate is None and amount is None:
+                    if is_charge_line:
+                        extracted.append(_mark_row_for_review({
+                            "item_code": "",
+                            "item_name": description,
+                            "ocr_original_name": "",
+                            "vendor_code": "",
+                            "vendor_name": "",
+                            "recd_qty": None,
+                            "accepted_qty": None,
+                            "rate": None,
+                            "unit": unit,
+                            "line_amount": None,
+                            "hsn": hsn,
+                            "gst_pct": gst_pct,
+                            "discount_pct": discount_pct,
+                            "value_of_supply": value_of_supply,
+                            "is_charge_line": True,
+                            "match_status": "charge",
+                            "source": "receipt_text",
+                            "_source_page_index": page_index,
+                            "needs_review": True,
+                            "extraction_warning": "charge amount was not confidently read",
+                        }))
+                        continue
                     # Product descriptions such as "M Fold Paper professional",
                     # "Tissue Roll Plain", or colour/pack-size notes often wrap to a
                     # second visual line with no numeric cells. Keep them attached
@@ -866,7 +891,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                 )
                 _, fuzzy_name, _ = correct_item_name_from_master(matched_description, masters)
                 description = matched_description
-                is_charge_line = _is_charge_line_description(description)
+                is_charge_line = is_charge_line or _is_charge_line_description(description)
                 matched = None if is_charge_line else match_master(description)
                 if matched is None and fuzzy_name and not is_charge_line:
                     matched = next((item for item in masters if (item.name or '').strip() == fuzzy_name), None)
