@@ -1171,6 +1171,10 @@ const createGRN = async () => {
                           <div className="input" style={{ background:'#f8fafc', color:'#475569', minHeight:38, display:'flex', alignItems:'center' }}>
                             {row.item_name}
                           </div>
+                          <div style={{ fontSize:10.5, color:'#64748b', marginTop:3 }}>
+                            {row.line_amount != null ? \`Charge amount \${fmtCurrency(row.line_amount)}\` : 'Charge amount needs review'}
+                            {row.gst_pct != null ? \` · GST \${row.gst_pct}%\` : ''}
+                          </div>
                         ) : <ComboSearch
                           query={row.item_code}
                           onQueryChange={val => {
@@ -1185,10 +1189,11 @@ const createGRN = async () => {
                               item_code: opt.code,
                               item_name: opt.name,
                               rate: Number(opt.rate) || 0,
+                              gst_pct: opt.gst_pct ?? 18,
                             }
                             setLineItems(updated)
                           }}
-                          options={items.map(i => ({ code: i.code, name: i.name, rate: i.rate }))}
+                          options={items.map(i => ({ code: i.code, name: i.name, rate: i.rate, gst_pct: i.gst_pct }))}
                           placeholder="HK-003 or item name…"
                           hasError={rowError && !row.item_code}
                         />}
@@ -1276,6 +1281,13 @@ const createGRN = async () => {
                         {row.rate_warning && (
                           <div role="status" style={{ fontSize:10.5, color:'#b45309', marginTop:4, lineHeight:1.35 }}>
                             Warning - The rate for this line item is unreadable.
+                          </div>
+                        )}
+                        {(row.hsn || row.discount_pct != null || row.gst_pct != null) && (
+                          <div style={{ fontSize:10.5, color:'#64748b', marginTop:4, lineHeight:1.35 }}>
+                            {row.hsn ? \`HSN \${row.hsn}\` : ''}
+                            {row.discount_pct != null ? \`\${row.hsn ? ' · ' : ''}Discount \${row.discount_pct}%\` : ''}
+                            {row.gst_pct != null ? \`\${row.hsn || row.discount_pct != null ? ' · ' : ''}GST \${row.gst_pct}%\` : ''}
                           </div>
                         )}
                       </div>
