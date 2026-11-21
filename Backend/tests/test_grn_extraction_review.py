@@ -152,6 +152,16 @@ class GRNHeaderFallbackTests(unittest.TestCase):
         self.assertEqual(result["fields"]["vendor_name"], "KALYAN HARDWARE")
         self.assertEqual(result["fields"]["vendor_code"], "")
 
+    def test_primary_field_extractor_returns_supplier_gstin(self):
+        text = (
+            "TAX INVOICE\\n"
+            "KALYAN HARDWARE\\n"
+            "GSTIN: 24ABCDE1234F1Z5\\n"
+            "Invoice No. KH-102"
+        )
+        result = _extract_fields(text, EmptyItemMasterDB())
+        self.assertEqual(result["fields"]["gst_no"], "24ABCDE1234F1Z5")
+
     def test_vendor_name_fallback_rejects_ocr_contact_line(self):
         text = (
             "TAX INVOICE\n"
