@@ -10,8 +10,9 @@ def line_item_warnings(
     rate: float | None,
     amount: float | None,
     tolerance_ratio: float = 0.015,
+    discount_pct: float | None = None,
 ) -> list[str]:
-    """Return review warnings without rewriting or discarding invoice values."""
+    """Return review warnings while accounting for an explicitly printed discount."""
     warnings = []
     if quantity is None:
         warnings.append("quantity was not confidently read")
@@ -19,8 +20,14 @@ def line_item_warnings(
         warnings.append("rate was not confidently read")
     if quantity is not None and rate is not None and amount is not None:
         expected = quantity * rate
+        try:
+            discount = float(discount_pct) if discount_pct is not None else 0.0
+        except (TypeError, ValueError):
+            discount = 0.0
+        if 0 <= discount <= 100:
+            expected *= 1 - discount / 100
         if abs(expected - amount) > max(0.05, abs(amount) * tolerance_ratio):
-            warnings.append("quantity × rate differs from the printed line amount")
+            warnings.append("quantity × rate (after discount, if any) differs from the printed line amount")
     return warnings
 
 
@@ -68,7 +75,12 @@ def score_line_item_rows(rows: Iterable[dict[str, Any]]) -> float:
             score -= 8
 
         if amount is not None and quantity is not None and rate is not None:
-            if abs(quantity * rate - amount) <= max(2.0, abs(amount) * 0.03):
+            try:
+                discount = float(row.get("discount_pct") or 0)
+            except (TypeError, ValueError):
+                discount = 0.0
+            expected = quantity * rate * (1 - discount / 100) if 0 <= discount <= 100 else quantity * rate
+            if abs(expected - amount) <= max(2.0, abs(amount) * 0.03):
                 score += 4
             else:
                 score -= 5
