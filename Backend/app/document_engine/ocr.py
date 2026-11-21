@@ -366,6 +366,17 @@ def _run_ocr_candidates(image, modes: tuple[int, ...] = (6, 11), include_paddle:
     """Run a fast OCR pass first, escalating only when the result is weak."""
     import pytesseract
 
+    # pytesseract is only a Python wrapper; the Tesseract executable must also
+    # exist on the backend PATH. Fail explicitly instead of swallowing the
+    # executable error in each OCR candidate and returning an empty draft.
+    try:
+        pytesseract.get_tesseract_version()
+    except Exception as exc:
+        raise HTTPException(
+            503,
+            "Tesseract OCR engine is not installed or is not available on the backend PATH.",
+        ) from exc
+
     variants = preprocessed_variants or _prepare_ocr_variants(image)
     fast_variant = variants[0]
     candidates: list[dict[str, Any]] = []
