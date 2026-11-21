@@ -396,7 +396,7 @@ class GRNExtractedRowReviewTests(unittest.TestCase):
         self.assertEqual(row["line_amount"], 700.0)
         self.assertTrue(row["needs_review"])
         self.assertIn(
-            "quantity × rate differs from the printed line amount",
+            "quantity × rate (after discount, if any) differs from the printed line amount",
             row["extraction_warning"],
         )
 
@@ -437,7 +437,7 @@ class GRNExtractedRowReviewTests(unittest.TestCase):
         self.assertEqual(rows[0]["rate"], 320.0)
         self.assertEqual(rows[0]["line_amount"], 700.0)
         self.assertTrue(rows[0]["needs_review"])
-        self.assertIn("quantity × rate differs from the printed line amount", rows[0]["extraction_warning"])
+        self.assertIn("quantity × rate (after discount, if any) differs from the printed line amount", rows[0]["extraction_warning"])
 
 
 if __name__ == "__main__":
