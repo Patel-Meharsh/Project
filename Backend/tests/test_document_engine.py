@@ -82,6 +82,26 @@ class DocumentEngineTests(unittest.TestCase):
         )
         self.assertGreater(_ocr_quality_score(text), _ocr_quality_score("### ???"))
 
+    def test_discounted_line_amount_is_not_flagged_as_arithmetic_error(self):
+        self.assertEqual(
+            line_item_warnings(2, 100, 180, discount_pct=10),
+            [],
+        )
+        discounted = [{
+            "item_name": "Cleaning Liquid",
+            "recd_qty": 2,
+            "rate": 100,
+            "discount_pct": 10,
+            "line_amount": 180,
+        }]
+        undiscounted = [{
+            "item_name": "Cleaning Liquid",
+            "recd_qty": 2,
+            "rate": 100,
+            "line_amount": 180,
+        }]
+        self.assertGreater(score_line_item_rows(discounted), score_line_item_rows(undiscounted))
+
     def test_row_quality_penalizes_footer_text_as_a_product(self):
         real = [{
             "item_name": "Toilet Brush", "recd_qty": 1,
