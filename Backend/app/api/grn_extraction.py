@@ -232,6 +232,25 @@ def _invoice_number_from_nearby_label(text: str) -> str | None:
     return None
 
 
+def _reconcile_invoice_number_warning(
+    fields: dict[str, Any],
+    warnings: list[str],
+) -> list[str]:
+    """Ensure the missing-invoice warning reflects the final merged field value."""
+    missing_warning = "Invoice number was not detected."
+    invoice_no = str(fields.get("invoice_no") or "").strip()
+
+    reconciled = [
+        warning
+        for warning in warnings
+        if warning != missing_warning or not invoice_no
+    ]
+    if not invoice_no and missing_warning not in reconciled:
+        reconciled.append(missing_warning)
+
+    return list(dict.fromkeys(reconciled))
+
+
 def _mark_row_for_review(row: dict[str, Any]) -> dict[str, Any]:
     """Keep extracted invoice evidence and mark incomplete/inconsistent rows for review."""
     warnings = [
@@ -2079,6 +2098,14 @@ def extract_grn_document(
                 ]
             ))
     
+        # Header values may be recovered from alternate/supplemental text sources
+        # after the initial extractor has already generated warnings. Reconcile
+        # this warning only after all field merging is complete.
+        result["fields"] = fields
+        result["warnings"] = _reconcile_invoice_number_warning(
+            fields, result.get("warnings", [])
+        )
+
         result["filename"] = (file.filename or "document")[:160]
         result["document_type"] = "pdf" if content_type == "application/pdf" else "image"
         logger.info(
