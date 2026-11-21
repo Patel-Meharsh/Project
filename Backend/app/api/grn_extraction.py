@@ -75,6 +75,16 @@ def _number(value: str | None) -> float | None:
         return None
 
 
+def _first_numeric_cell(value: str | None) -> float | None:
+    match = re.search(r"(?<![A-Za-z])[-+]?\d[\d,]*(?:\.\d{1,4})?", str(value or ""))
+    return _number(match.group(0)) if match else None
+
+
+def _first_hsn_code(value: str | None) -> str:
+    match = re.search(r"(?<![A-Za-z0-9])\d{4,10}(?![A-Za-z0-9])", str(value or ""))
+    return match.group(0) if match else ""
+
+
 def _norm(value: str) -> str:
     return normalize_alphanumeric(value)
 
@@ -654,6 +664,7 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
             # ordinary prose or a totals section is not mistaken for the table.
             header = None
             header_row_index = -1
+            discount_header_is_percent = False
             for row_index, row in enumerate(visual_rows):
                 row_center = sum(word["y"] for word in row) / max(1, len(row))
                 # Invoice headers are often stacked over 2-3 lines (e.g. Description
@@ -686,6 +697,14 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                             kinds["rate"] = real_rates
                     header = {kind: sum((w["x0"] + w["x1"]) / 2 for w in group) / len(group)
                               for kind, group in kinds.items()}
+                    discount_center = header.get("discount")
+                    discount_header_is_percent = bool(
+                        discount_center is not None and any(
+                            "%" in word["text"]
+                            and abs((word["x0"] + word["x1"]) / 2 - discount_center) <= max(18, median_height * 1.8)
+                            for header_words in header_band for word in header_words
+                        )
+                    )
                     header_row_index = row_index
                     break
             if header is None:
@@ -801,6 +820,14 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                     if candidate_unit and len(candidate_unit) <= 12 and len(candidate_unit.split()) <= 2:
                         unit = candidate_unit
 
+                hsn = _first_hsn_code(cell_text("hsn"))
+                gst_pct = _first_numeric_cell(cell_text("gst"))
+                discount_pct = (
+                    _first_numeric_cell(cell_text("discount"))
+                    if discount_header_is_percent else None
+                )
+                value_of_supply = _first_numeric_cell(cell_text("value_supply"))
+
                 # Some tables print the UOM next to quantity; others put it in
                 # its own column. Never infer quantity/rate from description text.
                 if qty is None and rate is None and amount is None:
@@ -842,7 +869,12 @@ def _extract_pdf_table_line_items(raw: bytes, db: Session) -> list[dict[str, Any
                     "rate": rate,
                     "unit": unit,
                     "line_amount": amount,
-                    "match_status": "matched" if matched else "unmatched",
+                    "hsn": hsn,
+                    "gst_pct": gst_pct,
+                    "discount_pct": discount_pct,
+                    "value_of_supply": value_of_supply,
+                    "is_charge_line": _is_charge_line_description(description),
+                    "match_status": "charge" if _is_charge_line_description(description) else ("matched" if matched else "unmatched"),
                     "source": "receipt_text",
                     "_source_page_index": page_index,
                 }))
